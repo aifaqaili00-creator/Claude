@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 import amazon_check as ac
 import chrome_profiles as cp
 import file_rank as fr
+import xray
 
 HERE = Path(__file__).resolve().parent
 APP_DIR = ac.APP_DIR
@@ -82,6 +83,7 @@ class State:
                 self.cache[(s['market'], s['keyword'].lower(), h.get('pages', 1), s.get('fast_days', 3))] = s
         self.jobs = {}
         self.ranks = {}                                           # rank id -> DataFrame
+        self.xrays = {}                                           # xray analysis id -> result
         self.messages = []                                        # recent log lines for the UI
         self.last_beat = time.time()
         self.window = None
@@ -227,7 +229,8 @@ class Handler(BaseHTTPRequestHandler):
                     'version': VERSION, 'settings': S.settings, 'profiles': S.profiles,
                     'browser': {'state': S.checker.state, 'error': S.checker.error, 'visible': S.checker.visible},
                     'locations': S.checker.locations,
-                    'markets': {c: {'name': m['name'], 'currency': m['currency'], 'location': m['location']}
+                    'markets': {c: {'name': m['name'], 'currency': m['currency'], 'location': m['location'],
+                                    'site': m['site']}
                                 for c, m in ac.MARKETS.items()},
                     'targets': fr.TARGETS,
                     'messages': [m for m in S.messages if m['t'] > since],
@@ -235,6 +238,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/api/job':
                 job = S.jobs.get(q.get('id', ''))
                 return self._send(200 if job else 404, job or {'error': 'no such job'})
+            if u.path == '/api/xray/watch':
+                p = xray.find_new_export(float(q.get('since') or 0))
+                return self._send(200, {'folder': str(xray.downloads_dir()),
+                                        'found': {'path': str(p), 'name': p.name, 'mtime': p.stat().st_mtime} if p else None})
             if u.path == '/api/history':
                 return self._send(200, [{'id': h['id'], 'keyword': h['keyword'], 'at': h['at'],
                                          'markets': [{'market': r['market'], 'fast': r['fast'], 'total': r['total'],
@@ -271,6 +278,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {'job': jid})
             if u.path == '/api/rank':
                 return self._rank(q)
+            if u.path == '/api/xray':
+                return self._xray_upload(q)
+            if u.path == '/api/xray/load':
+                return self._xray_load(self._json())
             if u.path == '/api/export':
                 return self._export(self._json())
             if u.path == '/api/settings':
@@ -351,6 +362,34 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, {'id': rid, 'file': name, 'market': mk, 'summary': summary, 'counts': counts,
                                 'total': len(all_), 'target': fr.TARGETS[mk], 'rows': fr.to_records(all_.head(100))})
 
+    def _xray(self, path, q):
+        try:
+            a = xray.analyse(path, q.get('market') or 'auto', (q.get('keyword') or '').strip())
+        except Exception as e:
+            log.exception('xray')
+            return self._send(400, {'error': str(e).splitlines()[0][:300]})
+        a['id'] = uuid.uuid4().hex[:8]
+        S.xrays[a['id']] = a
+        S.xrays = dict(list(S.xrays.items())[-20:])
+        return self._send(200, a)
+
+    def _xray_upload(self, q):
+        name = os.path.basename(q.get('name') or 'xray.csv')
+        if os.path.splitext(name)[1].lower() not in ('.csv', '.xlsx', '.xls', '.xlsm'):
+            return self._send(400, {'error': 'Please use the .csv (or .xlsx) file that Xray exports.'})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, name)
+            Path(path).write_bytes(self._body())
+            return self._xray(path, q)
+
+    def _xray_load(self, d):
+        """Analyse an export the watcher found. Only files inside the Downloads folder are allowed."""
+        folder = xray.downloads_dir().resolve()
+        path = Path(str(d.get('path') or '')).resolve()
+        if folder not in path.parents or not path.is_file():
+            return self._send(400, {'error': 'That file is not in your Downloads folder.'})
+        return self._xray(str(path), d)
+
     def _export(self, q):
         import pandas as pd
         tmp = os.path.join(tempfile.gettempdir(), 'pc_export_%s.xlsx' % uuid.uuid4().hex[:6])
@@ -373,6 +412,10 @@ class Handler(BaseHTTPRequestHandler):
                 rows = [x for r in res for x in r.get('rows', [])]
                 pd.DataFrame(rows).drop(columns=['image'], errors='ignore').to_excel(xw, sheet_name='Listings', index=False)
             name = 'Delivery_check_%s.xlsx' % '_'.join((S.jobs[q['job']]['result'] or {}).get('keyword', 'x').split())
+        elif q.get('kind') == 'xray' and q.get('id') in S.xrays:
+            a = S.xrays[q['id']]
+            xray.export_excel(a, tmp)
+            name = 'Xray_analysis_%s_%s.xlsx' % (a['market'], '_'.join(a['keyword'].split()) or 'market')
         else:
             return self._send(404, {'error': 'nothing to export'})
         data = Path(tmp).read_bytes()

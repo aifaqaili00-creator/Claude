@@ -160,6 +160,27 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 .toast { background: var(--ink); color: var(--bg); border-radius: 9px; padding: 10px 14px; font-size: 13.5px; box-shadow: 0 6px 24px rgba(0,0,0,.25); animation: in .2s ease-out; }
 @keyframes in { from { transform: translateY(8px); opacity: 0; } }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+
+/* Xray */
+.steps { margin: 0; padding-left: 22px; display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; }
+.xgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; }
+@media (max-width: 900px) { .xgrid { grid-template-columns: 1fr; } }
+.xverdict { display: grid; gap: 10px; align-content: start; }
+.xverdict .v { font: 800 40px/1 var(--display); font-stretch: 85%; }
+.xverdict.good { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); } .xverdict.good .v { color: var(--good-text); }
+.xverdict.warn .v { color: var(--warn-text); } .xverdict.bad .v { color: var(--bad-text); }
+.meter { display: flex; gap: 3px; } .meter i { flex: 1; height: 8px; border-radius: 3px; background: var(--sunk); }
+.meter i.on { background: currentColor; }
+.reasons { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 14px; }
+.reasons li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; align-items: start; }
+.reasons li::before { font: 600 12px/20px var(--mono); text-align: center; border-radius: 5px; }
+.reasons li.good::before { content: '✓'; background: var(--good-soft); color: var(--good-text); }
+.reasons li.warn::before { content: '!'; background: var(--warn-soft); color: var(--warn-text); }
+.reasons li.bad::before { content: '✕'; background: var(--bad-soft); color: var(--bad-text); }
+.stack { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--sunk); }
+.stack span { display: block; min-width: 3px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 13px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -180,9 +201,10 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
 
 <nav class="nav"><div class="wrap" id="nav">
   <button data-view="check" aria-current="page"><b>1</b>Check a product</button>
-  <button data-view="rank"><b>2</b>Top products from a file</button>
-  <button data-view="history"><b>3</b>History</button>
-  <button data-view="settings"><b>4</b>Settings</button>
+  <button data-view="xray"><b>2</b>Xray analysis</button>
+  <button data-view="rank"><b>3</b>Top products from a file</button>
+  <button data-view="history"><b>4</b>History</button>
+  <button data-view="settings"><b>5</b>Settings</button>
 </div></nav>
 
 <main class="wrap">
@@ -217,6 +239,7 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
         <h2 id="checkTitle"></h2>
         <div class="row">
           <span class="small" id="checkWhen"></span>
+          <button class="btn" id="btnToXray" title="Run Helium 10 Xray on this search">Analyse with Xray</button>
           <button class="btn" id="btnExportCheck">Save to Excel</button>
         </div>
       </div>
@@ -247,7 +270,67 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
     </div>
   </section>
 
-  <!-- 2. Rank -->
+  <!-- 2. Xray -->
+  <section class="view" id="v-xray">
+    <div class="panel" style="display:grid; gap:14px">
+      <div class="search" style="grid-template-columns: minmax(240px,1fr) auto auto">
+        <div class="field">
+          <label for="xkw">Product / keyword</label>
+          <input type="text" id="xkw" placeholder="e.g. moving bags">
+        </div>
+        <div class="field">
+          <label>Amazon site</label>
+          <div class="seg" id="xMk">
+            <button type="button" data-v="AU" aria-pressed="true">Australia</button>
+            <button type="button" data-v="AE" aria-pressed="false">UAE</button>
+            <button type="button" data-v="US" aria-pressed="false">USA</button>
+          </div>
+        </div>
+        <div class="row"><button class="btn primary big" id="btnXOpen" type="button">Open search in Chrome</button></div>
+      </div>
+      <ol class="steps">
+        <li><b>Open search in Chrome</b> opens the Amazon results in your Chrome profile (<span id="xProf">Sohaib</span>).</li>
+        <li>Click the <b>Helium 10</b> extension, then <b>Xray</b>. Wait until the numbers have loaded.</li>
+        <li>In Xray, click <b>Export</b> and save as <b>CSV</b>. The file is picked up from your Downloads folder automatically.</li>
+      </ol>
+      <div class="row" style="justify-content:space-between">
+        <div class="progress" id="xWatch"></div>
+        <label class="btn" style="cursor:pointer">Or choose an Xray file...<input type="file" id="xFile" accept=".csv,.xlsx,.xls" hidden></label>
+      </div>
+    </div>
+
+    <div id="xOut" hidden style="display:grid; gap:16px">
+      <div class="head">
+        <div><div class="eyebrow" id="xMeta"></div><h2 id="xTitle"></h2></div>
+        <div class="row"><button class="btn" id="btnXLocal">Check local sellers</button><button class="btn" id="btnXExport">Save to Excel</button></div>
+      </div>
+      <div class="xgrid">
+        <div class="panel xverdict" id="xVerdict"></div>
+        <div class="panel"><h3 style="margin-bottom:8px">Why</h3><ul class="reasons" id="xReasons"></ul></div>
+      </div>
+      <div class="kpis" id="xKpis"></div>
+      <div class="xgrid">
+        <div class="panel"><h3>Who fulfils the orders</h3><div id="xFul" style="margin-top:10px"></div></div>
+        <div class="panel"><h3>Where sellers are based</h3><div id="xCountry" style="margin-top:10px"></div></div>
+      </div>
+      <div>
+        <div class="head" style="margin-bottom:10px">
+          <h2>Listings by revenue</h2>
+          <div class="row">
+            <div class="seg" id="xShow">
+              <button type="button" data-v="all" aria-pressed="true">All</button>
+              <button type="button" data-v="beat" aria-pressed="false">Beatable</button>
+              <button type="button" data-v="new" aria-pressed="false">Under 1 year</button>
+            </div>
+          </div>
+        </div>
+        <div class="tablewrap"><table id="xTable"></table></div>
+        <p class="small"><b>Beatable</b> = sells at least the target with few enough reviews to compete. <b>Left</b> = price minus FBA fee and the 15% referral fee, before product cost and shipping.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Rank -->
   <section class="view" id="v-rank">
     <div class="drop" id="drop" tabindex="0">
       <b>Drop a Helium 10 export here</b>
@@ -287,13 +370,13 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
     </div>
   </section>
 
-  <!-- 3. History -->
+  <!-- 4. History -->
   <section class="view" id="v-history">
     <div class="head"><h2>Recent checks</h2><span class="small">Click one to see it again. No new search is used.</span></div>
     <div class="hist" id="hist"></div>
   </section>
 
-  <!-- 4. Settings -->
+  <!-- 5. Settings -->
   <section class="view" id="v-settings">
     <div class="sgrid">
       <div class="panel" style="display:grid; gap:12px; align-content:start">
@@ -417,6 +500,7 @@ function renderStatus() {
   }
   h += `<span class="pill accent" title="Links open in this browser profile">Links open in: ${esc(prof ? prof.name : 'default browser')}</span>`;
   $('status').innerHTML = h;
+  $('xProf').textContent = prof ? prof.label : 'your default browser';
   $('bState').className = 'pill ' + bs[0]; $('bState').innerHTML = '<i></i>' + bs[1] + (b.visible ? ' (visible)' : ' (minimised)');
   if (!settingsFilled) fillSettings();
 }
@@ -584,7 +668,113 @@ async function batch(asins) {
 }
 $('btnExportRank').addEventListener('click', () => rankData && download({kind: 'rank', id: rankData.id, fast: Object.fromEntries(Object.entries(local).filter(([, v]) => v && v.fast != null))}));
 
-/* ---------- 3. history ---------- */
+/* ---------- 2. xray ---------- */
+let xData = null, xWatch = null;
+seg($('xMk'));
+seg($('xShow'), () => renderXTable());
+$('btnXOpen').addEventListener('click', () => {
+  const kw = $('xkw').value.trim(); if (!kw) return $('xkw').focus();
+  const site = (ST.markets[segVal($('xMk'))] || {}).site || 'https://www.amazon.com.au';
+  openUrl(site + '/s?k=' + encodeURIComponent(kw).replace(/%20/g, '+'));
+  startWatch();
+});
+$('xFile').addEventListener('change', async () => {
+  const f = $('xFile').files[0]; if (!f) return;
+  stopWatch();
+  xBusy('Analysing ' + f.name + '...');
+  try { renderXray(await api('/api/xray?name=' + encodeURIComponent(f.name) + '&market=' + segVal($('xMk')) + '&keyword=' + encodeURIComponent($('xkw').value.trim()), f, true)); }
+  catch (e) { $('xWatch').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
+  $('xFile').value = '';
+});
+const xBusy = t => $('xWatch').innerHTML = '<span class="spin"></span><span>' + esc(t) + '</span>';
+function startWatch() {
+  stopWatch();
+  const since = Date.now() / 1000 - 3, until = Date.now() + 20 * 60 * 1000;
+  xBusy('Waiting for your Xray export in Downloads... (run Xray, then Export to CSV)');
+  $('xWatch').insertAdjacentHTML('beforeend', ' <button class="btn slim" id="xStop">Stop waiting</button>');
+  $('xStop').addEventListener('click', () => { stopWatch(); $('xWatch').textContent = ''; });
+  xWatch = setInterval(async () => {
+    if (Date.now() > until) { stopWatch(); $('xWatch').textContent = 'Stopped waiting after 20 minutes. Choose the file instead.'; return; }
+    try {
+      const w = await api('/api/xray/watch?since=' + since);
+      if (!w.found) return;
+      stopWatch();
+      xBusy('Found ' + w.found.name + ', analysing...');
+      renderXray(await api('/api/xray/load', {path: w.found.path, market: segVal($('xMk')), keyword: $('xkw').value.trim()}));
+    } catch (e) { stopWatch(); $('xWatch').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
+  }, 2000);
+}
+function stopWatch() { if (xWatch) clearInterval(xWatch); xWatch = null; }
+function renderXray(a) {
+  xData = a;
+  $('xWatch').innerHTML = '<span class="pill good"><i></i>Analysed ' + esc(a.file) + '</span>';
+  $('xOut').hidden = false;
+  $('xMeta').textContent = a.name + ' · ' + a.metrics.listings + ' listings (' + a.metrics.sponsored + ' sponsored) · ' + a.file;
+  $('xTitle').textContent = '“' + (a.keyword || 'this market') + '”';
+  if (a.keyword && !$('xkw').value.trim()) $('xkw').value = a.keyword;
+  const pts = Math.max(0, Math.min(10, a.points));
+  $('xVerdict').className = 'panel xverdict ' + a.level;
+  $('xVerdict').innerHTML = `<span class="eyebrow">Verdict</span><span class="v">${esc(a.verdict)}</span>
+    <div class="meter" style="color:var(--${a.level === 'good' ? 'good' : a.level === 'warn' ? 'warn' : 'bad'})">${Array.from({length: 10}, (_, i) => `<i class="${i < pts ? 'on' : ''}"></i>`).join('')}</div>
+    <span class="small">${a.points} of 10 points: demand, review barrier, competition spread, newcomers, Amazon, margin</span>
+    <div id="xLocal" class="small"></div>`;
+  $('xReasons').innerHTML = a.reasons.map(r => `<li class="${r.level}">${esc(r.text)}</li>`).join('');
+  const m = a.metrics, cur = a.currency, pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+  const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
+  $('xKpis').innerHTML = k(money(m.total_revenue, cur, 0), 'Revenue / month', m.organic + ' organic listings') +
+    k(num(m.top10_sales_median), 'Top 10 sales / mo', 'median, target ' + a.target.sales) +
+    k(m.price_p25 != null ? num(m.price_p25, 0) + '–' + num(m.price_p75, 0) : '–', 'Price (' + cur + ')', 'middle half of listings') +
+    k(num(m.review_barrier), 'Review barrier', 'median reviews, top 10') +
+    k(pct(m.top3_share), 'Top 3 share', m.top_brand ? 'biggest brand ' + esc(m.top_brand) + ' ' + pct(m.top_brand_share) : '') +
+    k(m.new_winners, 'New winners', 'under 1 year, selling ' + a.target.sales + '+') +
+    k(m.beatable, 'Beatable', 'enough sales, few reviews') +
+    k(m.left_median != null ? money(m.left_median, cur) : '–', 'Left per sale', m.left_pct != null ? pct(m.left_pct) + ' of price, after fees' : 'no FBA fee column');
+  const COL = ['var(--accent)', 'var(--warn)', 'var(--good)', 'var(--bad)', 'var(--muted)', 'var(--ink-2)'];
+  const stack = (obj, names) => {
+    const ent = Object.entries(obj || {}); const tot = ent.reduce((s, [, v]) => s + v, 0);
+    if (!tot) return '<span class="small muted">Not in this export</span>';
+    return '<div class="stack">' + ent.map(([kk, v], i) => `<span style="width:${v / tot * 100}%;background:${COL[i % COL.length]}" title="${esc(kk)}: ${v}"></span>`).join('') + '</div>' +
+      '<div class="legend">' + ent.map(([kk, v], i) => `<span><i style="background:${COL[i % COL.length]}"></i>${esc(names[kk] || kk)} <b class="num">${v}</b></span>`).join('') + '</div>';
+  };
+  $('xFul').innerHTML = stack(m.fulfillment, {FBA: 'FBA (Amazon warehouse)', FBM: 'FBM (seller ships)', AMZ: 'Amazon itself'});
+  $('xCountry').innerHTML = stack(m.countries, {CN: 'China', US: 'USA', AU: 'Australia', AE: 'UAE', GB: 'UK', HK: 'Hong Kong', IN: 'India', DE: 'Germany'});
+  renderXTable();
+  show('xray');
+}
+function renderXTable() {
+  if (!xData) return;
+  const v = segVal($('xShow')), cur = xData.currency;
+  const rows = xData.rows.filter(r => v === 'all' || (v === 'beat' && r.beatable) || (v === 'new' && r.new));
+  $('xTable').innerHTML = `<thead><tr><th class="r">#</th><th>Product</th><th class="r">Price</th><th class="r">Sales/mo</th><th class="r">Revenue/mo</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th>Ships</th><th class="r">Left</th><th></th></tr></thead><tbody>` +
+    (rows.length ? rows.map(r => `<tr class="${r.beatable ? 'fast' : ''}"><td class="r">${r.pos}</td>
+      <td class="title"><a data-open="${esc(r.url || '')}">${esc(r.title)}</a><div class="sub">${esc(r.brand)}${r.country ? ' · ' + esc(r.country) : ''}${r.size_tier ? ' · ' + esc(r.size_tier) : ''}</div>
+      ${r.flags.length ? '<div class="flags">' + r.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}</td>
+      <td class="r">${money(r.price, '')}</td><td class="r">${num(r.sales)}</td><td class="r">${money(r.revenue, '', 0)}</td><td class="r">${num(r.reviews)}</td>
+      <td class="r">${r.rating && r.reviews ? r.rating : ''}</td><td class="r">${r.age != null ? num(r.age) + ' mo' : ''}</td>
+      <td>${esc(r.fulfillment)}${r.amazon ? ' <span class="pill bad">Amazon</span>' : ''}</td><td class="r">${r.left != null ? money(r.left, '') : ''}</td>
+      <td>${r.beatable ? '<span class="pill good">beatable</span>' : ''}${r.new ? ' <span class="pill accent">new</span>' : ''}</td></tr>`).join('')
+      : '<tr><td colspan="11" class="empty">No listings match.</td></tr>') + '</tbody>';
+}
+$('btnXExport').addEventListener('click', () => xData && download({kind: 'xray', id: xData.id}));
+$('btnXLocal').addEventListener('click', async () => {
+  if (!xData) return;
+  const kw = $('xkw').value.trim() || xData.keyword;
+  if (!kw) return toast('Type the keyword first');
+  $('xLocal').innerHTML = '<span class="spin" style="display:inline-block;vertical-align:-3px"></span> Checking how many sellers deliver fast...';
+  try {
+    const {job} = await api('/api/check', {keyword: kw, markets: [xData.market]});
+    const res = await waitJob(job);
+    const r = res.results[0];
+    $('xLocal').innerHTML = r.error ? '<span class="pill bad">' + esc(r.error) + '</span>' :
+      `<span class="pill ${{opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'}[r.level]}"><i></i>Local sellers: ${r.fast} fast of ${r.total}</span> ${esc(r.verdict)}`;
+  } catch (e) { $('xLocal').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
+});
+$('btnToXray').addEventListener('click', () => {
+  if (!checkData) return;
+  $('xkw').value = checkData.keyword; show('xray'); $('btnXOpen').focus();
+});
+
+/* ---------- 4. history ---------- */
 async function loadHistory() {
   const h = await api('/api/history');
   const lv = {opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'};

@@ -35,10 +35,20 @@ ALIASES = {
     'weight': ['weight', 'weight lb'],
     'variations': ['variation count', 'variations'],
     'trend': ['sales trend 90 days', 'sales trend'],
-    'seller': ['seller', 'buy box seller', 'bb seller'],
+    'seller': ['seller', 'buy box seller', 'bb seller', 'buy box'],
     'seller_country': ['seller country region', 'seller country'],
     'fulfillment': ['fulfillment', 'fulfilment'],
+    # mostly Xray
+    'fba_fees': ['fba fees', 'fba fee'],
+    'sponsored': ['sponsored'],
+    'size_tier': ['size tier'],
+    'bsr': ['bsr', 'best seller rank'],
+    'images': ['images', 'number of images'],
 }
+TEXT_COLS = ('title', 'asin', 'url', 'brand', 'category', 'subcategory', 'seller', 'seller_country', 'fulfillment',
+             'sponsored', 'size_tier')
+NUM_COLS = ('price', 'sales', 'revenue', 'reviews', 'rating', 'sellers', 'age', 'weight', 'variations', 'trend',
+            'fba_fees', 'bsr', 'images')
 
 R = lambda p: re.compile(p, re.I)
 CHECKS = [
@@ -119,31 +129,37 @@ def load(path):
     return pd.read_csv(path, encoding='latin-1')
 
 
-def rank(path, market='auto', top=10):
-    """Read the file and return (market, top_df, all_df, summary_text)."""
+def prepare(path, market='auto'):
+    """Read a Helium 10 export into a table with standard column names. Returns (market, table)."""
     raw = load(path)
     cols = map_columns(raw)
     if 'title' not in cols or 'sales' not in cols:
         raise ValueError('This file has no Title / Sales columns. Use a Helium 10 Black Box or Xray export.')
     mk = detect_market(raw, cols, path) if market == 'auto' else market
-    T = TARGETS[mk]
-
     d = pd.DataFrame()
     for key, col in cols.items():
         d[key] = raw[col]
-    for key in ('title', 'asin', 'url', 'brand', 'category', 'subcategory', 'seller', 'seller_country', 'fulfillment'):
-        d[key] = d[key].fillna('').astype(str) if key in d else ''
-    for key in ('price', 'sales', 'revenue', 'reviews', 'rating', 'sellers', 'age', 'weight', 'variations', 'trend'):
+    for key in TEXT_COLS:
+        d[key] = d[key].fillna('').astype(str).str.strip() if key in d else ''
+    for key in NUM_COLS:
         d[key] = d[key].map(_num) if key in d else float('nan')
     if d['age'].isna().all() and 'created' in d:
         created = pd.to_datetime(d['created'], errors='coerce')
         d['age'] = ((pd.Timestamp.now() - created).dt.days / 30.4).round()
     d['revenue'] = d['revenue'].fillna(d['price'] * d['sales'])
-    d = d[d['title'].str.strip() != '']
+    d = d[d['title'].str.strip() != ''].reset_index(drop=True)
+    return mk, d
 
+
+def amazon_sells(r):
+    return r.seller.lower().startswith('amazon') or r.fulfillment.upper() == 'AMZ'
+
+
+def score(d, T):
+    """Add flags, score and verdict columns (Good pick / Check first / Close / Skip) to a prepared table."""
     def flags(r):
         f = [name for name, rx in CHECKS if rx.search(r.title)]
-        if r.seller.lower().startswith('amazon') or r.fulfillment.upper() == 'AMZ':
+        if amazon_sells(r):
             f.append('Amazon sells')
         if r.variations > 20:
             f.append('%d variations' % r.variations)
@@ -166,6 +182,14 @@ def rank(path, market='auto', top=10):
     d.loc[(d['sales'] >= T['sales'] / 2) & (d['flags'] == ''), 'verdict'] = 'Close'
     d.loc[sweet, 'verdict'] = 'Check first'
     d.loc[sweet & (d['flags'] == ''), 'verdict'] = 'Good pick'
+    return d
+
+
+def rank(path, market='auto', top=10):
+    """Read the file and return (market, top_df, all_df, summary_text)."""
+    mk, d = prepare(path, market)
+    T = TARGETS[mk]
+    d = score(d, T)
     order = {'Good pick': 0, 'Check first': 1, 'Close': 2, 'Skip': 3}
     d['_o'] = d['verdict'].map(order)
     d = d.sort_values(['_o', 'score'], ascending=[True, False]).drop(columns='_o').reset_index(drop=True)
