@@ -1,393 +1,463 @@
-"""Product Checker: Amazon AU / UAE / US delivery check + Helium 10 export ranking.
+"""Product Checker: Amazon AU / UAE / US local-seller check + Helium 10 export ranking.
 
-Run with start.bat (Windows) or:  python app.py
+Starts a small local server and opens the app in its own window. Run with start.bat or:  python app.py
 """
-import queue
-import re
+import asyncio
+import concurrent.futures
+import json
+import logging
+import os
+import socket
+import sys
+import tempfile
 import threading
-import traceback
-import webbrowser
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinter.scrolledtext import ScrolledText
-
-import pandas as pd
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import amazon_check as ac
+import chrome_profiles as cp
 import file_rank as fr
 
-APP_TITLE = 'Product Checker - AU / UAE / US'
+HERE = Path(__file__).resolve().parent
+APP_DIR = ac.APP_DIR
+APP_DIR.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = APP_DIR / 'settings.json'
+HISTORY_FILE = APP_DIR / 'history.json'
+PORT_FILE = APP_DIR / 'port.txt'
+HELIUM10 = 'https://members.helium10.com/'
+VERSION = '2.0'
+
+logging.basicConfig(filename=str(APP_DIR / 'app.log'), level=logging.INFO,
+                    format='%(asctime)s %(levelname)s %(message)s')
+log = logging.getLogger('pc')
+
+DEFAULTS = {'profile': '', 'fast_days': 3, 'pages': 1, 'cache_hours': 6, 'top': 10,
+            'locations': {c: m['location'] for c, m in ac.MARKETS.items()}}
 
 
-class Worker(threading.Thread):
-    """Owns the browser. Every browser call runs here, one job at a time."""
-
-    def __init__(self, post):
-        super().__init__(daemon=True)
-        self.jobs = queue.Queue()
-        self.post = post
-        self.browser = ac.Browser(log=lambda m: post('log', m))
-        self.stop_flag = threading.Event()
-
-    def run(self):
-        while True:
-            job = self.jobs.get()
-            if job is None:
-                self.browser.close()
-                return
-            name, fn = job
-            try:
-                fn(self.browser)
-            except Exception as e:
-                self.post('log', '%s failed: %s' % (name, e))
-                self.post('log', traceback.format_exc(limit=2))
-            finally:
-                self.post('idle', name)
-
-    def submit(self, name, fn):
-        self.stop_flag.clear()
-        self.jobs.put((name, fn))
-
-
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title(APP_TITLE)
-        self.geometry('1280x800')
-        self.minsize(900, 600)
-        self.inbox = queue.Queue()
-        self.worker = Worker(lambda kind, data: self.inbox.put((kind, data)))
-        self.worker.start()
-        self.check_rows = []
-        self.rank_all = None
-        self.rank_top = None
-        self.busy = False
-        self._style()
-        self._build()
-        self.after(100, self._poll)
-        self.protocol('WM_DELETE_WINDOW', self._quit)
-
-    # ---------- layout ----------
-    def _style(self):
-        s = ttk.Style(self)
-        try:
-            s.theme_use('vista' if 'vista' in s.theme_names() else 'clam')
-        except tk.TclError:
-            pass
-        s.configure('Treeview', rowheight=24)
-        s.configure('Big.TButton', padding=(12, 6))
-
-    def _build(self):
-        top = ttk.Frame(self, padding=(10, 8))
-        top.pack(fill='x')
-        ttk.Button(top, text='Open browser: log in to Helium 10 / set delivery locations', style='Big.TButton',
-                   command=self.open_setup).pack(side='left')
-        ttk.Label(top, text='  First time only: log in to Helium 10 and set Amazon delivery to '
-                            'AU 2000, UAE Dubai, US 10001. The browser remembers it.',
-                  foreground='#555').pack(side='left')
-
-        nb = ttk.Notebook(self)
-        nb.pack(fill='both', expand=True, padx=10)
-        self.nb = nb
-        nb.add(self._check_tab(nb), text='  1. Check a product (local sellers)  ')
-        nb.add(self._rank_tab(nb), text='  2. Top 10 from a Helium 10 file  ')
-
-        self.log = ScrolledText(self, height=6, font=('Consolas', 9), state='disabled')
-        self.log.pack(fill='x', padx=10, pady=(6, 10))
-        self._log('Ready. Tab 1: type a product and press Check. Tab 2: open a Black Box or Xray CSV/Excel.')
-
-    def _tree(self, parent, cols):
-        frame = ttk.Frame(parent)
-        tree = ttk.Treeview(frame, columns=[c for c, _, _ in cols], show='headings', selectmode='browse')
-        for key, head, width in cols:
-            tree.heading(key, text=head, command=lambda k=key, t=tree: self._sort(t, k))
-            tree.column(key, width=width, stretch=key in ('title', 'delivery'),
-                        anchor='w' if key in ('title', 'delivery', 'flags', 'verdict', 'speed', 'market') else 'e')
-        ys = ttk.Scrollbar(frame, orient='vertical', command=tree.yview)
-        xs = ttk.Scrollbar(frame, orient='horizontal', command=tree.xview)
-        tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
-        tree.grid(row=0, column=0, sticky='nsew')
-        ys.grid(row=0, column=1, sticky='ns')
-        xs.grid(row=1, column=0, sticky='ew')
-        frame.rowconfigure(0, weight=1)
-        frame.columnconfigure(0, weight=1)
-        return frame, tree
-
-    def _check_tab(self, nb):
-        tab = ttk.Frame(nb, padding=8)
-        bar = ttk.Frame(tab)
-        bar.pack(fill='x')
-        ttk.Label(bar, text='Product:').pack(side='left')
-        self.kw = tk.StringVar()
-        e = ttk.Entry(bar, textvariable=self.kw, width=30, font=('Segoe UI', 11))
-        e.pack(side='left', padx=6)
-        e.bind('<Return>', lambda _: self.run_check())
-        self.mk_vars = {}
-        for code in ac.MARKETS:
-            v = tk.BooleanVar(value=True)
-            self.mk_vars[code] = v
-            ttk.Checkbutton(bar, text=ac.MARKETS[code]['name'], variable=v).pack(side='left', padx=4)
-        ttk.Label(bar, text='   Fast = within').pack(side='left')
-        self.fast_days = tk.IntVar(value=3)
-        ttk.Spinbox(bar, from_=1, to=7, width=3, textvariable=self.fast_days).pack(side='left', padx=3)
-        ttk.Label(bar, text='days   Pages:').pack(side='left')
-        self.pages = tk.IntVar(value=1)
-        ttk.Spinbox(bar, from_=1, to=3, width=3, textvariable=self.pages).pack(side='left', padx=3)
-        self.check_btn = ttk.Button(bar, text='Check', style='Big.TButton', command=self.run_check)
-        self.check_btn.pack(side='left', padx=(12, 4))
-        ttk.Button(bar, text='Stop', command=lambda: self.worker.stop_flag.set()).pack(side='left')
-        ttk.Button(bar, text='Save to Excel', command=self.export_check).pack(side='right')
-
-        self.summary = ScrolledText(tab, height=9, font=('Consolas', 10), state='disabled', wrap='word')
-        self.summary.pack(fill='x', pady=8)
-
-        cols = [('market', 'Market', 60), ('speed', 'Delivery', 70), ('days', 'Days', 50), ('price', 'Price', 70),
-                ('reviews', 'Reviews', 75), ('rating', 'Rating', 55), ('bought', 'Bought/mo', 85),
-                ('prime', 'Prime', 50), ('ad', 'Ad', 40), ('title', 'Title', 420), ('delivery', 'Delivery text', 300)]
-        frame, self.check_tree = self._tree(tab, cols)
-        frame.pack(fill='both', expand=True)
-        self.check_tree.tag_configure('fast', background='#e3f4e3')
-        self.check_tree.tag_configure('unknown', foreground='#888')
-        self.check_tree.bind('<Double-1>', lambda _: self._open_url(self.check_tree, self.check_rows))
-        ttk.Label(tab, text='Green rows deliver fast (stock is already in that country). '
-                            'Double-click a row to open the product.', foreground='#555').pack(anchor='w', pady=(4, 0))
-        return tab
-
-    def _rank_tab(self, nb):
-        tab = ttk.Frame(nb, padding=8)
-        bar = ttk.Frame(tab)
-        bar.pack(fill='x')
-        ttk.Button(bar, text='Open CSV / Excel file...', style='Big.TButton', command=self.open_file).pack(side='left')
-        ttk.Label(bar, text='   Market:').pack(side='left')
-        self.rank_market = tk.StringVar(value='auto')
-        cb = ttk.Combobox(bar, textvariable=self.rank_market, values=['auto', 'AU', 'AE', 'US'], width=6, state='readonly')
-        cb.pack(side='left', padx=4)
-        cb.bind('<<ComboboxSelected>>', lambda _: self.rank_path and self._rank(self.rank_path))
-        ttk.Label(bar, text='  Show top').pack(side='left')
-        self.top_n = tk.IntVar(value=10)
-        sp = ttk.Spinbox(bar, from_=5, to=100, width=4, textvariable=self.top_n,
-                         command=lambda: self.rank_path and self._rank(self.rank_path))
-        sp.pack(side='left', padx=4)
-        ttk.Button(bar, text='Check selected on Amazon', command=self.check_selected).pack(side='left', padx=12)
-        ttk.Button(bar, text='Save to Excel', command=self.export_rank).pack(side='right')
-        self.rank_path = None
-        self.rank_info = ttk.Label(tab, text='Open a Helium 10 export (Black Box, Xray...). '
-                                             'Australia / UAE / USA is detected from the file.', wraplength=1200)
-        self.rank_info.pack(fill='x', pady=8)
-        cols = [('rank', '#', 35), ('verdict', 'Verdict', 85), ('price', 'Price', 85), ('sales', 'Sales/mo', 75),
-                ('revenue', 'Revenue/mo', 100), ('reviews', 'Reviews', 65), ('rating', 'Rating', 55),
-                ('age', 'Age (mo)', 65), ('trend', '90d trend', 75), ('flags', 'Flags', 170), ('title', 'Title', 440)]
-        frame, self.rank_tree = self._tree(tab, cols)
-        frame.pack(fill='both', expand=True)
-        for v, c in (('Good pick', '#e3f4e3'), ('Check first', '#fdf1d6'), ('Close', '#eceeed'), ('Skip', '#f8e1e1')):
-            self.rank_tree.tag_configure(v, background=c)
-        self.rank_tree.bind('<Double-1>', lambda _: self._open_url(self.rank_tree, self.rank_top))
-        ttk.Label(tab, text='Good pick = enough sales, few reviews, no warning flags. '
-                            'Check first = numbers are good but read the flags. Double-click to open on Amazon.',
-                  foreground='#555').pack(anchor='w', pady=(4, 0))
-        return tab
-
-    # ---------- actions ----------
-    def open_setup(self):
-        self._log('Opening the browser (Helium 10 + Amazon AU, UAE, US)...')
-        self.worker.submit('Open browser', lambda b: b.open_setup())
-
-    def run_check(self):
-        kw = self.kw.get().strip()
-        markets = [c for c, v in self.mk_vars.items() if v.get()]
-        if not kw or not markets:
-            messagebox.showinfo(APP_TITLE, 'Type a product and tick at least one country.')
-            return
-        if self.busy:
-            messagebox.showinfo(APP_TITLE, 'A check is already running. Press Stop or wait.')
-            return
-        fast, pages = _num_var(self.fast_days, 3, 1, 7), _num_var(self.pages, 1, 1, 3)
-        self.busy = True
-        self.check_btn.configure(state='disabled')
-        self.check_rows = []
-        self.check_tree.delete(*self.check_tree.get_children())
-        self._set_text(self.summary, 'Checking "%s" ...\n' % kw)
-        stop = self.worker.stop_flag.is_set
-
-        def job(b):
-            for code in markets:
-                if stop():
-                    break
-                self.inbox.put(('log', 'Searching %s for "%s"...' % (ac.MARKETS[code]['name'], kw)))
-                location, rows = b.check(kw, code, fast_days=fast, pages=pages, stop=stop)
-                self.inbox.put(('check', (code, location, rows, fast)))
-        self.worker.submit('Check', job)
-
-    def open_file(self):
-        path = filedialog.askopenfilename(title='Open a Helium 10 export',
-                                          filetypes=[('CSV or Excel', '*.csv *.xlsx *.xls'), ('All files', '*.*')])
-        if path:
-            self._rank(path)
-
-    def _rank(self, path):
-        try:
-            mk, top, all_, summary = fr.rank(path, self.rank_market.get(), _num_var(self.top_n, 10, 1, 500))
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, 'Could not read this file:\n%s' % e)
-            return
-        self.rank_path, self.rank_all, self.rank_top = path, all_, top.to_dict('records')
-        self.rank_info.configure(text='%s\n%s' % (path, summary))
-        t = self.rank_tree
-        t.delete(*t.get_children())
-        cur = fr.TARGETS[mk]['currency']
-        for i, r in enumerate(self.rank_top):
-            t.insert('', 'end', iid=str(i), tags=(r['verdict'],), values=(
-                r['rank'], r['verdict'], _money(r['price'], cur), _int(r['sales']), _money(r['revenue'], cur, 0),
-                _int(r['reviews']), _f(r['rating']), _int(r['age']), _pct(r['trend']), r['flags'], r['title']))
-        self._log('Ranked %d products from %s.' % (len(all_), path))
-
-    def check_selected(self):
-        sel = self.rank_tree.selection()
-        if not sel:
-            messagebox.showinfo(APP_TITLE, 'Select a product in the list first.')
-            return
-        row = self.rank_top[int(sel[0])]
-        self.kw.set(search_words(row['title'], row.get('brand', '')))
-        self.nb.select(0)
-        self.run_check()
-
-    def export_check(self):
-        if not self.check_rows:
-            messagebox.showinfo(APP_TITLE, 'Run a check first.')
-            return
-        path = filedialog.asksaveasfilename(defaultextension='.xlsx', filetypes=[('Excel', '*.xlsx')],
-                                            initialfile='Delivery_check_%s.xlsx' % self.kw.get().strip().replace(' ', '_'))
-        if path:
-            df = pd.DataFrame(self.check_rows)
-            with pd.ExcelWriter(path, engine='openpyxl') as xw:
-                pd.DataFrame({'Summary': self.summary.get('1.0', 'end').splitlines()}).to_excel(xw, sheet_name='Summary', index=False)
-                df.to_excel(xw, sheet_name='Listings', index=False)
-            self._log('Saved %s' % path)
-
-    def export_rank(self):
-        if self.rank_all is None:
-            messagebox.showinfo(APP_TITLE, 'Open a file first.')
-            return
-        path = filedialog.asksaveasfilename(defaultextension='.xlsx', filetypes=[('Excel', '*.xlsx')],
-                                            initialfile='Top_products.xlsx')
-        if path:
-            fr.export_excel(self.rank_all, path)
-            self._log('Saved %s (all %d products, best first)' % (path, len(self.rank_all)))
-
-    # ---------- results coming back from the worker ----------
-    def _poll(self):
-        try:
-            while True:
-                kind, data = self.inbox.get_nowait()
-                if kind == 'log':
-                    self._log(data)
-                elif kind == 'idle':
-                    if data == 'Check':
-                        self.busy = False
-                        self.check_btn.configure(state='normal')
-                        self._log('Check finished.')
-                elif kind == 'check':
-                    self._show_check(*data)
-        except queue.Empty:
-            pass
-        self.after(100, self._poll)
-
-    def _show_check(self, code, location, rows, fast):
-        base = len(self.check_rows)
-        self.check_rows.extend(rows)
-        self._append_text(self.summary, '\n' + ac.summarize(code, location, rows, fast) + '\n')
-        t = self.check_tree
-        order = {'fast': 0, 'slow': 1, 'unknown': 2}
-        ranked = sorted(enumerate(rows), key=lambda x: (x[1]['sponsored'], order[x[1]['speed']], x[1]['days'] or 99))
-        for i, r in ranked:
-            t.insert('', 'end', iid=str(base + i), tags=(r['speed'],), values=(
-                code, r['speed'], '' if r['days'] is None else r['days'], _f(r['price']), _int(r['reviews']),
-                _f(r['rating']), _int(r['bought']), 'yes' if r['prime'] else '', 'ad' if r['sponsored'] else '',
-                r['title'], r['delivery']))
-
-    # ---------- helpers ----------
-    def _open_url(self, tree, rows):
-        sel = tree.selection()
-        if sel and rows:
-            url = rows[int(sel[0])].get('url')
-            if url:
-                webbrowser.open(url)
-
-    def _sort(self, tree, col):
-        items = [(tree.set(i, col), i) for i in tree.get_children('')]
-        def key(v):
-            try:
-                return (0, float(str(v[0]).replace(',', '').replace('%', '').split()[-1]))
-            except (ValueError, IndexError):
-                return (1, str(v[0]))
-        rev = getattr(tree, '_rev', {}).get(col, False)
-        items.sort(key=key, reverse=rev)
-        for n, (_, i) in enumerate(items):
-            tree.move(i, '', n)
-        tree._rev = {col: not rev}
-
-    def _log(self, msg):
-        self._append_text(self.log, msg.rstrip() + '\n')
-
-    @staticmethod
-    def _set_text(w, text):
-        w.configure(state='normal')
-        w.delete('1.0', 'end')
-        w.insert('end', text)
-        w.configure(state='disabled')
-
-    @staticmethod
-    def _append_text(w, text):
-        w.configure(state='normal')
-        w.insert('end', text)
-        w.see('end')
-        w.configure(state='disabled')
-
-    def _quit(self):
-        self.worker.jobs.put(None)
-        self.after(300, self.destroy)
-
-
-FILLER = {'pack', 'packs', 'pcs', 'pc', 'piece', 'pieces', 'set', 'sets', 'with', 'and', 'for', 'the', 'of', 'in',
-          'premium', 'heavy', 'duty', 'new', 'large', 'small', 'xl', 'xxl', 'extra', 'quality', 'best', 'black',
-          'white', 'grey', 'gray', 'oz', 'ml', 'cm', 'inch', 'inches'}
-
-
-def search_words(title, brand=''):
-    """A short Amazon search phrase from a long listing title: no brand, sizes, counts or filler words."""
-    head = re.split(r'[,|\-–(]', title)[0]
-    brand_words = set(brand.lower().split())
-    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'&]+", head)
-             if w.lower() not in FILLER and w.lower() not in brand_words and not w.isupper()]
-    return ' '.join(words[:5]) or title[:40]
-
-
-def _num_var(var, default, lo, hi):
+def load_json(path, default):
     try:
-        return max(lo, min(hi, int(var.get())))
-    except (tk.TclError, ValueError):
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
         return default
 
 
-def _ok(v):
-    return v is not None and v == v
+def save_json(path, data):
+    tmp = Path(str(path) + '.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    os.replace(tmp, path)
 
 
-def _int(v):
-    return f'{int(v):,}' if _ok(v) else ''
+def clean(o):
+    """Make data JSON-safe: NaN/inf -> None, numpy numbers -> Python numbers."""
+    if isinstance(o, dict):
+        return {str(k): clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [clean(v) for v in o]
+    if isinstance(o, float):
+        return None if o != o or o in (float('inf'), float('-inf')) else o
+    if hasattr(o, 'item'):                                        # numpy scalar
+        return clean(o.item())
+    return o
 
 
-def _f(v):
-    return f'{v:,.2f}'.rstrip('0').rstrip('.') if _ok(v) else ''
+class State:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.settings = {**DEFAULTS, **load_json(SETTINGS_FILE, {})}
+        self.profiles = cp.list_profiles()
+        if not self.settings.get('profile') or self.settings['profile'] not in [p['id'] for p in self.profiles]:
+            self.settings['profile'] = cp.pick_default(self.profiles)
+        for c, v in (self.settings.get('locations') or {}).items():
+            if c in ac.MARKETS and v:
+                ac.MARKETS[c]['location'] = v
+                ac.MARKETS[c]['expect'] = tuple({str(v).lower(), *ac.MARKETS[c]['expect']})
+        self.history = load_json(HISTORY_FILE, [])
+        self.cache = {}                                           # (market, keyword, pages, fast) -> summary
+        for h in self.history:
+            for s in h.get('results', []):
+                self.cache[(s['market'], s['keyword'].lower(), h.get('pages', 1), s.get('fast_days', 3))] = s
+        self.jobs = {}
+        self.ranks = {}                                           # rank id -> DataFrame
+        self.messages = []                                        # recent log lines for the UI
+        self.last_beat = time.time()
+        self.window = None
+
+        # one event loop thread owns the browser
+        self.loop = asyncio.new_event_loop()
+        threading.Thread(target=self.loop.run_forever, daemon=True, name='browser').start()
+        self.checker = ac.Checker(log=self.say)
+
+    def say(self, msg):
+        log.info(msg)
+        with self.lock:
+            self.messages.append({'t': time.time(), 'msg': msg})
+            self.messages = self.messages[-60:]
+
+    def run(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def save_settings(self):
+        save_json(SETTINGS_FILE, self.settings)
+
+    def new_job(self, kind, fn):
+        jid = uuid.uuid4().hex[:10]
+        job = {'id': jid, 'kind': kind, 'status': 'running', 'log': [], 'result': None, 'error': '', 'started': time.time()}
+        self.jobs[jid] = job
+
+        def progress(m):
+            job['log'].append(m)
+
+        def done(fut):
+            try:
+                job['result'] = fut.result()
+                job['status'] = 'done'
+            except Exception as e:
+                log.exception('job failed')
+                job['status'], job['error'] = 'error', str(e).splitlines()[0][:300]
+                self.say('Check failed: %s' % job['error'])
+        self.run(fn(progress)).add_done_callback(done)
+        return jid
+
+    # ---------- checks ----------
+    def cached(self, code, kw, pages, fast):
+        s = self.cache.get((code, kw.lower(), pages, fast))
+        if s and time.time() - s['checked_at'] < self.settings['cache_hours'] * 3600:
+            return {**s, 'cached': True}
+        return None
+
+    async def check_many(self, keyword, markets, refresh, progress):
+        fast, pages = int(self.settings['fast_days']), int(self.settings['pages'])
+
+        async def one(code):
+            hit = None if refresh else self.cached(code, keyword, pages, fast)
+            if hit:
+                progress('%s: from the last %d hours (no new search)' % (ac.MARKETS[code]['name'], self.settings['cache_hours']))
+                return hit
+            progress('%s: searching "%s"...' % (ac.MARKETS[code]['name'], keyword))
+            try:
+                s = await self.checker.check(keyword, code, fast, pages, progress)
+            except Exception as e:
+                progress('%s failed: %s' % (ac.MARKETS[code]['name'], str(e).splitlines()[0][:150]))
+                return {'market': code, 'name': ac.MARKETS[code]['name'], 'keyword': keyword, 'error': str(e).splitlines()[0][:200]}
+            self.cache[(code, keyword.lower(), pages, fast)] = s
+            return s
+        results = await asyncio.gather(*(one(c) for c in markets))
+        good = [r for r in results if 'error' not in r]
+        if good:
+            entry = {'id': uuid.uuid4().hex[:8], 'keyword': keyword, 'at': time.time(), 'pages': pages,
+                     'results': good}
+            with self.lock:
+                self.history = [h for h in self.history
+                                if not (h['keyword'].lower() == keyword.lower() and
+                                        {r['market'] for r in h['results']} == {r['market'] for r in good})]
+                self.history.insert(0, entry)
+                self.history = self.history[:40]
+                save_json(HISTORY_FILE, clean(self.history))
+        return {'keyword': keyword, 'results': results}
+
+    async def check_batch(self, items, progress):
+        """Check several products (from a ranked file), 3 at a time."""
+        fast, pages = int(self.settings['fast_days']), int(self.settings['pages'])
+        sem = asyncio.Semaphore(3)
+        out = {}
+
+        async def one(it):
+            async with sem:
+                kw, code = it['search'], it['market']
+                hit = self.cached(code, kw, pages, fast)
+                if not hit:
+                    try:
+                        hit = await self.checker.check(kw, code, fast, pages)
+                        self.cache[(code, kw.lower(), pages, fast)] = hit
+                    except Exception as e:
+                        out[it['key']] = {'error': str(e).splitlines()[0][:150]}
+                        progress('"%s" failed' % kw)
+                        return
+                out[it['key']] = {k: hit[k] for k in ('fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median',
+                                                      'bought_top', 'search_url', 'keyword', 'location_ok')}
+                progress('"%s": %d fast of %d' % (kw, hit['fast'], hit['total']))
+        await asyncio.gather(*(one(i) for i in items))
+        return out
 
 
-def _money(v, cur, dec=2):
-    return f'{cur} {v:,.{dec}f}' if _ok(v) else ''
+S = None
 
 
-def _pct(v):
-    return f'{v:+.0f}%' if _ok(v) else ''
+class Handler(BaseHTTPRequestHandler):
+    server_version = 'ProductChecker/' + VERSION
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def _send(self, code, body, ctype='application/json; charset=utf-8', headers=None):
+        data = body if isinstance(body, bytes) else json.dumps(clean(body), ensure_ascii=False).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _body(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        return self.rfile.read(n) if n else b''
+
+    def _json(self):
+        try:
+            return json.loads(self._body() or b'{}')
+        except ValueError:
+            return {}
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        try:
+            if u.path in ('/', '/index.html'):
+                return self._send(200, (HERE / 'ui' / 'index.html').read_bytes(), 'text/html; charset=utf-8')
+            if u.path == '/api/state':
+                S.last_beat = time.time()
+                since = float(q.get('since') or 0)
+                return self._send(200, {
+                    'version': VERSION, 'settings': S.settings, 'profiles': S.profiles,
+                    'browser': {'state': S.checker.state, 'error': S.checker.error, 'visible': S.checker.visible},
+                    'locations': S.checker.locations,
+                    'markets': {c: {'name': m['name'], 'currency': m['currency'], 'location': m['location']}
+                                for c, m in ac.MARKETS.items()},
+                    'targets': fr.TARGETS,
+                    'messages': [m for m in S.messages if m['t'] > since],
+                })
+            if u.path == '/api/job':
+                job = S.jobs.get(q.get('id', ''))
+                return self._send(200 if job else 404, job or {'error': 'no such job'})
+            if u.path == '/api/history':
+                return self._send(200, [{'id': h['id'], 'keyword': h['keyword'], 'at': h['at'],
+                                         'markets': [{'market': r['market'], 'fast': r['fast'], 'total': r['total'],
+                                                      'level': r['level']} for r in h['results']]}
+                                        for h in S.history])
+            if u.path == '/api/history/item':
+                h = next((h for h in S.history if h['id'] == q.get('id')), None)
+                return self._send(200 if h else 404, {'keyword': h['keyword'], 'results': h['results']} if h else {})
+            if u.path in ('/favicon.svg', '/favicon.ico'):
+                return self._send(200, ICON, 'image/svg+xml')
+            if u.path == '/api/ping':
+                return self._send(200, {'ok': True})
+            self._send(404, {'error': 'not found'})
+        except Exception as e:
+            log.exception('GET %s', self.path)
+            self._send(500, {'error': str(e)})
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        try:
+            if u.path == '/api/check':
+                d = self._json()
+                kw = ' '.join(str(d.get('keyword', '')).split())[:120]
+                markets = [m for m in d.get('markets', []) if m in ac.MARKETS] or list(ac.MARKETS)
+                if not kw:
+                    return self._send(400, {'error': 'Type a product first.'})
+                jid = S.new_job('check', lambda p: S.check_many(kw, markets, bool(d.get('refresh')), p))
+                return self._send(200, {'job': jid})
+            if u.path == '/api/check_batch':
+                d = self._json()
+                items = [i for i in d.get('items', []) if i.get('market') in ac.MARKETS and i.get('search')][:30]
+                jid = S.new_job('batch', lambda p: S.check_batch(items, p))
+                return self._send(200, {'job': jid})
+            if u.path == '/api/rank':
+                return self._rank(q)
+            if u.path == '/api/export':
+                return self._export(self._json())
+            if u.path == '/api/settings':
+                d = self._json()
+                for k in ('profile', 'fast_days', 'pages', 'cache_hours', 'top'):
+                    if k in d:
+                        S.settings[k] = d[k] if k == 'profile' else max(1, int(d[k]))
+                if isinstance(d.get('locations'), dict):
+                    for c, v in d['locations'].items():
+                        if c in ac.MARKETS and str(v).strip():
+                            v = str(v).strip()
+                            if v != ac.MARKETS[c]['location']:
+                                ac.MARKETS[c]['location'] = v
+                                ac.MARKETS[c]['expect'] = (v.lower(),)
+                                S.checker.locations[c] = {'ok': None, 'text': ''}
+                            S.settings['locations'][c] = v
+                S.save_settings()
+                return self._send(200, {'ok': True, 'settings': S.settings})
+            if u.path == '/api/open':
+                d = self._json()
+                url = d.get('url') or HELIUM10
+                if not url.startswith('https://'):
+                    return self._send(400, {'error': 'bad url'})
+                used = cp.open_url(url, S.settings.get('profile', ''))
+                return self._send(200, {'ok': True, 'profile': used})
+            if u.path == '/api/browser':
+                action = self._json().get('action')
+                if action == 'show':
+                    S.run(S.checker.show())
+                elif action == 'hide':
+                    S.run(S.checker.hide())
+                elif action == 'start':
+                    S.run(S.checker.start())
+                elif action == 'locations':
+                    async def all_locations():
+                        await S.checker.start()
+                        for c in ac.MARKETS:
+                            S.checker.locations[c] = {'ok': None, 'text': ''}
+                        await asyncio.gather(*(S.checker.ensure_location(c) for c in ac.MARKETS))
+                    S.run(all_locations())
+                elif action == 'restart':
+                    async def restart():
+                        await S.checker.close()
+                        await S.checker.start()
+                    S.run(restart())
+                return self._send(200, {'ok': True})
+            if u.path == '/api/profiles':
+                S.profiles = cp.list_profiles()
+                return self._send(200, S.profiles)
+            if u.path == '/api/beat':
+                S.last_beat = time.time()
+                return self._send(200, {'ok': True})
+            if u.path == '/api/quit':
+                self._send(200, {'ok': True})
+                threading.Thread(target=shutdown, daemon=True).start()
+                return
+            self._send(404, {'error': 'not found'})
+        except Exception as e:
+            log.exception('POST %s', self.path)
+            self._send(500, {'error': str(e).splitlines()[0][:300]})
+
+    def _rank(self, q):
+        name = os.path.basename(q.get('name') or 'upload.csv')
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in ('.csv', '.xlsx', '.xls', '.xlsm'):
+            return self._send(400, {'error': 'Please use a .csv or .xlsx file.'})
+        data = self._body()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, name)
+            Path(path).write_bytes(data)
+            try:
+                mk, top, all_, summary = fr.rank(path, q.get('market', 'auto'), int(q.get('top') or 10))
+            except Exception as e:
+                return self._send(400, {'error': str(e)})
+        rid = uuid.uuid4().hex[:8]
+        S.ranks[rid] = all_
+        counts = all_['verdict'].value_counts().to_dict()
+        return self._send(200, {'id': rid, 'file': name, 'market': mk, 'summary': summary, 'counts': counts,
+                                'total': len(all_), 'target': fr.TARGETS[mk], 'rows': fr.to_records(all_.head(100))})
+
+    def _export(self, q):
+        import pandas as pd
+        tmp = os.path.join(tempfile.gettempdir(), 'pc_export_%s.xlsx' % uuid.uuid4().hex[:6])
+        if q.get('kind') == 'rank' and q.get('id') in S.ranks:
+            df = S.ranks[q['id']].copy()
+            fast = q.get('fast') or {}                               # delivery results from the UI, by ASIN
+            extra = []
+            if fast:
+                df['fast_sellers'] = df['asin'].map(lambda a: (fast.get(a) or {}).get('fast'))
+                df['local_verdict'] = df['asin'].map(lambda a: (fast.get(a) or {}).get('verdict'))
+                extra = [('fast_sellers', 'Fast sellers'), ('local_verdict', 'Local sellers')]
+            fr.export_excel(df, tmp, extra)
+            name = 'Top_products.xlsx'
+        elif q.get('kind') == 'check' and q.get('job') in S.jobs:
+            res = (S.jobs[q['job']].get('result') or {}).get('results', [])
+            with pd.ExcelWriter(tmp, engine='openpyxl') as xw:
+                pd.DataFrame([{k: r.get(k) for k in ('name', 'location', 'total', 'fast', 'slow', 'unknown',
+                                                     'sponsored', 'fast_reviews_median', 'bought_top', 'verdict')}
+                              for r in res if 'error' not in r]).to_excel(xw, sheet_name='Summary', index=False)
+                rows = [x for r in res for x in r.get('rows', [])]
+                pd.DataFrame(rows).drop(columns=['image'], errors='ignore').to_excel(xw, sheet_name='Listings', index=False)
+            name = 'Delivery_check_%s.xlsx' % '_'.join((S.jobs[q['job']]['result'] or {}).get('keyword', 'x').split())
+        else:
+            return self._send(404, {'error': 'nothing to export'})
+        data = Path(tmp).read_bytes()
+        os.remove(tmp)
+        return self._send(200, data, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                          {'Content-Disposition': 'attachment; filename="%s"' % name})
+
+
+HTTPD = None
+ICON = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1f4fd6"/>'
+        b'<path d="M9 17l5 5 9-11" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+
+def shutdown():
+    log.info('shutting down')
+    try:
+        S.run(S.checker.close()).result(timeout=10)
+    except Exception:
+        pass
+    try:
+        PORT_FILE.unlink()
+    except OSError:
+        pass
+    if HTTPD:
+        HTTPD.shutdown()
+
+
+def watchdog():
+    """Stop when the app window is closed (its process ends or it stops checking in)."""
+    exited = None
+    while True:
+        time.sleep(2)
+        win = S.window
+        if win is not None and exited is None and win.poll() is not None:
+            exited = time.time()
+            # a quick exit means the window was handed to an app window that was already open: keep running
+            if exited - S.started > 8:
+                return shutdown()
+        if time.time() - S.last_beat > 180:                     # no window has checked in for 3 minutes
+            return shutdown()
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def already_running():
+    try:
+        port = int(PORT_FILE.read_text())
+        with socket.create_connection(('127.0.0.1', port), timeout=1) as c:
+            c.sendall(b'GET /api/ping HTTP/1.0\r\n\r\n')
+            if b'"ok"' in c.recv(4096):
+                return port
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def main():
+    global S, HTTPD
+    no_window = '--no-window' in sys.argv
+    port = already_running()
+    if port and not no_window:                                   # bring the open app to the front instead
+        cp.open_app_window('http://127.0.0.1:%d/' % port, APP_DIR / 'app-window')
+        return
+    S = State()
+    S.started = time.time()
+    port = int(os.environ.get('PC_PORT') or free_port())
+    HTTPD = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    HTTPD.daemon_threads = True
+    PORT_FILE.write_text(str(port))
+    url = 'http://127.0.0.1:%d/' % port
+    log.info('started on %s', url)
+    print('Product Checker running at', url, flush=True)
+    S.run(S.checker.start())                                      # warm up the background browser
+    if not no_window:
+        S.window = cp.open_app_window(url, APP_DIR / 'app-window')
+        threading.Thread(target=watchdog, daemon=True).start()
+    try:
+        HTTPD.serve_forever()
+    except KeyboardInterrupt:
+        shutdown()
 
 
 if __name__ == '__main__':
-    App().mainloop()
+    main()

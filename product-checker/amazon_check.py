@@ -1,9 +1,12 @@
-"""Search Amazon AU / UAE / US in a real browser window and count how many listings deliver fast.
+"""Search Amazon AU / UAE / US and count how many listings deliver fast.
 
 Fast delivery (within a few days) means the stock is already in that country: Amazon itself,
 FBA or a local seller. Slow delivery (1-3 weeks) means it ships from overseas.
-The browser keeps its own profile, so your Helium 10 login and Amazon delivery locations are remembered.
+
+The checks run in their own browser profile (Chrome blocks automation of your everyday profile),
+kept minimised in the background. It shows itself only when Amazon asks for a captcha.
 """
+import asyncio
 import datetime as dt
 import os
 import re
@@ -11,22 +14,29 @@ import time
 from pathlib import Path
 from urllib.parse import quote_plus
 
+APP_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker'
+PROFILE_DIR = APP_DIR / 'checker-browser'
+
 MARKETS = {
-    'AU': {'name': 'Australia', 'site': 'https://www.amazon.com.au', 'location': 'postcode 2000 (Sydney)'},
-    'AE': {'name': 'UAE', 'site': 'https://www.amazon.ae', 'location': 'Dubai'},
-    'US': {'name': 'USA', 'site': 'https://www.amazon.com', 'location': 'ZIP 10001 (New York)'},
+    'AU': {'name': 'Australia', 'site': 'https://www.amazon.com.au', 'currency': 'A$',
+           'location': '2000', 'expect': ('2000', 'sydney')},
+    'AE': {'name': 'UAE', 'site': 'https://www.amazon.ae', 'currency': 'AED',
+           'location': 'Dubai', 'expect': ('dubai',)},
+    'US': {'name': 'USA', 'site': 'https://www.amazon.com', 'currency': 'US$',
+           'location': '10001', 'expect': ('10001', 'new york')},
 }
-HELIUM10_URL = 'https://members.helium10.com/'
-PROFILE_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'ProductChecker' / 'browser-profile'
+for _code, _site in (('AU', 'PC_SITE_AU'), ('AE', 'PC_SITE_AE'), ('US', 'PC_SITE_US')):   # used by tests
+    if os.environ.get(_site):
+        MARKETS[_code]['site'] = os.environ[_site].rstrip('/')
 
 MONTHS = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'], 1)}
 MON = r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b'
-DAY_MON = re.compile(r'\b(\d{1,2})\s+' + MON, re.I)          # 10 Oct (AU, UAE)
+DAY_MON = re.compile(r'\b(\d{1,2})\s+' + MON, re.I)            # 10 Oct (AU, UAE)
 MON_DAY = re.compile(r'\b' + MON + r'\.?\s+(\d{1,2})\b', re.I)  # Oct 10 (US)
 
 
 def delivery_days(text, today=None):
-    """Days until the fastest delivery date mentioned in Amazon's delivery text, or None if there is none."""
+    """Days until the fastest delivery date in Amazon's delivery text, or None if it shows no date."""
     if not text:
         return None
     today = today or dt.date.today()
@@ -43,7 +53,7 @@ def delivery_days(text, today=None):
             date = dt.date(today.year, month, day)
         except ValueError:
             continue
-        if date < today - dt.timedelta(days=7):              # e.g. "3 Jan" seen in December
+        if date < today - dt.timedelta(days=7):                # "3 Jan" seen in December
             date = dt.date(today.year + 1, month, day)
         days.append((date - today).days)
     return min(days) if days else None
@@ -51,19 +61,22 @@ def delivery_days(text, today=None):
 
 def parse_count(text):
     """'1,234' -> 1234, '1.2K' -> 1200, '2K+' -> 2000."""
-    if not text:
-        return None
-    m = re.search(r'(\d[\d,.]*)\s*([kKmM]?)', str(text))
+    m = re.search(r'(\d[\d,.]*)\s*([kKmM]?)', str(text or ''))
     if not m:
         return None
-    n = float(m.group(1).replace(',', ''))
-    n *= {'k': 1e3, 'm': 1e6}.get(m.group(2).lower(), 1)
-    return int(n)
+    try:
+        n = float(m.group(1).replace(',', ''))
+    except ValueError:
+        return None
+    return int(n * {'k': 1e3, 'm': 1e6}.get(m.group(2).lower(), 1))
 
 
 def parse_price(text):
     m = re.search(r'(\d[\d,]*\.?\d*)', (text or '').replace('\xa0', ' '))
-    return float(m.group(1).replace(',', '')) if m else None
+    try:
+        return float(m.group(1).replace(',', '')) if m else None
+    except ValueError:
+        return None
 
 
 # Runs inside the Amazon page: one record per search result.
@@ -72,14 +85,16 @@ EXTRACT_JS = r"""
   .filter(e => e.dataset.asin)
   .map(e => {
     const q = s => e.querySelector(s);
-    const txt = s => { const x = q(s); return x ? x.innerText.trim() : ''; };
-    const all = e.innerText || '';
+    const txt = s => { const x = q(s); return x ? (x.innerText || x.textContent || '').trim() : ''; };
+    const all = e.innerText || e.textContent || '';
     const star = q('[aria-label*="out of 5"]') || q('i[class*="a-star"] .a-icon-alt');
     const labels = [...e.querySelectorAll('[aria-label]')].map(x => x.getAttribute('aria-label'))
       .filter(a => /rating|review/i.test(a) && !/out of 5/i.test(a));
-    let delivery = txt('[data-cy="delivery-recipe"]') || txt('.udm-primary-delivery-message');
+    let delivery = [...e.querySelectorAll('[data-cy="delivery-recipe"], .udm-primary-delivery-message, .udm-secondary-delivery-message')]
+      .map(x => (x.innerText || x.textContent || '').trim()).filter(Boolean).join(' | ');
     if (!delivery) delivery = all.split('\n').filter(l => /deliver|get it|arrives|ships/i.test(l)).join(' | ');
     const bought = (all.match(/([\d.,]+\s*[KkMm]?\+?)\s+bought in past month/i) || [])[1] || '';
+    const img = q('img.s-image');
     return {
       asin: e.dataset.asin,
       title: txt('h2') || txt('[data-cy="title-recipe"]'),
@@ -90,158 +105,313 @@ EXTRACT_JS = r"""
       prime: !!q('i.a-icon-prime, [aria-label="Amazon Prime"], .s-prime'),
       sponsored: !!q('.puis-sponsored-label-text, .s-sponsored-label-text') || /^\s*Sponsored/m.test(all),
       bought: bought,
+      image: img ? (img.getAttribute('src') || '') : '',
     };
   })
 """
 
 
-class Browser:
-    """One visible Chrome/Edge window with a saved profile. Use it from a single thread only."""
+class CaptchaTimeout(Exception):
+    pass
+
+
+class Checker:
+    """One background browser shared by all checks. All methods run on the engine's event loop."""
 
     def __init__(self, log=print):
         self.log = log
         self.pw = None
         self.ctx = None
-        self.tabs = {}
+        self.home = None
+        self.visible = False
+        self.state = 'stopped'                       # stopped / starting / ready / error
+        self.error = ''
+        self.locations = {c: {'ok': None, 'text': ''} for c in MARKETS}
+        self._lock = asyncio.Lock()
+        self._loc_lock = {c: asyncio.Lock() for c in MARKETS}
 
-    def start(self):
-        if self.ctx:
-            try:
-                self.ctx.pages              # still open?
+    # ---------- browser ----------
+    async def start(self):
+        async with self._lock:
+            if self.ctx:
                 return
-            except Exception:
-                self.ctx = None
-        from playwright.sync_api import sync_playwright
-        if not self.pw:
-            self.pw = sync_playwright().start()
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        opts = dict(user_data_dir=str(PROFILE_DIR), headless=False, no_viewport=True,
-                    ignore_default_args=['--enable-automation', '--disable-extensions'],
-                    args=['--disable-blink-features=AutomationControlled', '--start-maximized'])
-        last = None
-        exe = os.environ.get('PRODUCT_CHECKER_BROWSER')   # optional: path to a browser to use instead
-        if exe:
-            self.ctx = self.pw.chromium.launch_persistent_context(executable_path=exe, **opts)
-        for channel in () if self.ctx else ('chrome', 'msedge', None):  # your Chrome, else Edge (always on Windows), else Playwright's own
+            self.state = 'starting'
             try:
-                self.ctx = self.pw.chromium.launch_persistent_context(channel=channel, **opts) if channel else \
-                    self.pw.chromium.launch_persistent_context(**opts)
-                self.log('Browser started (%s).' % (channel or 'chromium'))
-                break
+                from playwright.async_api import async_playwright
+                if not self.pw:
+                    self.pw = await async_playwright().start()
+                PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+                opts = dict(user_data_dir=str(PROFILE_DIR), headless=False, viewport={'width': 1280, 'height': 900},
+                            locale='en-US', ignore_default_args=['--enable-automation'],
+                            args=['--disable-blink-features=AutomationControlled', '--no-first-run',
+                                  '--no-default-browser-check', '--disable-features=Translate'])
+                exe = os.environ.get('PRODUCT_CHECKER_BROWSER')
+                tries = [dict(executable_path=exe)] if exe else [dict(channel='chrome'), dict(channel='msedge'), {}]
+                last = None
+                for extra in tries:
+                    try:
+                        self.ctx = await self.pw.chromium.launch_persistent_context(**opts, **extra)
+                        break
+                    except Exception as e:
+                        last = e
+                if not self.ctx:
+                    raise RuntimeError('Could not start Chrome or Edge (%s)' % str(last).splitlines()[0])
+                self.ctx.on('close', lambda *_: self._closed())
+                await self.ctx.route('**/*', self._route)
+                self.home = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
+                await self.hide()
+                self.state, self.error = 'ready', ''
+                self.log('Background browser ready.')
             except Exception as e:
-                last = e
-        if not self.ctx:
-            raise RuntimeError('Could not start Chrome or Edge: %s' % last)
-        self.ctx.on('close', lambda *_: setattr(self, 'ctx', None))
-        self.tabs = {}
+                self.state, self.error = 'error', str(e)
+                raise
 
-    def _tab(self, key):
-        page = self.tabs.get(key)
-        if page is None or page.is_closed():
-            blank = [p for p in self.ctx.pages if p.url in ('about:blank', 'chrome://newtab/', 'edge://newtab/')]
-            page = blank[0] if blank and blank[0] not in self.tabs.values() else self.ctx.new_page()
-            self.tabs[key] = page
-        return page
+    def _closed(self):
+        self.ctx = self.home = None
+        self.state = 'stopped'
+        self.visible = False
 
-    def open_setup(self):
-        """Open Helium 10 and the three Amazon sites so you can log in and set delivery locations once."""
-        self.start()
-        self._tab('H10').goto(HELIUM10_URL, wait_until='domcontentloaded')
-        for code, m in MARKETS.items():
-            try:
-                self._tab(code).goto(m['site'], wait_until='domcontentloaded', timeout=45000)
-            except Exception as e:
-                self.log('%s did not load: %s' % (m['site'], e))
-        self.tabs['H10'].bring_to_front()
+    async def _route(self, route):
+        req = route.request
+        rt = req.resource_type
+        # Skip pictures, video and fonts: pages load much faster. Captcha pictures and the visible window still load.
+        if not self.visible and (rt in ('media', 'font') or (rt == 'image' and 'captcha' not in req.url.lower())):
+            await route.abort()
+        else:
+            await route.continue_()
 
-    def check(self, keyword, code, fast_days=3, pages=1, stop=lambda: False):
-        """Search one marketplace and return (location_text, rows)."""
-        self.start()
-        m = MARKETS[code]
-        page = self._tab(code)
-        rows, seen = [], set()
-        for n in range(1, pages + 1):
-            url = '%s/s?k=%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % n if n > 1 else '')
-            page.goto(url, wait_until='domcontentloaded', timeout=60000)
-            self._wait_for_results(page, code, stop)
-            for _ in range(6):                           # scroll so lazy parts of the page load
-                page.mouse.wheel(0, 2500)
-                page.wait_for_timeout(350)
-            raw = page.evaluate(EXTRACT_JS)
-            for r in raw:
-                if r['asin'] in seen:
-                    continue
-                seen.add(r['asin'])
-                d = delivery_days(r['delivery'])
-                rows.append({
-                    'market': code, 'asin': r['asin'], 'title': r['title'][:150],
-                    'price': parse_price(r['price']), 'rating': parse_price(r['rating']),
-                    'reviews': parse_count(r['reviews']), 'bought': parse_count(r['bought']),
-                    'prime': r['prime'], 'sponsored': r['sponsored'],
-                    'delivery': r['delivery'][:160], 'days': d,
-                    'speed': 'fast' if d is not None and d <= fast_days else 'slow' if d is not None else 'unknown',
-                    'url': '%s/dp/%s' % (m['site'], r['asin']),
-                })
-            if not raw or stop():
-                break
-            time.sleep(1.5)
+    async def _window(self, state):
         try:
-            location = page.locator('#glow-ingress-line2').inner_text(timeout=3000).strip()
+            page = self.home or self.ctx.pages[0]
+            cdp = await self.ctx.new_cdp_session(page)
+            win = await cdp.send('Browser.getWindowForTarget')
+            await cdp.send('Browser.setWindowBounds', {'windowId': win['windowId'], 'bounds': {'windowState': state}})
+            await cdp.detach()
         except Exception:
-            location = '?'
-        return location, rows
+            pass
 
-    def _wait_for_results(self, page, code, stop):
+    async def show(self, page=None):
+        await self.start()
+        self.visible = True
+        await self._window('normal')
+        try:
+            await (page or self.home).bring_to_front()
+        except Exception:
+            pass
+
+    async def hide(self):
+        if self.ctx:
+            self.visible = False
+            await self._window('minimized')
+
+    async def close(self):
+        try:
+            if self.ctx:
+                await self.ctx.close()
+        except Exception:
+            pass
+        try:
+            if self.pw:
+                await self.pw.stop()
+        except Exception:
+            pass
+        self.ctx = self.pw = self.home = None
+        self.state = 'stopped'
+
+    # ---------- page helpers ----------
+    async def _goto(self, page, url, code):
+        await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        await self._get_past_blocks(page, code)
+
+    async def _get_past_blocks(self, page, code):
+        """Handle Amazon's "continue shopping" page and captcha. Waits up to 3 minutes for a captcha."""
         deadline = time.time() + 180
-        warned = False
-        while time.time() < deadline and not stop():
-            if page.locator('div[data-component-type="s-search-result"]').count():
+        shown = False
+        clicks = 0
+        while True:
+            btn = page.locator('button:has-text("Continue shopping"), input[value*="Continue shopping" i]')
+            if clicks < 3 and await btn.count():
+                clicks += 1
+                await btn.first.click()
+                await page.wait_for_load_state('domcontentloaded')
+                continue
+            captcha = await page.locator('form[action*="validateCaptcha"], #captchacharacters').count()
+            if not captcha:
+                if shown:
+                    await self.hide()
                 return
-            if page.locator('form[action*="validateCaptcha"], #captchacharacters').count():
-                if not warned:
-                    self.log('%s: Amazon is showing a "type the characters" check. Solve it in the browser window.' % code)
-                    page.bring_to_front()
-                    warned = True
-            elif page.locator('.s-no-results, [data-component-type="s-no-results"]').count() or \
-                    'did not match any products' in (page.content() or ''):
-                return
-            page.wait_for_timeout(1000)
+            if not shown:
+                self.log('%s: Amazon wants you to type the characters from a picture. The browser window is open, '
+                         'please solve it there.' % MARKETS[code]['name'])
+                await self.show(page)
+                await page.reload()
+                shown = True
+            if time.time() > deadline:
+                raise CaptchaTimeout('Amazon captcha was not solved in 3 minutes')
+            await page.wait_for_timeout(1500)
 
-    def close(self):
-        for obj in (self.ctx, self.pw):
+    async def _location_text(self, page):
+        try:
+            return (await page.locator('#glow-ingress-line2').inner_text(timeout=2500)).strip()
+        except Exception:
+            return ''
+
+    def _location_ok(self, code, text):
+        return any(k in text.lower() for k in MARKETS[code]['expect'])
+
+    async def ensure_location(self, code, page=None):
+        """Make sure Amazon delivers to the chosen place (postcode 2000, Dubai, 10001). Returns (ok, text)."""
+        await self.start()
+        async with self._loc_lock[code]:
+            if page is not None and self.locations[code]['ok']:      # another check just set it
+                await self._goto(page, page.url, code)
+                return True, await self._location_text(page)
+            own = page is None
+            page = page or await self.ctx.new_page()
             try:
-                obj and (obj.close() if obj is self.ctx else obj.stop())
-            except Exception:
-                pass
-        self.ctx = self.pw = None
+                m = MARKETS[code]
+                if own or not page.url.startswith(m['site']):
+                    await self._goto(page, m['site'] + '/', code)
+                text = await self._location_text(page)
+                if not self._location_ok(code, text):
+                    self.log('%s: setting delivery location to %s...' % (m['name'], m['location']))
+                    await self._set_location(page, code)
+                    await self._goto(page, page.url, code)
+                    text = await self._location_text(page)
+                ok = self._location_ok(code, text)
+                self.locations[code] = {'ok': ok, 'text': text}
+                if not ok:
+                    self.log('%s: could not set the delivery location automatically (it shows "%s"). '
+                             'Use "Show browser" and set it to %s once.' % (m['name'], text or '?', m['location']))
+                return ok, text
+            finally:
+                if own:
+                    await page.close()
+
+    async def _set_location(self, page, code):
+        loc = MARKETS[code]['location']
+        try:
+            await page.locator('#nav-global-location-popover-link, #glow-ingress-block').first.click(timeout=8000)
+        except Exception:
+            return
+        pop = page.locator('#GLUXZipUpdateInput, #GLUXPostalCodeWithCity_PostalCodeInput, '
+                           '#GLUXCityList, [id^="GLUXCity"], .a-popover-wrapper')
+        try:
+            await pop.first.wait_for(timeout=8000)
+        except Exception:
+            return
+        try:
+            if await page.locator('#GLUXZipUpdateInput').count():                       # USA style
+                await page.fill('#GLUXZipUpdateInput', loc)
+                await page.locator('#GLUXZipUpdate input, #GLUXZipUpdate').first.click()
+            elif await page.locator('#GLUXPostalCodeWithCity_PostalCodeInput').count():  # Australia style
+                await page.fill('#GLUXPostalCodeWithCity_PostalCodeInput', loc)
+                await page.wait_for_timeout(1200)
+                dd = page.locator('#GLUXPostalCodeWithCity_DropdownButton, #GLUXPostalCodeWithCity_CityValue')
+                if await dd.count():
+                    await dd.first.click()
+                    opt = page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]', has_text=re.compile('sydney', re.I))
+                    if await opt.count():
+                        await opt.first.click()
+                    else:
+                        await page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]').first.click()
+                await page.locator('#GLUXPostalCodeWithCityApplyButton, #GLUXPostalCodeWithCityApplyButton input, '
+                                   'span:has-text("Apply") input').first.click()
+            else:                                                                        # UAE style: pick a city
+                sel = page.locator('select[id*="GLUX"], select[name*="city" i]')
+                if await sel.count():
+                    await sel.first.select_option(label=loc)
+                else:
+                    await page.locator('.a-popover-wrapper >> text=/Select.*city|Choose.*city|City/i').first.click(timeout=4000)
+                    await page.locator('.a-popover-wrapper a, .a-popover-wrapper li, [role="option"]',
+                                       has_text=re.compile(r'^\s*%s\s*$' % loc, re.I)).first.click(timeout=4000)
+                await page.locator('.a-popover-wrapper >> text=/^(Apply|Done|Confirm|Save)$/i').first.click(timeout=4000)
+            await page.wait_for_timeout(1500)
+            done = page.locator('#GLUXConfirmClose, .a-popover-footer input[name="glowDoneButton"], '
+                                'button[name="glowDoneButton"]')
+            if await done.count():
+                await done.first.click()
+            await page.wait_for_timeout(1000)
+        except Exception as e:
+            self.log('%s: location form not as expected (%s)' % (MARKETS[code]['name'], str(e).splitlines()[0][:80]))
+
+    # ---------- the check ----------
+    async def check(self, keyword, code, fast_days=3, pages=1, progress=None):
+        """Search one marketplace. Returns a summary dict with every listing."""
+        await self.start()
+        m = MARKETS[code]
+        page = await self.ctx.new_page()
+        rows, seen = [], set()
+        location = ''
+        try:
+            for n in range(1, pages + 1):
+                url = '%s/s?k=%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % n if n > 1 else '')
+                await self._goto(page, url, code)
+                if n == 1:
+                    location = await self._location_text(page)
+                    if not self._location_ok(code, location) and self.locations[code]['ok'] is not False:
+                        ok, location = await self.ensure_location(code, page)
+                        await self._goto(page, url, code)
+                    else:
+                        self.locations[code] = {'ok': self._location_ok(code, location), 'text': location}
+                try:
+                    await page.wait_for_selector('div[data-component-type="s-search-result"]', timeout=8000)
+                except Exception:
+                    pass
+                raw = await page.evaluate(EXTRACT_JS)
+                for r in raw:
+                    if r['asin'] in seen:
+                        continue
+                    seen.add(r['asin'])
+                    d = delivery_days(r['delivery'])
+                    rows.append({
+                        'market': code, 'asin': r['asin'], 'title': r['title'][:200],
+                        'price': parse_price(r['price']), 'rating': parse_price(r['rating']),
+                        'reviews': parse_count(r['reviews']), 'bought': parse_count(r['bought']),
+                        'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:200],
+                        'days': d, 'speed': 'fast' if d is not None and d <= fast_days else 'slow' if d is not None else 'unknown',
+                        'url': '%s/dp/%s' % (m['site'], r['asin']), 'image': r['image'],
+                    })
+                if progress:
+                    progress('%s: page %d read, %d listings' % (m['name'], n, len(rows)))
+                if not raw:
+                    break
+        finally:
+            await page.close()
+        return summarize(code, keyword, location, rows, fast_days)
 
 
-def summarize(code, location, rows, fast_days=3):
-    """Plain-language summary for one marketplace."""
+def _median(v):
+    v = sorted(v)
+    return v[len(v) // 2] if v else None
+
+
+def summarize(code, keyword, location, rows, fast_days=3):
     m = MARKETS[code]
     organic = [r for r in rows if not r['sponsored']]
     fast = [r for r in organic if r['speed'] == 'fast']
     slow = [r for r in organic if r['speed'] == 'slow']
-    unknown = [r for r in organic if r['speed'] == 'unknown']
     bought = [r['bought'] for r in organic if r['bought']]
+    prices = [r['price'] for r in fast if r['price']]
     if not organic:
-        verdict = 'No results.'
+        level, text = 'none', 'No results found.'
     elif len(fast) <= 4:
-        verdict = 'OPPORTUNITY: only %d listing(s) deliver fast. Stock sent to Amazon (FBA) would stand out.' % len(fast)
+        level, text = 'opportunity', 'Only %d listing%s deliver fast. Stock sent to Amazon (FBA) would stand out.' % (
+            len(fast), '' if len(fast) == 1 else 's')
     elif len(fast) <= 10:
-        verdict = 'Some local competition: %d listings deliver fast.' % len(fast)
+        level, text = 'some', '%d listings deliver fast. Some local competition.' % len(fast)
     else:
-        verdict = 'Crowded locally: %d listings deliver fast.' % len(fast)
-    lines = [
-        '%s  (delivering to: %s; set it to %s)' % (m['name'].upper(), location or '?', m['location']),
-        '  %d results (+%d sponsored): %d fast (<= %d days), %d slow, %d no date shown' % (
-            len(organic), len(rows) - len(organic), len(fast), fast_days, len(slow), len(unknown)),
-    ]
-    if bought:
-        lines.append('  Demand: %d listings show "bought in past month", top %s+, total about %s+/month' % (
-            len(bought), f'{max(bought):,}', f'{sum(bought):,}'))
-    if fast:
-        rv = sorted(r['reviews'] or 0 for r in fast)
-        lines.append('  Fast sellers have %s-%s reviews (median %s)' % (f'{rv[0]:,}', f'{rv[-1]:,}', f'{rv[len(rv) // 2]:,}'))
-    lines.append('  ' + verdict)
-    return '\n'.join(lines)
+        level, text = 'crowded', '%d listings deliver fast. Crowded with local stock.' % len(fast)
+    return {
+        'market': code, 'name': m['name'], 'currency': m['currency'], 'keyword': keyword,
+        'location': location, 'location_ok': any(k in (location or '').lower() for k in m['expect']),
+        'location_wanted': m['location'], 'fast_days': fast_days,
+        'total': len(organic), 'sponsored': len(rows) - len(organic), 'fast': len(fast), 'slow': len(slow),
+        'unknown': len(organic) - len(fast) - len(slow),
+        'fast_reviews_median': _median([r['reviews'] or 0 for r in fast]),
+        'fast_price_min': min(prices) if prices else None, 'fast_price_max': max(prices) if prices else None,
+        'bought_listings': len(bought), 'bought_top': max(bought) if bought else None,
+        'bought_total': sum(bought) if bought else None,
+        'level': level, 'verdict': text, 'checked_at': time.time(), 'rows': rows,
+        'search_url': '%s/s?k=%s' % (m['site'], quote_plus(keyword)),
+    }

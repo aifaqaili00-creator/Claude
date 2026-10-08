@@ -1,36 +1,39 @@
 # Product Checker – Amazon AU / UAE / US
 
-A small Windows app that runs on your own PC. It has two tabs:
+A small Windows app that runs on your own PC, in its own window.
 
-1. **Check a product (local sellers):** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com in a browser window and reads every result's delivery date. It then tells you how many listings deliver **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 listings are fast, it marks the search as an **opportunity**.
-2. **Top 10 from a Helium 10 file:** open any Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best 10 with price, sales, revenue, reviews, age, trend and warning flags.
+1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**.
+2. **Top products from a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
+3. **History:** past checks open again instantly, without a new search.
+4. **Settings:** your Chrome profile, delivery locations and how checks run.
 
-## Install (once)
+## Install or update
 
-1. Install **Python 3.10 or newer** from https://www.python.org/downloads/ and tick **"Add python.exe to PATH"** during setup.
-2. You also need **Google Chrome** or **Microsoft Edge**. Edge comes with Windows.
-3. Put this folder anywhere, for example `C:\Users\danis\OneDrive\Desktop\Claude\product-checker`.
-4. Double-click **`start.bat`**. The first start installs what the app needs, which takes 1–2 minutes. After that, it opens straight away.
+1. You need **Python 3.10 or newer** (https://www.python.org/downloads/, with **"Add python.exe to PATH"** ticked) and **Chrome** or **Edge**.
+2. Unzip into a folder, for example `C:\Users\danis\Downloads\Product_Checker\`. To update, unzip over the old folder; your settings and history are kept.
+3. Double-click **`start.bat`**. The first start installs what the app needs (1–2 minutes) and puts a **Product Checker** shortcut on your desktop.
 
-## First use
+## Your Chrome profile (e.g. "Sohaib")
 
-1. Click **"Open browser: log in to Helium 10 / set delivery locations"**. A browser window opens with four tabs.
-2. **Helium 10 tab:** log in (optional). You can also add the Helium 10 Chrome extension in this window to run Xray on the search pages.
-3. **Amazon tabs:** click **"Deliver to"** at the top left and set:
-   - amazon.com.au → postcode **2000**
-   - amazon.ae → **Dubai**
-   - amazon.com → ZIP **10001**
+The app finds your Chrome and Edge profiles and picks **Sohaib** automatically. You can change this under **Settings → Your Chrome profile**. **Open Helium 10**, product links and "Open search in Chrome" all open in that profile, with your logins and the Helium 10 extension.
 
-This browser keeps its own profile, so your logins and locations are remembered next time.
+The automatic Amazon checks run in a **separate background browser**, kept minimised. Chrome doesn't allow automation tools to control your everyday profile (blocked since Chrome 136), and the checks don't need your logins. The background browser shows itself only when Amazon asks you to type the characters from a picture. You can also open it with **Show checker browser**.
 
-## Daily use
+## Delivery locations
 
-- **Tab 1:** type a product, tick the countries, and press **Check**. Leave the browser window open while it works. If Amazon shows a "type the characters" check, solve it in that window and the app carries on.
-- **Tab 2:** press **Open CSV / Excel file…**. The country is detected from the file name or the Amazon links in it, or you can choose it. Select a product and press **Check selected on Amazon** to run the tab 1 check on it.
-- **Save to Excel** on either tab saves the results.
-- Double-click any row to open the product on Amazon.
+The checks use postcode **2000** (Sydney), **Dubai** and ZIP **10001** (New York). You can change these in Settings. They're set automatically on the first check, and the pills at the top turn green when Amazon confirms them. If one stays orange:
+1. Press **Show checker browser**.
+2. Click **"Deliver to"** on that Amazon tab and set the location once.
+3. Press **Hide** (Settings → Background browser).
 
-## How it decides
+## Speed
+
+- **All countries at once:** the three Amazon sites are searched at the same time.
+- **Lighter pages:** pictures and fonts are skipped in the background browser.
+- **Saved results:** a check is reused for 6 hours (Settings), so repeat checks and History are instant. Tick **Search again** to force a fresh search.
+- **Batch checks:** checks from a file run 3 products at a time.
+
+## How products are ranked
 
 | | Australia | UAE | USA |
 |---|---|---|---|
@@ -41,13 +44,12 @@ This browser keeps its own profile, so your logins and locations are remembered 
 - **Flags:** electrical, kids/toys, consumable or chemical, medical, fits another brand, seasonal, bulky, heavy, Amazon sells it, too cheap or too expensive.
 - **Good pick:** meets the targets with no flags.
 - **Check first:** meets the targets but has a flag to read.
-- **Score:** sales ÷ √(reviews + 20). Products under 12 months old get a bonus, as do products with a rating of 4.2 or lower (room to do better) and products whose sales are growing. Products with falling sales are scored lower.
-- **Fast delivery:** arrives within 3 days. You can change this in tab 1.
+- **Score:** sales ÷ √(reviews + 20). New listings, ratings of 4.2 or lower and growing sales get a bonus; falling sales lower the score.
 
-To change any of these numbers, edit `TARGETS` at the top of `file_rank.py`.
+To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 
-## Notes
+## If something goes wrong
 
-- **No Helium 10 searches are used.** The app reads only Amazon's public search pages and your own export files.
-- **Keep checks reasonable:** a few product checks at a time. Searching Amazon heavily from one PC can trigger its "type the characters" check more often.
-- **If the app doesn't open:** run `.venv\Scripts\python.exe app.py` in this folder from Command Prompt to see the error.
+- **No Helium 10 searches are used.** The app reads only Amazon's public search pages and your own files.
+- **To see errors:** run `start.bat debug`, which shows a console window. The log file is `%LOCALAPPDATA%\ProductChecker\app.log`.
+- **If the background browser misbehaves:** press **Restart** under Settings → Background browser.

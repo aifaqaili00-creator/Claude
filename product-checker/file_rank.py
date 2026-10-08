@@ -184,10 +184,17 @@ EXPORT_HEAD = ['Rank', 'Verdict', 'Title', 'Brand', 'Price', 'Sales/mo', 'Revenu
                'Sellers', '90d trend %', 'Weight lb', 'Fulfillment', 'Flags', 'Score', 'ASIN', 'URL']
 
 
-def export_excel(df, path):
+def export_excel(df, path, extra=()):
+    """Save ranked products to a formatted Excel file. extra = [(column, heading), ...] added after Flags."""
     from openpyxl.styles import Font, PatternFill
-    out = df[[c for c in EXPORT_COLS if c in df]].copy()
-    out.columns = [EXPORT_HEAD[EXPORT_COLS.index(c)] for c in out.columns]
+    cols, heads = list(EXPORT_COLS), list(EXPORT_HEAD)
+    at = cols.index('flags') + 1
+    for key, head in extra:
+        cols.insert(at, key)
+        heads.insert(at, head)
+        at += 1
+    out = df[[c for c in cols if c in df]].copy()
+    out.columns = [heads[cols.index(c)] for c in out.columns]
     with pd.ExcelWriter(path, engine='openpyxl') as xw:
         out.to_excel(xw, index=False, sheet_name='Ranked')
         ws = xw.sheets['Ranked']
@@ -203,3 +210,30 @@ def export_excel(df, path):
         for i, head in enumerate(out.columns, 1):
             ws.column_dimensions[ws.cell(1, i).column_letter].width = widths.get(head, 12)
         ws.freeze_panes = 'D2'
+
+
+FILLER = {'pack', 'packs', 'pcs', 'pc', 'piece', 'pieces', 'set', 'sets', 'with', 'and', 'for', 'the', 'of', 'in',
+          'premium', 'heavy', 'duty', 'new', 'large', 'small', 'xl', 'xxl', 'extra', 'quality', 'best', 'black',
+          'white', 'grey', 'gray', 'oz', 'ml', 'cm', 'inch', 'inches'}
+
+
+def search_words(title, brand=''):
+    """A short Amazon search phrase from a long listing title: no brand, sizes, counts or filler words."""
+    title = re.sub(r'^\s*\[[^\]]*\]\s*', '', str(title))           # "[20 Pack] ..."
+    head = re.split(r'\s[-–|]\s|[,|(\[]', title)[0]               # cut at " - ", " | ", comma or bracket
+    brand_words = set(str(brand).lower().split())
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'&-]*[A-Za-z]", head)
+             if w.lower() not in FILLER and w.lower() not in brand_words and not w.isupper()]
+    return ' '.join(words[:5]) or str(title)[:40]
+
+
+def to_records(df):
+    """DataFrame rows as plain dicts (NaN -> None, flags as a list, plus a short search phrase)."""
+    out = []
+    for r in df.to_dict('records'):
+        r = {k: (None if isinstance(v, float) and v != v else v) for k, v in r.items()}
+        r['flags'] = [f for f in str(r.get('flags') or '').split(', ') if f]
+        r['search'] = search_words(r.get('title', ''), r.get('brand', ''))
+        out.append(r)
+    return out
+
