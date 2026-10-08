@@ -3,10 +3,11 @@
 A small Windows app that runs on your own PC, in its own window.
 
 1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**.
-2. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
-3. **Top products from a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
-4. **History:** past checks open again instantly, without a new search.
-5. **Settings:** your Chrome profile, delivery locations and how checks run.
+2. **New product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet. You can also **search a niche** to see what shoppers type and how each keyword does in every country.
+3. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
+4. **Top products from a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
+5. **History:** past checks open again instantly, without a new search.
+6. **Settings:** your Chrome profile, delivery locations and how checks run.
 
 ## Install
 
@@ -34,6 +35,33 @@ Each country card shows how many listings come from **local sellers** and how ma
 The listings table shows **Ships from** and the reason for each row, and you can filter it by **Fast**, **Local** or **Not local**. You can change the 3-day and 9-day limits in Settings. Saved results and History are recounted straight away when you do.
 
 A market is most interesting when it has **real demand, few fast local listings, and many listings shipping from overseas**. Buyers there are waiting 1–3 weeks, so stock in an Amazon warehouse would win the fast-delivery customers.
+
+## New product ideas
+
+**Find product ideas** reads two public Amazon lists in each chosen category:
+
+| List | What it shows | Label in the app |
+|---|---|---|
+| **Movers & Shakers** | the products whose sales rank jumped most in the last 24 hours. This is the earliest public sign of a boom, like tower fans a few summers ago. | **Booming** (rank up 300%+), **Rising** (50%+) |
+| **Hot New Releases** | the best-selling products that are new on Amazon | **New #rank** |
+
+The app starts with the safe categories (Home & Kitchen, Kitchen & Dining, Garden, Pets, Sports, Office, Tools, Crafts). Categories with extra rules or big brands, such as Electronics, Toys, Beauty, Health and Appliances, have a dashed outline; click one to include it. **Hide risky products** hides electrical, kids, chemical and medical products. Untick it to see everything, for example tower fans, which count as electrical.
+
+**How ideas are scored:**
+- **Higher:** a bigger rank jump, being high on New Releases, appearing on both lists, few reviews, a price in the target range, and several similar products moving at once (shown as "+N similar").
+- **Lower:** warning flags.
+
+**For each idea:**
+- **Check AU & UAE:** searches Amazon Australia and UAE for the idea and shows **local vs abroad** sellers. A green **gap** means 4 or fewer local sellers. **Check top 12 in AU & UAE** does the first 12 in one go.
+- **Trends:** Google Trends for the last 5 years in your Chrome. Use it to see whether the rise is real and lasting or just a one-off spike.
+- **Xray:** jumps to the Xray tab with the keyword filled in.
+- **Click the title:** opens the product in your Chrome profile.
+
+The words used to search the other countries are shown in a box on each card, and you can edit them.
+
+**Search a niche:** type a niche, e.g. `tower fan`, `dog bed` or `kitchen organiser`, and press **Find niche keywords**. The app asks Amazon's search box for its suggestions (what shoppers actually type) for about 20 variations of your niche, and lists the keywords that come back most often. Tick the keywords you want and the countries, then press **Check selected keywords**. Each keyword then shows local vs abroad sellers, demand ("bought in past month") and fast sellers per country.
+
+A strong idea is **booming or new in the USA, with real demand, but few local sellers in Australia or the UAE yet**.
 
 ## Xray analysis (Helium 10)
 
@@ -106,6 +134,7 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 | `ui/index.html` | the whole interface (plain HTML, CSS and JavaScript) |
 | `amazon_check.py` | background browser (Playwright) that searches Amazon and reads delivery dates |
 | `xray.py` | Xray export analysis and the Downloads watcher |
+| `ideas.py` | Movers & Shakers / New Releases scan, idea scoring, and niche keywords from Amazon's search suggestions |
 | `file_rank.py` | reads Helium 10 exports, flags and ranks products |
 | `chrome_profiles.py` | finds Chrome/Edge profiles and opens links in one |
 

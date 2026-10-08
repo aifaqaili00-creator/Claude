@@ -147,6 +147,25 @@ def test_xray_excel_export(tmp_path):
     assert wb.sheetnames == ['Summary', 'Listings'] and wb['Listings'].max_row == 9
 
 
+def test_score_ideas():
+    import ideas
+    base = {'image': '', 'market': 'US', 'url': '', 'category': 'Home', 'rating': 4.5, 'rank_now': None, 'rank_before': None}
+    items = [
+        {**base, 'asin': 'A1', 'title': 'Bamboo Drawer Organizer Set', 'kind': 'movers', 'rank': 3, 'pct': 2400, 'reviews': 40, 'price': 29.0},
+        {**base, 'asin': 'A2', 'title': 'Bamboo Drawer Organizer Large', 'kind': 'new', 'rank': 2, 'pct': None, 'reviews': 5, 'price': 31.0},
+        {**base, 'asin': 'A3', 'title': 'Tower Fan Oscillating 42 inch', 'kind': 'movers', 'rank': 1, 'pct': 3000, 'reviews': 900, 'price': 59.0},
+        {**base, 'asin': 'A4', 'title': 'Glass Meal Prep Containers', 'kind': 'movers', 'rank': 9, 'pct': 60, 'reviews': 12000, 'price': 35.0},
+    ]
+    out = ideas.score_ideas(items, 'US', hide_risky=True)
+    assert [i['asin'] for i in out] == ['A1', 'A4']                    # the electrical fan is hidden
+    top = out[0]
+    assert top['label'] == 'Booming' and top['similar'] == 1 and top['lists'] == ['movers', 'new'] and top['new_rank'] == 2
+    assert out[1]['label'] == 'Rising'
+    shown = ideas.score_ideas(items, 'US', hide_risky=False)
+    fan = next(i for i in shown if i['asin'] == 'A3')
+    assert 'electrical' in fan['flags']
+
+
 def test_find_new_export(tmp_path, monkeypatch):
     monkeypatch.setenv('PC_DOWNLOADS', str(tmp_path))
     (tmp_path / 'notes.csv').write_text('a,b\n1,2\n')

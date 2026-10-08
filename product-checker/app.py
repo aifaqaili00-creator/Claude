@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 import amazon_check as ac
 import chrome_profiles as cp
 import file_rank as fr
+import ideas
 import xray
 
 HERE = Path(__file__).resolve().parent
@@ -84,6 +85,8 @@ class State:
         self.jobs = {}
         self.ranks = {}                                           # rank id -> DataFrame
         self.xrays = {}                                           # xray analysis id -> result
+        self.idea_cats = {}                                       # market -> Movers & Shakers categories
+        self.idea_cache = {}                                      # (market, slugs, kinds, hide) -> scan result
         self.messages = []                                        # recent log lines for the UI
         self.last_beat = time.time()
         self.window = None
@@ -188,11 +191,32 @@ class State:
                         progress('"%s" failed' % kw)
                         return
                 out[it['key']] = {k: hit[k] for k in ('fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median',
-                                                      'bought_top', 'search_url', 'keyword', 'location_ok',
-                                                      'local', 'overseas', 'overseas_intl')}
+                                                      'bought_top', 'bought_total', 'bought_listings', 'search_url',
+                                                      'keyword', 'location_ok', 'local', 'overseas', 'overseas_intl',
+                                                      'market', 'fast_price_min', 'fast_price_max')}
                 progress('"%s": %d fast, %d local, %d overseas of %d' % (kw, hit['fast'], hit['local'], hit['overseas'], hit['total']))
         await asyncio.gather(*(one(i) for i in items))
         return out
+
+    async def find_ideas(self, code, slugs, kinds, hide, refresh, progress):
+        if refresh or code not in self.idea_cats:
+            progress('Reading the %s category list...' % ac.MARKETS[code]['name'])
+            self.idea_cats[code] = await ideas.categories(self.checker, code)
+        cats = self.idea_cats[code]
+        chosen = [c for c in cats if c['slug'] in slugs] if slugs else [c for c in cats if not c['risky']][:8]
+        if not chosen:
+            raise RuntimeError('No categories found on Amazon %s. Try again in a minute.' % ac.MARKETS[code]['name'])
+        key = (code, tuple(sorted(c['slug'] for c in chosen)), tuple(sorted(kinds)), hide)
+        hit = self.idea_cache.get(key)
+        if hit and not refresh and time.time() - hit['at'] < self.settings['cache_hours'] * 3600:
+            progress('Using the scan from %d minutes ago' % ((time.time() - hit['at']) // 60))
+            res = hit
+        else:
+            res = await ideas.scan(self.checker, code, chosen, kinds, hide, progress)
+            res['at'] = time.time()
+            self.idea_cache[key] = res
+        chosen_slugs = {c['slug'] for c in chosen}
+        return {**res, 'all_categories': [{**c, 'on': c['slug'] in chosen_slugs} for c in cats], 'kinds': kinds}
 
 
 S = None
@@ -286,8 +310,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {'job': jid})
             if u.path == '/api/check_batch':
                 d = self._json()
-                items = [i for i in d.get('items', []) if i.get('market') in ac.MARKETS and i.get('search')][:30]
+                items = [i for i in d.get('items', []) if i.get('market') in ac.MARKETS and i.get('search')][:60]
                 jid = S.new_job('batch', lambda p: S.check_batch(items, p))
+                return self._send(200, {'job': jid})
+            if u.path == '/api/ideas':
+                d = self._json()
+                code = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+                kinds = [k for k in d.get('kinds', ['movers', 'new']) if k in ideas.LISTS] or ['movers', 'new']
+                slugs = [str(s) for s in d.get('slugs') or []][:20]
+                jid = S.new_job('ideas', lambda p: S.find_ideas(code, slugs, kinds, d.get('hide_risky', True) is not False,
+                                                                bool(d.get('refresh')), p))
+                return self._send(200, {'job': jid})
+            if u.path == '/api/niche':
+                d = self._json()
+                code = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+                seed = ' '.join(str(d.get('seed', '')).split())[:60]
+                if not seed:
+                    return self._send(400, {'error': 'Type a niche first, e.g. "tower fan".'})
+                jid = S.new_job('niche', lambda p: ideas.suggest(S.checker, code, seed, p))
                 return self._send(200, {'job': jid})
             if u.path == '/api/rank':
                 return self._rank(q)
