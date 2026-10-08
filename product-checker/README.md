@@ -18,6 +18,23 @@ A small Windows app that runs on your own PC, in its own window.
 
 **To update:** download the ZIP again and unzip it over the old folder, or run `git pull`. Your settings and history are kept, because they live in `%LOCALAPPDATA%\ProductChecker`.
 
+## Local or not local?
+
+Each country card shows how many listings come from **local sellers** and how many are **not local**. The app reads the delivery text under each product:
+
+| Amazon shows | Counted as |
+|---|---|
+| "Today 5 pm – 10 pm", "Tomorrow", or a date within 3 days | **Local, fast**: stock is in an Amazon warehouse in that country |
+| a date 4–9 days away, with no "international" | **Local, slower**: a local seller shipping it themselves |
+| "FREE delivery on your first order", or Prime, with no date | **Local**: that offer only applies to items Amazon ships locally |
+| "FREE **International** delivery … eligible international items", or "Ships from abroad" / "Global Store" | **Not local: international** |
+| 10 days or more without that label, e.g. "10 – 13 Nov" | **Not local: ships from abroad** |
+| no delivery date at all | **Unknown** |
+
+The listings table shows **Ships from** and the reason for each row, and you can filter it by **Fast**, **Local** or **Not local**. You can change the 3-day and 9-day limits in Settings. Saved results and History are recounted straight away when you do.
+
+A market is most interesting when it has **real demand, few fast local listings, and many listings shipping from overseas**. Buyers there are waiting 1–3 weeks, so stock in an Amazon warehouse would win the fast-delivery customers.
+
 ## Xray analysis (Helium 10)
 
 Xray is part of the Helium 10 Chrome extension, so it runs in **your own Chrome profile**, where you're logged in to Helium 10. The app can't click the extension for you, because Chrome doesn't let automation tools use extensions. So it works in three steps:

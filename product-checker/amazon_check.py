@@ -33,6 +33,12 @@ MONTHS = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
 MON = r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b'
 DAY_MON = re.compile(r'\b(\d{1,2})\s+' + MON, re.I)            # 10 Oct (AU, UAE)
 MON_DAY = re.compile(r'\b' + MON + r'\.?\s+(\d{1,2})\b', re.I)  # Oct 10 (US)
+RANGE = re.compile(r'\b(\d{1,2})\s*[-–]\s*\d{1,2}\s+' + MON, re.I)   # 15 - 16 Oct: the first day has no month
+
+# Text that means the item ships from another country (Amazon Global Store, "ships from abroad"...)
+INTERNATIONAL = re.compile(r'international delivery|international items|ships from abroad|global store|'
+                           r'ships from outside|imported from|from overseas|international shipping', re.I)
+LOCAL_MAX_DAYS = 9          # slower than this (and no "international" text) = probably shipped from abroad
 
 
 def delivery_days(text, today=None):
@@ -46,7 +52,8 @@ def delivery_days(text, today=None):
         days.append(0)
     if 'tomorrow' in t:
         days.append(1)
-    found = [(int(d), m) for d, m in DAY_MON.findall(t)] + [(int(d), m) for m, d in MON_DAY.findall(t)]
+    found = [(int(d), m) for d, m in DAY_MON.findall(t)] + [(int(d), m) for m, d in MON_DAY.findall(t)] + \
+            [(int(d), m) for d, m in RANGE.findall(t)]
     for day, mon in found:
         month = MONTHS[mon[:3]]
         try:
@@ -57,6 +64,24 @@ def delivery_days(text, today=None):
             date = dt.date(today.year + 1, month, day)
         days.append((date - today).days)
     return min(days) if days else None
+
+
+def classify(row, fast_days=3, local_days=LOCAL_MAX_DAYS):
+    """Speed (fast / slow / unknown) and origin (local / overseas / unknown) of one listing, with the reason."""
+    d, text = row.get('days'), row.get('delivery') or ''
+    intl = bool(row.get('intl')) or bool(INTERNATIONAL.search(text))
+    if intl:
+        origin, why = 'overseas', 'international delivery'
+    elif d is not None and d <= local_days:
+        origin, why = 'local', 'arrives today' if d == 0 else 'arrives tomorrow' if d == 1 else 'arrives in %d days' % d
+    elif d is not None:
+        origin, why = 'overseas', 'takes %d+ days' % d
+    elif row.get('prime') or 'first order' in text.lower():
+        origin, why = 'local', 'Prime / shipped by Amazon' if row.get('prime') else 'free first-order delivery (shipped by Amazon)'
+    else:
+        origin, why = 'unknown', 'no delivery date shown'
+    speed = 'fast' if d is not None and d <= fast_days and not intl else 'slow' if d is not None or intl else 'unknown'
+    return {**row, 'intl': intl, 'speed': speed, 'origin': origin, 'why': why}
 
 
 def parse_count(text):
@@ -106,6 +131,7 @@ EXTRACT_JS = r"""
       sponsored: !!q('.puis-sponsored-label-text, .s-sponsored-label-text') || /^\s*Sponsored/m.test(all),
       bought: bought,
       image: img ? (img.getAttribute('src') || '') : '',
+      intl: /international delivery|international items|ships from abroad|global store|ships from outside/i.test(all),
     };
   })
 """
@@ -336,7 +362,7 @@ class Checker:
             self.log('%s: location form not as expected (%s)' % (MARKETS[code]['name'], str(e).splitlines()[0][:80]))
 
     # ---------- the check ----------
-    async def check(self, keyword, code, fast_days=3, pages=1, progress=None):
+    async def check(self, keyword, code, fast_days=3, pages=1, progress=None, local_days=LOCAL_MAX_DAYS):
         """Search one marketplace. Returns a summary dict with every listing."""
         await self.start()
         m = MARKETS[code]
@@ -363,13 +389,12 @@ class Checker:
                     if r['asin'] in seen:
                         continue
                     seen.add(r['asin'])
-                    d = delivery_days(r['delivery'])
                     rows.append({
                         'market': code, 'asin': r['asin'], 'title': r['title'][:200],
                         'price': parse_price(r['price']), 'rating': parse_price(r['rating']),
                         'reviews': parse_count(r['reviews']), 'bought': parse_count(r['bought']),
-                        'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:200],
-                        'days': d, 'speed': 'fast' if d is not None and d <= fast_days else 'slow' if d is not None else 'unknown',
+                        'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:240],
+                        'days': delivery_days(r['delivery']), 'intl': bool(r.get('intl')),
                         'url': '%s/dp/%s' % (m['site'], r['asin']), 'image': r['image'],
                     })
                 if progress:
@@ -378,7 +403,7 @@ class Checker:
                     break
         finally:
             await page.close()
-        return summarize(code, keyword, location, rows, fast_days)
+        return summarize(code, keyword, location, rows, fast_days, local_days)
 
 
 def _median(v):
@@ -386,32 +411,42 @@ def _median(v):
     return v[len(v) // 2] if v else None
 
 
-def summarize(code, keyword, location, rows, fast_days=3):
+def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_DAYS, checked_at=None):
+    """Counts and verdict for one marketplace. Rows are (re)classified with the given day limits."""
     m = MARKETS[code]
+    rows = [classify(r, fast_days, local_days) for r in rows]
     organic = [r for r in rows if not r['sponsored']]
     fast = [r for r in organic if r['speed'] == 'fast']
     slow = [r for r in organic if r['speed'] == 'slow']
+    local = [r for r in organic if r['origin'] == 'local']
+    abroad = [r for r in organic if r['origin'] == 'overseas']
+    intl = [r for r in abroad if r['intl']]
     bought = [r['bought'] for r in organic if r['bought']]
     prices = [r['price'] for r in fast if r['price']]
+    abroad_txt = ' %d of %d ship from overseas.' % (len(abroad), len(organic)) if abroad else ''
     if not organic:
         level, text = 'none', 'No results found.'
     elif len(fast) <= 4:
-        level, text = 'opportunity', 'Only %d listing%s deliver fast. Stock sent to Amazon (FBA) would stand out.' % (
-            len(fast), '' if len(fast) == 1 else 's')
+        level, text = 'opportunity', 'Only %d listing%s deliver fast.%s Stock sent to Amazon (FBA) would stand out.' % (
+            len(fast), '' if len(fast) == 1 else 's', abroad_txt)
     elif len(fast) <= 10:
-        level, text = 'some', '%d listings deliver fast. Some local competition.' % len(fast)
+        level, text = 'some', '%d listings deliver fast. Some local competition.%s' % (len(fast), abroad_txt)
     else:
-        level, text = 'crowded', '%d listings deliver fast. Crowded with local stock.' % len(fast)
+        level, text = 'crowded', '%d listings deliver fast. Crowded with local stock.%s' % (len(fast), abroad_txt)
     return {
         'market': code, 'name': m['name'], 'currency': m['currency'], 'keyword': keyword,
         'location': location, 'location_ok': any(k in (location or '').lower() for k in m['expect']),
-        'location_wanted': m['location'], 'fast_days': fast_days,
+        'location_wanted': m['location'], 'fast_days': fast_days, 'local_days': local_days,
         'total': len(organic), 'sponsored': len(rows) - len(organic), 'fast': len(fast), 'slow': len(slow),
         'unknown': len(organic) - len(fast) - len(slow),
+        'local': len(local), 'local_other': len(local) - len([r for r in local if r['speed'] == 'fast']),
+        'overseas': len(abroad), 'overseas_intl': len(intl), 'overseas_slow': len(abroad) - len(intl),
+        'origin_unknown': len(organic) - len(local) - len(abroad),
+        'local_share': len(local) / len(organic) if organic else None,
         'fast_reviews_median': _median([r['reviews'] or 0 for r in fast]),
         'fast_price_min': min(prices) if prices else None, 'fast_price_max': max(prices) if prices else None,
         'bought_listings': len(bought), 'bought_top': max(bought) if bought else None,
         'bought_total': sum(bought) if bought else None,
-        'level': level, 'verdict': text, 'checked_at': time.time(), 'rows': rows,
+        'level': level, 'verdict': text, 'checked_at': checked_at or time.time(), 'rows': rows,
         'search_url': '%s/s?k=%s' % (m['site'], quote_plus(keyword)),
     }

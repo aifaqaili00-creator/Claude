@@ -44,6 +44,31 @@ def test_delivery_days():
     assert ac.delivery_days('', today) is None
 
 
+def test_local_or_overseas_from_real_amazon_au_texts():
+    """Delivery texts copied from amazon.com.au search results (silverfish traps, 8 Oct)."""
+    today = dt.date(2026, 10, 8)
+    cases = [
+        ('FREE delivery Mon, 12 Oct on your first order | Or fastest delivery available Today 5 pm - 10 pm', 'local', 'fast'),
+        ('FREE delivery on your first order', 'local', 'unknown'),
+        ('FREE International delivery Fri, 23 Oct on $59 of eligible international items | Or fastest delivery Sat, 17 Oct', 'overseas', 'slow'),
+        ('FREE delivery 15 - 16 Oct', 'local', 'slow'),
+        ('$4.99 delivery 10 - 13 Nov | Or fastest delivery 2 - 3 Nov', 'overseas', 'slow'),
+        ('FREE International delivery Thu, 22 Oct on $59 of eligible international items | Or fastest delivery Thu, 15 Oct', 'overseas', 'slow'),
+        ('FREE International delivery 19 - 21 Oct | Or fastest delivery Thu, 15 Oct', 'overseas', 'slow'),
+        ('', 'unknown', 'unknown'),
+    ]
+    assert ac.delivery_days('FREE delivery 15 - 16 Oct', today) == 7          # first day of a range counts
+    assert ac.delivery_days('$4.99 delivery 10 - 13 Nov | Or fastest delivery 2 - 3 Nov', today) == 25
+    rows = []
+    for text, origin, speed in cases:
+        r = ac.classify({'delivery': text, 'days': ac.delivery_days(text, today), 'sponsored': False}, 3, 9)
+        assert (r['origin'], r['speed']) == (origin, speed), (text, r)
+        rows.append({**r, 'reviews': 10, 'bought': None, 'price': 25.0})
+    s = ac.summarize('AU', 'silverfish trap', 'Sydney 2000', rows)
+    assert (s['local'], s['overseas'], s['overseas_intl'], s['overseas_slow'], s['origin_unknown']) == (3, 4, 3, 1, 1)
+    assert s['fast'] == 1 and 'ship from overseas' in s['verdict']
+
+
 def test_counts_and_prices():
     assert ac.parse_count('2.1K ratings') == 2100
     assert ac.parse_count('1,234') == 1234
@@ -52,10 +77,11 @@ def test_counts_and_prices():
 
 
 def test_summarize_opportunity():
-    rows = [{'sponsored': False, 'speed': s, 'reviews': 10, 'bought': None, 'price': 30.0}
-            for s in ['fast', 'fast', 'slow', 'slow', 'slow', 'unknown']]
+    rows = [{'sponsored': False, 'days': d, 'delivery': 'x', 'reviews': 10, 'bought': None, 'price': 30.0}
+            for d in [1, 2, 6, 14, 20, None]]
     s = ac.summarize('AU', 'moving bags', 'Sydney 2000', rows)
     assert s['fast'] == 2 and s['slow'] == 3 and s['level'] == 'opportunity' and s['location_ok']
+    assert (s['local'], s['local_other'], s['overseas'], s['origin_unknown']) == (3, 1, 2, 1)
 
 
 def test_search_words():

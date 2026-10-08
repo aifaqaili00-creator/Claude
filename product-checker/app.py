@@ -35,7 +35,7 @@ logging.basicConfig(filename=str(APP_DIR / 'app.log'), level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('pc')
 
-DEFAULTS = {'profile': '', 'fast_days': 3, 'pages': 1, 'cache_hours': 6, 'top': 10,
+DEFAULTS = {'profile': '', 'fast_days': 3, 'local_days': ac.LOCAL_MAX_DAYS, 'pages': 1, 'cache_hours': 6, 'top': 10,
             'locations': {c: m['location'] for c, m in ac.MARKETS.items()}}
 
 
@@ -77,10 +77,10 @@ class State:
                 ac.MARKETS[c]['location'] = v
                 ac.MARKETS[c]['expect'] = tuple({str(v).lower(), *ac.MARKETS[c]['expect']})
         self.history = load_json(HISTORY_FILE, [])
-        self.cache = {}                                           # (market, keyword, pages, fast) -> summary
-        for h in self.history:
+        self.cache = {}                                           # (market, keyword, pages) -> summary
+        for h in reversed(self.history):
             for s in h.get('results', []):
-                self.cache[(s['market'], s['keyword'].lower(), h.get('pages', 1), s.get('fast_days', 3))] = s
+                self.cache[(s['market'], s['keyword'].lower(), h.get('pages', 1))] = s
         self.jobs = {}
         self.ranks = {}                                           # rank id -> DataFrame
         self.xrays = {}                                           # xray analysis id -> result
@@ -125,27 +125,35 @@ class State:
         return jid
 
     # ---------- checks ----------
-    def cached(self, code, kw, pages, fast):
-        s = self.cache.get((code, kw.lower(), pages, fast))
+    def days(self):
+        return int(self.settings['fast_days']), int(self.settings.get('local_days') or ac.LOCAL_MAX_DAYS), int(self.settings['pages'])
+
+    def resummarize(self, s):
+        """Recount a saved result with the current day limits (also upgrades results saved by older versions)."""
+        fast, local, _ = self.days()
+        return ac.summarize(s['market'], s['keyword'], s.get('location', ''), s.get('rows', []), fast, local, s.get('checked_at'))
+
+    def cached(self, code, kw, pages):
+        s = self.cache.get((code, kw.lower(), pages))
         if s and time.time() - s['checked_at'] < self.settings['cache_hours'] * 3600:
-            return {**s, 'cached': True}
+            return {**self.resummarize(s), 'cached': True}
         return None
 
     async def check_many(self, keyword, markets, refresh, progress):
-        fast, pages = int(self.settings['fast_days']), int(self.settings['pages'])
+        fast, local, pages = self.days()
 
         async def one(code):
-            hit = None if refresh else self.cached(code, keyword, pages, fast)
+            hit = None if refresh else self.cached(code, keyword, pages)
             if hit:
                 progress('%s: from the last %d hours (no new search)' % (ac.MARKETS[code]['name'], self.settings['cache_hours']))
                 return hit
             progress('%s: searching "%s"...' % (ac.MARKETS[code]['name'], keyword))
             try:
-                s = await self.checker.check(keyword, code, fast, pages, progress)
+                s = await self.checker.check(keyword, code, fast, pages, progress, local)
             except Exception as e:
                 progress('%s failed: %s' % (ac.MARKETS[code]['name'], str(e).splitlines()[0][:150]))
                 return {'market': code, 'name': ac.MARKETS[code]['name'], 'keyword': keyword, 'error': str(e).splitlines()[0][:200]}
-            self.cache[(code, keyword.lower(), pages, fast)] = s
+            self.cache[(code, keyword.lower(), pages)] = s
             return s
         results = await asyncio.gather(*(one(c) for c in markets))
         good = [r for r in results if 'error' not in r]
@@ -163,25 +171,26 @@ class State:
 
     async def check_batch(self, items, progress):
         """Check several products (from a ranked file), 3 at a time."""
-        fast, pages = int(self.settings['fast_days']), int(self.settings['pages'])
+        fast, local, pages = self.days()
         sem = asyncio.Semaphore(3)
         out = {}
 
         async def one(it):
             async with sem:
                 kw, code = it['search'], it['market']
-                hit = self.cached(code, kw, pages, fast)
+                hit = self.cached(code, kw, pages)
                 if not hit:
                     try:
-                        hit = await self.checker.check(kw, code, fast, pages)
-                        self.cache[(code, kw.lower(), pages, fast)] = hit
+                        hit = await self.checker.check(kw, code, fast, pages, None, local)
+                        self.cache[(code, kw.lower(), pages)] = hit
                     except Exception as e:
                         out[it['key']] = {'error': str(e).splitlines()[0][:150]}
                         progress('"%s" failed' % kw)
                         return
                 out[it['key']] = {k: hit[k] for k in ('fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median',
-                                                      'bought_top', 'search_url', 'keyword', 'location_ok')}
-                progress('"%s": %d fast of %d' % (kw, hit['fast'], hit['total']))
+                                                      'bought_top', 'search_url', 'keyword', 'location_ok',
+                                                      'local', 'overseas', 'overseas_intl')}
+                progress('"%s": %d fast, %d local, %d overseas of %d' % (kw, hit['fast'], hit['local'], hit['overseas'], hit['total']))
         await asyncio.gather(*(one(i) for i in items))
         return out
 
@@ -243,13 +252,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {'folder': str(xray.downloads_dir()),
                                         'found': {'path': str(p), 'name': p.name, 'mtime': p.stat().st_mtime} if p else None})
             if u.path == '/api/history':
-                return self._send(200, [{'id': h['id'], 'keyword': h['keyword'], 'at': h['at'],
-                                         'markets': [{'market': r['market'], 'fast': r['fast'], 'total': r['total'],
-                                                      'level': r['level']} for r in h['results']]}
-                                        for h in S.history])
+                out = []
+                for h in S.history:
+                    res = [S.resummarize(r) for r in h['results']]
+                    out.append({'id': h['id'], 'keyword': h['keyword'], 'at': h['at'],
+                                'markets': [{k: r[k] for k in ('market', 'fast', 'local', 'overseas', 'total', 'level')}
+                                            for r in res]})
+                return self._send(200, out)
             if u.path == '/api/history/item':
                 h = next((h for h in S.history if h['id'] == q.get('id')), None)
-                return self._send(200 if h else 404, {'keyword': h['keyword'], 'results': h['results']} if h else {})
+                return self._send(200 if h else 404, {'keyword': h['keyword'],
+                                                      'results': [S.resummarize(r) for r in h['results']]} if h else {})
             if u.path in ('/favicon.svg', '/favicon.ico'):
                 return self._send(200, ICON, 'image/svg+xml')
             if u.path == '/api/ping':
@@ -286,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._export(self._json())
             if u.path == '/api/settings':
                 d = self._json()
-                for k in ('profile', 'fast_days', 'pages', 'cache_hours', 'top'):
+                for k in ('profile', 'fast_days', 'local_days', 'pages', 'cache_hours', 'top'):
                     if k in d:
                         S.settings[k] = d[k] if k == 'profile' else max(1, int(d[k]))
                 if isinstance(d.get('locations'), dict):
@@ -398,16 +411,20 @@ class Handler(BaseHTTPRequestHandler):
             fast = q.get('fast') or {}                               # delivery results from the UI, by ASIN
             extra = []
             if fast:
-                df['fast_sellers'] = df['asin'].map(lambda a: (fast.get(a) or {}).get('fast'))
-                df['local_verdict'] = df['asin'].map(lambda a: (fast.get(a) or {}).get('verdict'))
-                extra = [('fast_sellers', 'Fast sellers'), ('local_verdict', 'Local sellers')]
+                for col, key in (('fast_sellers', 'fast'), ('local_sellers', 'local'), ('abroad_sellers', 'overseas'),
+                                 ('local_verdict', 'verdict')):
+                    df[col] = df['asin'].map(lambda a, k=key: (fast.get(a) or {}).get(k))
+                extra = [('fast_sellers', 'Fast sellers'), ('local_sellers', 'Local sellers'),
+                         ('abroad_sellers', 'Not local'), ('local_verdict', 'Delivery verdict')]
             fr.export_excel(df, tmp, extra)
             name = 'Top_products.xlsx'
         elif q.get('kind') == 'check' and q.get('job') in S.jobs:
             res = (S.jobs[q['job']].get('result') or {}).get('results', [])
             with pd.ExcelWriter(tmp, engine='openpyxl') as xw:
                 pd.DataFrame([{k: r.get(k) for k in ('name', 'location', 'total', 'fast', 'slow', 'unknown',
-                                                     'sponsored', 'fast_reviews_median', 'bought_top', 'verdict')}
+                                                     'local', 'overseas', 'overseas_intl', 'overseas_slow',
+                                                     'origin_unknown', 'sponsored', 'fast_reviews_median', 'bought_top',
+                                                     'verdict')}
                               for r in res if 'error' not in r]).to_excel(xw, sheet_name='Summary', index=False)
                 rows = [x for r in res for x in r.get('rows', [])]
                 pd.DataFrame(rows).drop(columns=['image'], errors='ignore').to_excel(xw, sheet_name='Listings', index=False)
