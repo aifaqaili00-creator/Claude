@@ -812,7 +812,8 @@ def api_browser(h, q):
             await S.checker.start()
             for c in ac.MARKETS:
                 S.checker.locations[c] = {'ok': None, 'text': ''}
-            await asyncio.gather(*(S.checker.ensure_location(c) for c in ac.MARKETS))
+            for c in ac.MARKETS:                                # one at a time: Amazon's popups need the focused tab
+                await S.checker.ensure_location(c, manual=True)
         fut = S.run(all_locations())
     elif action == 'restart':
         async def restart():

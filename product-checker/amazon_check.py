@@ -247,6 +247,7 @@ class Checker:
         self.locations = {c: {'ok': None, 'text': ''} for c in MARKETS}
         self._lock = asyncio.Lock()
         self._loc_lock = {c: asyncio.Lock() for c in MARKETS}
+        self._loc_any = asyncio.Lock()                       # one location popup at a time
 
     # ---------- browser ----------
     async def start(self):
@@ -262,6 +263,8 @@ class Checker:
                 opts = dict(user_data_dir=str(PROFILE_DIR), headless=False, viewport={'width': 1280, 'height': 900},
                             locale='en-US', ignore_default_args=['--enable-automation'],
                             args=['--disable-blink-features=AutomationControlled', '--no-first-run',
+                                  '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+                                  '--disable-renderer-backgrounding',
                                   '--no-default-browser-check', '--disable-features=Translate'])
                 exe = os.environ.get('PRODUCT_CHECKER_BROWSER')
                 tries = [dict(executable_path=exe)] if exe else [dict(channel='chrome'), dict(channel='msedge'), {}]
@@ -446,60 +449,138 @@ class Checker:
             await page.wait_for_timeout(1500)
 
     async def _location_text(self, page):
+        """The 'Deliver to' text in Amazon's header. Both lines: the new UAE header says "Delivering to Dubai" in the
+        first line and "Update location" in the second."""
         try:
-            return (await page.locator('#glow-ingress-line2').inner_text(timeout=2500)).strip()
+            parts = await page.evaluate("""() => ['#glow-ingress-line1', '#glow-ingress-line2']
+              .map(s => (document.querySelector(s) || {}).innerText || '').map(t => t.trim()).filter(Boolean)""")
+            if not parts:
+                parts = [await page.locator('#nav-global-location-popover-link').inner_text(timeout=2500)]
+            return ' '.join(' '.join(parts).split())
         except Exception:
             return ''
 
     def _location_ok(self, code, text):
         return any(k in text.lower() for k in MARKETS[code]['expect'])
 
-    async def ensure_location(self, code, page=None):
-        """Make sure Amazon delivers to the chosen place (postcode 2000, Dubai, 10001). Returns (ok, text)."""
+    async def ensure_location(self, code, page=None, manual=None):
+        """Make sure Amazon delivers to the chosen place (postcode 2000, Dubai, 10001). Returns (ok, text).
+
+        Only one location is set at a time, in a tab brought to the front: Amazon's location popups and their
+        suggestion lists only work in the focused tab. If the automatic attempt fails and you started the work
+        yourself (not the background refresh), the window opens so you can pick the place; we wait up to 2 minutes."""
         await self.start()
+        manual = (not BACKGROUND.get()) if manual is None else manual
         async with self._loc_lock[code]:
             if page is not None and self.locations[code]['ok']:      # another check just set it
                 await self._goto(page, page.url, code)
                 return True, await self._location_text(page)
             own = page is None
             page = page or await self.ctx.new_page()
+            m = MARKETS[code]
             try:
-                m = MARKETS[code]
-                if own or not page.url.startswith(m['site']):
-                    await self._goto(page, m['site'] + '/', code)
-                text = await self._location_text(page)
-                if not self._location_ok(code, text):
-                    self.log('%s: setting delivery location to %s...' % (m['name'], m['location']))
-                    await self._set_location(page, code)
-                    await self._goto(page, page.url, code)
+                async with self._loc_any:                             # one popup at a time, across marketplaces
+                    if own or not page.url.startswith(m['site']):
+                        await self._goto(page, m['site'] + '/', code)
                     text = await self._location_text(page)
-                ok = self._location_ok(code, text)
-                self.locations[code] = {'ok': ok, 'text': text}
-                if not ok:
-                    self.log('%s: could not set the delivery location automatically (it shows "%s"). '
-                             'Use "Show browser" and set it to %s once.' % (m['name'], text or '?', m['location']))
-                return ok, text
+                    if not self._location_ok(code, text):
+                        self.log('%s: setting delivery location to %s...' % (m['name'], m['location']))
+                        for attempt in range(2):
+                            problem = await self._set_location(page, code)
+                            await self._goto(page, page.url, code)
+                            text = await self._location_text(page)
+                            if self._location_ok(code, text):
+                                break
+                        if not self._location_ok(code, text) and manual:
+                            text = await self._ask_location(page, code, problem)
+                    ok = self._location_ok(code, text)
+                    self.locations[code] = {'ok': ok, 'text': text}
+                    if ok:
+                        self.log('%s: delivery location is %s ✓' % (m['name'], m['location']))
+                    else:
+                        self.log('%s: could not set the delivery location (it shows "%s"%s). Press "Set locations now" '
+                                 'in Settings, then choose %s in the window.' % (
+                                     m['name'], text or '?', ('; the form said: ' + problem) if problem else '', m['location']))
+                    return ok, text
             finally:
                 if own:
                     await page.close()
 
+    async def _ask_location(self, page, code, problem=None, wait_s=120):
+        """Show the window with Amazon's location popup open and wait until you have picked the place."""
+        m = MARKETS[code]
+        self.log('%s: please choose %s in the browser window that just opened and press Apply. '
+                 'The app waits up to 2 minutes.%s' % (m['name'], m['location'],
+                                                      (' (Amazon said: %s)' % problem) if problem else ''))
+        await self.show(page, user=False)
+        try:
+            await self._open_location_popup(page)
+            deadline = time.time() + wait_s
+            while time.time() < deadline:
+                await page.wait_for_timeout(2000)
+                try:
+                    text = await self._location_text(page)
+                except Exception:
+                    text = ''
+                if self._location_ok(code, text):
+                    return text
+            return await self._location_text(page)
+        finally:
+            await self._release()
+
+    async def _open_location_popup(self, page):
+        for sel in ('#nav-global-location-popover-link', '#glow-ingress-block', 'text=/Update location|Deliver(ing)? to/i'):
+            try:
+                el = page.locator(sel).first
+                if await el.count():
+                    await el.click(timeout=6000)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _pick_option(self, page, name, timeout=6000):
+        """Click the suggestion whose text is `name` (Amazon's city lists). True if one was clicked."""
+        opts = page.locator('[role="option"], [role="listbox"] li, .a-dropdown-item, .a-popover li, '
+                            'ul[id*="GLUX" i] li, .autocomplete li, ul li a',
+                            has_text=re.compile(r'^\s*%s\s*$' % re.escape(name), re.I))
+        try:
+            await opts.first.wait_for(state='visible', timeout=timeout)
+            await opts.first.click()
+            return True
+        except Exception:
+            return False
+
+    async def _form_problem(self, page):
+        try:
+            t = await page.evaluate("""() => [...document.querySelectorAll('.a-alert-content, [role="alert"], .a-color-error')]
+              .filter(e => e.offsetParent !== null).map(e => (e.innerText || '').trim()).filter(Boolean)[0] || ''""")
+            return ' '.join(str(t).split())[:120] or None
+        except Exception:
+            return None
+
     async def _set_location(self, page, code):
+        """Fill in Amazon's location popup once. Returns the form's error text if it showed one, else None."""
         loc = MARKETS[code]['location']
         try:
-            await page.locator('#nav-global-location-popover-link, #glow-ingress-block').first.click(timeout=8000)
+            await page.bring_to_front()
         except Exception:
-            return
-        pop = page.locator('#GLUXZipUpdateInput, #GLUXPostalCodeWithCity_PostalCodeInput, '
-                           '#GLUXCityList, [id^="GLUXCity"], .a-popover-wrapper')
+            pass
+        if not await self._open_location_popup(page):
+            return 'the "Deliver to" link was not found'
+        fields = page.locator('#GLUXZipUpdateInput, #GLUXPostalCodeWithCity_PostalCodeInput, #GLUXCityList, '
+                              'select[id*="GLUX"], input[placeholder*="city" i], input[aria-label*="city" i], '
+                              '[role="combobox"], .a-popover-wrapper')
         try:
-            await pop.first.wait_for(timeout=8000)
+            await fields.first.wait_for(timeout=8000)
+            await page.wait_for_timeout(400)
         except Exception:
-            return
+            return 'the location popup did not open'
         try:
-            if await page.locator('#GLUXZipUpdateInput').count():                       # USA style
+            if await page.locator('#GLUXZipUpdateInput').count():                       # USA: ZIP code
                 await page.fill('#GLUXZipUpdateInput', loc)
                 await page.locator('#GLUXZipUpdate input, #GLUXZipUpdate').first.click()
-            elif await page.locator('#GLUXPostalCodeWithCity_PostalCodeInput').count():  # Australia style
+            elif await page.locator('#GLUXPostalCodeWithCity_PostalCodeInput').count():  # Australia: postcode + suburb
                 await page.fill('#GLUXPostalCodeWithCity_PostalCodeInput', loc)
                 await page.wait_for_timeout(1200)
                 dd = page.locator('#GLUXPostalCodeWithCity_DropdownButton, #GLUXPostalCodeWithCity_CityValue')
@@ -510,25 +591,45 @@ class Checker:
                         await opt.first.click()
                     else:
                         await page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]').first.click()
-                await page.locator('#GLUXPostalCodeWithCityApplyButton, #GLUXPostalCodeWithCityApplyButton input, '
-                                   'span:has-text("Apply") input').first.click()
-            else:                                                                        # UAE style: pick a city
+                else:
+                    await self._pick_option(page, 'Sydney', 2500)
+                await self._apply(page)
+            else:                                                                        # UAE: a city
                 sel = page.locator('select[id*="GLUX"], select[name*="city" i]')
-                if await sel.count():
+                box = page.locator('input[placeholder*="city" i], input[aria-label*="city" i], #GLUXCityList input, '
+                                   '[role="combobox"]').first
+                if await sel.count():                                                    # older form: a list
                     await sel.first.select_option(label=loc)
+                elif await box.count():                                                  # new form: type and pick
+                    await box.click()
+                    await box.fill('')
+                    await box.press_sequentially(loc, delay=60)
+                    if not await self._pick_option(page, loc):
+                        await box.press('ArrowDown')
+                        await box.press('Enter')
                 else:
                     await page.locator('.a-popover-wrapper >> text=/Select.*city|Choose.*city|City/i').first.click(timeout=4000)
-                    await page.locator('.a-popover-wrapper a, .a-popover-wrapper li, [role="option"]',
-                                       has_text=re.compile(r'^\s*%s\s*$' % loc, re.I)).first.click(timeout=4000)
-                await page.locator('.a-popover-wrapper >> text=/^(Apply|Done|Confirm|Save)$/i').first.click(timeout=4000)
+                    await self._pick_option(page, loc, 4000)
+                await page.wait_for_timeout(300)
+                await self._apply(page)
             await page.wait_for_timeout(1500)
+            problem = await self._form_problem(page)
             done = page.locator('#GLUXConfirmClose, .a-popover-footer input[name="glowDoneButton"], '
                                 'button[name="glowDoneButton"]')
             if await done.count():
                 await done.first.click()
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(800)
+            return problem
         except Exception as e:
-            self.log('%s: location form not as expected (%s)' % (MARKETS[code]['name'], str(e).splitlines()[0][:80]))
+            return 'form not as expected (%s)' % str(e).splitlines()[0][:80]
+
+    async def _apply(self, page):
+        btn = page.get_by_role('button', name=re.compile(r'^\s*(Apply|Done|Confirm|Save)\s*$', re.I))
+        if await btn.count():
+            await btn.first.click(timeout=4000)
+            return
+        await page.locator('#GLUXPostalCodeWithCityApplyButton input, #GLUXPostalCodeWithCityApplyButton, '
+                           '.a-popover-wrapper >> text=/^(Apply|Done|Confirm|Save)$/i').first.click(timeout=4000)
 
     # ---------- the check ----------
     async def check(self, keyword, code, fast_days=3, pages=1, progress=None, local_days=LOCAL_MAX_DAYS):

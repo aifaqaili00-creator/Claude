@@ -12,7 +12,7 @@ try:
 except ImportError:                                          # pragma: no cover (Python < 3.9)
     ZoneInfo = None
 
-VERSION = '6.3'
+VERSION = '6.4'
 APP_DIR = Path(os.environ.get('PC_APP_DIR') or
                Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker')
 MARKETS = ('US', 'AU', 'AE')

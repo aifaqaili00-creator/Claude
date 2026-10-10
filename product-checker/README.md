@@ -142,10 +142,12 @@ The automatic Amazon checks run in a **separate background browser**, kept minim
 
 ## Delivery locations
 
-The checks use postcode **2000** (Sydney), **Dubai** and ZIP **10001** (New York). You can change these in Settings. They're set automatically on the first check, and the pills at the top turn green when Amazon confirms them. If one stays orange:
-1. Press **Show checker browser**.
-2. Click **"Deliver to"** on that Amazon tab and set the location once.
-3. Press **Hide** (Settings → Background browser).
+The checks use postcode **2000** (Sydney), **Dubai** and ZIP **10001** (New York). You can change these in Settings. They're set automatically on the first check, and the pills at the top turn green when Amazon confirms them. Amazon remembers them in the app's own browser, so this happens once.
+
+- **One at a time:** the app sets the countries one after another, in a tab brought to the front, because Amazon's location popups only work in the active tab. Several checks at once simply wait their turn.
+- **UAE:** Amazon.ae now asks for a city in a box with suggestions. The app types "Dubai" and picks it from the list.
+- **If Amazon's popup still won't take it:** the checker window opens on that page with the popup open, and the progress line says, for example, "UAE: please choose Dubai in the browser window that just opened and press Apply. The app waits up to 2 minutes." Pick the place and press Apply; the app carries on by itself. This only happens for checks you start, never during the automatic refresh.
+- **To redo all three:** Settings → **Set locations now**.
 
 ## Speed
 
