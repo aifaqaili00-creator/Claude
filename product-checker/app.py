@@ -1059,7 +1059,8 @@ def main():
         if not no_window:
             cp.open_app_window('http://127.0.0.1:%d/' % port, APP_DIR / 'app-window')
         return
-    instance = singleton.Instance()
+    import zlib
+    instance = singleton.Instance('ProductCheckerV6-%08x' % zlib.crc32(str(APP_DIR).lower().encode()))   # one per data folder
     if not instance.acquire():
         print('Product Checker is already starting.', flush=True)
         return
