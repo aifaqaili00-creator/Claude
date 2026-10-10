@@ -211,8 +211,10 @@ async def scan(checker, code, cats, kinds, hide_risky, progress):
             progress('Read %d of %d lists (%s, %s)' % (done[0], len(jobs), cat['name'],
                                                        'Movers & Shakers' if kind == 'movers' else 'New Releases'))
     await asyncio.gather(*(one(k, c) for k, c in jobs))
-    return {'market': code, 'scanned': len(items), 'lists': len(jobs), 'categories': cats,
-            'ideas': score_ideas(items, code, hide_risky)}
+    out = {'market': code, 'scanned': len(items), 'lists': len(jobs), 'categories': cats, 'items': items}
+    if hide_risky is not None:
+        out['ideas'] = score_ideas(items, code, hide_risky)
+    return out
 
 
 async def suggest(checker, code, seed, progress=None):

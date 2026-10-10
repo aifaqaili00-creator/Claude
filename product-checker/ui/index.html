@@ -1,1074 +1,384 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="pc-token" content="%%PC_TOKEN%%">
 <title>Product Checker</title>
 <link rel="icon" href="/favicon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<style>
-/* Same look as the AU & UAE Product Finder: a seller's research desk. */
-:root {
-  --bg: #f3f5f4; --surface: #ffffff; --sunk: #eaeeec; --ink: #14201b; --ink-2: #48544f; --muted: #76827d; --line: #d8dfdb;
-  --accent: #1f4fd6; --accent-ink: #ffffff; --accent-soft: #e4ebfd;
-  --good: #0ca30c; --good-text: #00650a; --good-soft: #e3f4e3;
-  --warn: #fab219; --warn-text: #7a4e00; --warn-soft: #fdf1d6;
-  --weak-text: #56615c; --weak-soft: #eceeed;
-  --bad: #d03b3b; --bad-text: #a32222; --bad-soft: #fbe6e5;
-  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
-  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-  --r: 10px;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0e1412; --surface: #161e1b; --sunk: #1d2723; --ink: #e8efec; --ink-2: #b5c1bc; --muted: #84918b; --line: #2a3531;
-    --accent: #7f9cff; --accent-ink: #0b1020; --accent-soft: #1d2848;
-    --good-text: #4fd04f; --good-soft: #13301a; --warn-text: #f6c454; --warn-soft: #3a2d0d;
-    --weak-text: #aab5b0; --weak-soft: #222c28; --bad-text: #f08a8a; --bad-soft: #3a1a1a;
-    color-scheme: dark;
-  }
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body { font: 14.5px/1.5 var(--body); background: var(--bg); color: var(--ink); }
-button, select, input { font: inherit; color: inherit; }
-button { cursor: pointer; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-a { color: var(--accent); }
-.wrap { max-width: 1400px; margin: 0 auto; padding-inline: 22px; }
-.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.eyebrow { font: 500 11.5px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.small { font-size: 13px; color: var(--ink-2); }
-.muted { color: var(--muted); }
-h1 { font: 800 26px/1.1 var(--display); font-stretch: 88%; margin: 0; letter-spacing: -.01em; }
-h2 { font: 700 19px/1.2 var(--display); font-stretch: 92%; margin: 0; }
-h3 { font: 600 15px/1.3 var(--body); margin: 0; }
-
-/* Top strip */
-.top { background: var(--surface); border-bottom: 1px solid var(--line); padding-block: 16px 14px; }
-.top-row { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
-.status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; white-space: nowrap; background: var(--sunk); color: var(--ink-2); border: 0; }
-.pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); display: inline-block; }
-.pill.good { background: var(--good-soft); color: var(--good-text); } .pill.good i { background: var(--good); }
-.pill.warn { background: var(--warn-soft); color: var(--warn-text); } .pill.warn i { background: var(--warn); }
-.pill.bad { background: var(--bad-soft); color: var(--bad-text); } .pill.bad i { background: var(--bad); }
-.pill.weak { background: var(--weak-soft); color: var(--weak-text); }
-.pill.accent { background: var(--accent-soft); color: var(--ink); }
-.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 13px; font-weight: 500; white-space: nowrap; }
-.btn:hover { border-color: var(--ink-2); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn.primary:hover { filter: brightness(1.08); }
-.btn.big { padding: 10px 20px; font-size: 15px; }
-.btn.slim { padding: 3px 9px; font-size: 12.5px; }
-.btn:disabled { opacity: .55; cursor: default; }
-.seg { display: inline-flex; background: var(--sunk); border-radius: 9px; padding: 3px; gap: 2px; }
-.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
-.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
-input[type="text"], input[type="number"], select { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-input[type="number"] { font-family: var(--mono); width: 90px; }
-
-/* Nav */
-.nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
-.nav .wrap { display: flex; gap: 4px; padding-block: 7px; overflow-x: auto; }
-.nav button { border: 0; background: transparent; color: var(--ink-2); padding: 6px 12px; border-radius: 7px; font-size: 14px; white-space: nowrap; }
-.nav button b { font-family: var(--mono); font-weight: 500; color: var(--muted); margin-right: 6px; }
-.nav button:hover { background: var(--sunk); color: var(--ink); }
-.nav button[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
-.nav button[aria-current="page"] b { color: var(--accent); }
-
-main { padding-block: 20px 60px; }
-section.view { display: none; gap: 16px; }
-section.view.on { display: grid; }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; min-width: 0; }
-.head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
-.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.field { display: grid; gap: 5px; }
-.field > label { font: 500 11.5px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-
-/* Search bar */
-.search { display: grid; grid-template-columns: minmax(240px, 1fr) auto auto; gap: 12px; align-items: end; }
-.search input[type="text"] { font-size: 17px; padding: 11px 14px; width: 100%; }
-@media (max-width: 900px) { .search { grid-template-columns: 1fr; } }
-.progress { display: flex; gap: 10px; align-items: center; font-size: 13.5px; color: var(--ink-2); min-height: 22px; }
-.spin { width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s .8s linear infinite; flex: none; }
-@keyframes s { to { transform: rotate(360deg); } }
-
-/* Market cards */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
-.mcard { display: grid; gap: 12px; align-content: start; }
-.mcard.opportunity { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); }
-.mtop { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.split > div { display: flex; align-items: center; gap: 10px; }
-.split .v { font: 800 44px/1 var(--display); font-stretch: 85%; }
-.split .of { color: var(--ink-2); font-size: 13px; line-height: 1.35; }
-.big { display: flex; align-items: baseline; gap: 8px; }
-.big .v { font: 800 44px/1 var(--display); font-stretch: 85%; }
-.big .of { color: var(--ink-2); font-size: 14px; }
-.bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--sunk); gap: 2px; }
-.bar span { display: block; }
-.verdict { border-radius: 8px; padding: 9px 11px; font-size: 13.5px; }
-.verdict.opportunity { background: var(--good-soft); color: var(--good-text); }
-.verdict.some { background: var(--warn-soft); color: var(--warn-text); }
-.verdict.crowded { background: var(--bad-soft); color: var(--bad-text); }
-.verdict.none, .verdict.error { background: var(--weak-soft); color: var(--weak-text); }
-.facts { display: grid; margin: 0; }
-.facts div { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
-.facts dt { color: var(--muted); font: 500 11.5px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .04em; }
-.facts dd { margin: 0; }
-
-/* Tables */
-.tablewrap { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
-table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
-th { position: sticky; top: 0; background: var(--surface); z-index: 1; text-align: left; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 10px 10px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; user-select: none; }
-th.r, td.r { text-align: right; }
-th:hover { color: var(--ink); }
-td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-td.r { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-tr:hover td { background: color-mix(in srgb, var(--sunk) 55%, transparent); }
-tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--good); }
-.title { max-width: 560px; }
-.title a { color: var(--ink); text-decoration: none; cursor: pointer; }
-.title a:hover { color: var(--accent); text-decoration: underline; }
-.sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.flag { font-size: 11.5px; border-radius: 5px; padding: 1px 6px; background: var(--warn-soft); color: var(--warn-text); }
-.up { color: var(--good-text); } .down { color: var(--bad-text); }
-
-/* Rank */
-.drop { border: 2px dashed var(--line); border-radius: var(--r); padding: 28px; text-align: center; cursor: pointer; background: var(--surface); transition: border-color .15s, background .15s; }
-.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
-.drop b { font: 700 18px/1.3 var(--display); display: block; margin-bottom: 4px; }
-.kpis { display: flex; flex-wrap: wrap; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
-.kpi { flex: 1 1 150px; background: var(--surface); padding: 12px 16px; display: grid; gap: 2px; }
-.kpi .v { font: 700 24px/1.1 var(--display); font-stretch: 92%; }
-.kpi .s { font-size: 12.5px; color: var(--ink-2); }
-
-/* History */
-.hist { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.hitem { text-align: left; display: grid; gap: 8px; cursor: pointer; }
-.hitem:hover { border-color: var(--accent); }
-
-/* Settings */
-.sgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
-.note { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; }
-.log { font: 12.5px/1.6 var(--mono); color: var(--ink-2); max-height: 260px; overflow: auto; white-space: pre-wrap; }
-
-/* Toasts */
-.toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 50; max-width: 420px; }
-.toast { background: var(--ink); color: var(--bg); border-radius: 9px; padding: 10px 14px; font-size: 13.5px; box-shadow: 0 6px 24px rgba(0,0,0,.25); animation: in .2s ease-out; }
-@keyframes in { from { transform: translateY(8px); opacity: 0; } }
-.empty { padding: 40px 20px; text-align: center; color: var(--muted); }
-
-/* Ideas */
-.igrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.icard { display: grid; grid-template-columns: 88px 1fr; gap: 12px; align-content: start; }
-.icard .pic { width: 88px; height: 88px; border-radius: 8px; background: #fff; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
-.icard .pic img { max-width: 84px; max-height: 84px; object-fit: contain; }
-.icard .body { display: grid; gap: 6px; min-width: 0; }
-.clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.icard .acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.icard .kwin { width: 100%; padding: 5px 8px; font-size: 13px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 11px; font-size: 13px; color: var(--ink-2); }
-.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.chip.risky { border-style: dashed; }
-
-/* Xray */
-.steps { margin: 0; padding-left: 22px; display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; }
-.xgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; }
-@media (max-width: 900px) { .xgrid { grid-template-columns: 1fr; } }
-.xverdict { display: grid; gap: 10px; align-content: start; }
-.xverdict .v { font: 800 40px/1 var(--display); font-stretch: 85%; }
-.xverdict.good { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); } .xverdict.good .v { color: var(--good-text); }
-.xverdict.warn .v { color: var(--warn-text); } .xverdict.bad .v { color: var(--bad-text); }
-.meter { display: flex; gap: 3px; } .meter i { flex: 1; height: 8px; border-radius: 3px; background: var(--sunk); }
-.meter i.on { background: currentColor; }
-.reasons { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 14px; }
-.reasons li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; align-items: start; }
-.reasons li::before { font: 600 12px/20px var(--mono); text-align: center; border-radius: 5px; }
-.reasons li.good::before { content: '✓'; background: var(--good-soft); color: var(--good-text); }
-.reasons li.warn::before { content: '!'; background: var(--warn-soft); color: var(--warn-text); }
-.reasons li.bad::before { content: '✕'; background: var(--bad-soft); color: var(--bad-text); }
-.stack { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--sunk); }
-.stack span { display: block; min-width: 3px; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 13px; color: var(--ink-2); }
-.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
-[hidden] { display: none !important; }
-</style>
+<script>
+/* Apply the saved theme before the first paint, so the window never flashes the wrong colours. */
+(function () {
+  var pref = 'light';
+  try { pref = localStorage.getItem('pcTheme') || 'light'; } catch (e) {}
+  var dark = pref === 'dark' || (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme-pref', pref);
+})();
+</script>
+<link rel="stylesheet" href="/ui/css/tokens.css">
+<link rel="stylesheet" href="/ui/css/app.css">
 </head>
 <body>
-<header class="top">
-  <div class="wrap top-row">
-    <div>
-      <div class="eyebrow">Amazon AU · UAE · US seller desk</div>
-      <h1>Product Checker</h1>
-    </div>
-    <div class="status" id="status"></div>
-    <div class="row">
-      <button class="btn" id="btnShow" title="Show the background browser that runs the checks">Show checker browser</button>
-      <button class="btn primary" id="btnH10" title="Opens in your own Chrome profile">Open Helium 10</button>
-    </div>
-  </div>
-</header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.9 10.6c.6.6.9 1.4.9 2.4h6c0-1 .3-1.8.9-2.4A6 6 0 0 0 12 3z"/></symbol>
+  <symbol id="i-tags" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.4"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 15l3-3 2 2 3-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-browser" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 3.9L2.6 17.5a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4.5M12 17h.01"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+</svg>
 
-<nav class="nav"><div class="wrap" id="nav">
-  <button data-view="check" aria-current="page"><b>1</b>Check a product</button>
-  <button data-view="ideas"><b>2</b>New product ideas</button>
-  <button data-view="xray"><b>3</b>Xray analysis</button>
-  <button data-view="rank"><b>4</b>Top products from a file</button>
-  <button data-view="history"><b>5</b>History</button>
-  <button data-view="settings"><b>6</b>Settings</button>
-</div></nav>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1f63d0"/><path d="M8 21l5-6 4 3 7-9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><b>Product Checker</b><span>Amazon AU · UAE · US</span></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Main">
+      <div class="grp">Research</div>
+      <a href="#/check" data-view="check" title="Check sellers"><svg class="icon"><use href="#i-search"/></svg><span>Check sellers</span></a>
+      <a href="#/ideas" data-view="ideas" title="Product ideas"><svg class="icon"><use href="#i-bulb"/></svg><span>Product ideas</span></a>
+      <a href="#/niche" data-view="niche" title="Niche keywords"><svg class="icon"><use href="#i-tags"/></svg><span>Niche keywords</span></a>
+      <div class="grp">Helium 10</div>
+      <a href="#/xray" data-view="xray" title="Xray analysis"><svg class="icon"><use href="#i-scan"/></svg><span>Xray analysis</span></a>
+      <a href="#/rank" data-view="rank" title="Rank a file"><svg class="icon"><use href="#i-file"/></svg><span>Rank a file</span></a>
+      <div class="grp">Your data</div>
+      <a href="#/history" data-view="history" title="History"><svg class="icon"><use href="#i-clock"/></svg><span>History</span></a>
+      <a href="#/settings" data-view="settings" title="Settings"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span></a>
+    </nav>
+    <div class="side-foot">
+      <span id="checkerPill" class="pill weak"><i></i><span>Checker</span></span>
+      <span class="lbl">Theme</span>
+      <div class="seg theme-seg" id="themeSeg" role="group" aria-label="Theme">
+        <button type="button" data-v="light" title="Light" aria-label="Light theme"><svg class="icon sm"><use href="#i-sun"/></svg></button>
+        <button type="button" data-v="dark" title="Dark" aria-label="Dark theme"><svg class="icon sm"><use href="#i-moon"/></svg></button>
+        <button type="button" data-v="system" title="Same as Windows" aria-label="Same as Windows"><svg class="icon sm"><use href="#i-monitor"/></svg></button>
+      </div>
+    </div>
+  </aside>
 
-<main class="wrap">
-  <!-- 1. Check -->
-  <section class="view on" id="v-check">
-    <div class="panel">
-      <form class="search" id="checkForm" autocomplete="off">
-        <div class="field">
-          <label for="kw">Product to check</label>
-          <input type="text" id="kw" placeholder="e.g. moving bags, overnight oats containers, sauna hat">
-        </div>
-        <div class="field">
-          <label>Countries</label>
-          <div class="seg" id="mkSeg">
-            <button type="button" data-mk="AU" aria-pressed="true">Australia</button>
-            <button type="button" data-mk="AE" aria-pressed="true">UAE</button>
-            <button type="button" data-mk="US" aria-pressed="true">USA</button>
+  <div class="maincol">
+    <header class="topbar">
+      <div class="ttl"><h1 id="pageTitle">Check sellers</h1><div class="small" id="pageSub"></div></div>
+      <div class="status" id="status"></div>
+      <div class="row">
+        <button class="btn ghost" id="btnShow" title="Show the background browser that runs the checks"><svg class="icon sm"><use href="#i-browser"/></svg>Checker browser</button>
+        <button class="btn primary" id="btnH10" title="Opens in your own Chrome profile">Open Helium 10<svg class="icon sm"><use href="#i-external"/></svg></button>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- Check sellers -->
+      <section class="view" id="v-check">
+        <div class="panel">
+          <form class="search" id="checkForm" autocomplete="off">
+            <div class="field">
+              <label for="kw">Product to check</label>
+              <input type="text" id="kw" placeholder="e.g. moving bags, overnight oats containers, sauna hat">
+            </div>
+            <div class="field">
+              <span class="lbl">Countries</span>
+              <div class="seg" id="mkSeg">
+                <button type="button" data-mk="AU" data-v="AU" aria-pressed="true">Australia</button>
+                <button type="button" data-mk="AE" data-v="AE" aria-pressed="true">UAE</button>
+                <button type="button" data-mk="US" data-v="US" aria-pressed="true">USA</button>
+              </div>
+            </div>
+            <div class="row"><button class="btn primary big" id="btnCheck" type="submit">Check sellers</button></div>
+          </form>
+          <div class="row" style="margin-top:10px; justify-content: space-between">
+            <div class="progress" id="progress"></div>
+            <label class="small"><input type="checkbox" id="refresh"> Search again (ignore saved results)</label>
           </div>
         </div>
-        <div class="row">
-          <button class="btn primary big" id="btnCheck" type="submit">Check sellers</button>
-        </div>
-      </form>
-      <div class="row" style="margin-top:10px; justify-content: space-between">
-        <div class="progress" id="progress"></div>
-        <label class="small"><input type="checkbox" id="refresh"> Search again (ignore saved results)</label>
-      </div>
-    </div>
 
-    <div id="checkOut" hidden>
-      <div class="head" style="margin-bottom:12px">
-        <h2 id="checkTitle"></h2>
-        <div class="row">
-          <span class="small" id="checkWhen"></span>
-          <button class="btn" id="btnToXray" title="Run Helium 10 Xray on this search">Analyse with Xray</button>
-          <button class="btn" id="btnExportCheck">Save to Excel</button>
-        </div>
-      </div>
-      <div class="cards" id="cards"></div>
-    </div>
-
-    <div id="listOut" hidden>
-      <div class="head" style="margin-block:6px 10px">
-        <h2>Listings</h2>
-        <div class="row">
-          <div class="seg" id="spdSeg">
-            <button type="button" data-v="all" aria-pressed="true">All</button>
-            <button type="button" data-v="fast" aria-pressed="false">Fast</button>
-            <button type="button" data-v="local" aria-pressed="false">Local</button>
-            <button type="button" data-v="overseas" aria-pressed="false">Not local</button>
+        <div id="checkOut" hidden>
+          <div class="head" style="margin-bottom:12px">
+            <h2 id="checkTitle"></h2>
+            <div class="row">
+              <span class="small" id="checkWhen"></span>
+              <button class="btn" id="btnToXray" title="Run Helium 10 Xray on this search"><svg class="icon sm"><use href="#i-scan"/></svg>Analyse with Xray</button>
+              <button class="btn" id="btnExportCheck"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
+            </div>
           </div>
-          <div class="seg" id="lmSeg"></div>
-          <label class="small"><input type="checkbox" id="hideAds" checked> Hide ads</label>
+          <div class="cards" id="cards"></div>
         </div>
-      </div>
-      <div class="tablewrap"><table id="listTable"></table></div>
-      <p class="small">Green edge = arrives within the fast window, so the stock is already in that country. Click a title to open it in your Chrome profile.</p>
-    </div>
 
-    <div class="panel empty" id="checkEmpty">
-      <h2 style="color:var(--ink)">How many sellers deliver fast?</h2>
-      <p>Type a product and press <b>Check sellers</b>. All three Amazon sites are searched at the same time.<br>
-      If only <b>3–4 listings</b> arrive within a few days, the rest ship from overseas. Stock sent to Amazon (FBA) would stand out.</p>
-    </div>
-  </section>
-
-  <!-- 2. Ideas -->
-  <section class="view" id="v-ideas">
-    <div class="panel" style="display:grid; gap:14px">
-      <div><h2>New product ideas</h2>
-        <div class="small">What is booming or brand new on Amazon right now. Then check if it has reached Australia and the UAE yet: few local sellers there means a gap.</div></div>
-      <div class="row" style="align-items:end; gap:16px">
-        <div class="field"><label>Find ideas on</label>
-          <div class="seg" id="iMk">
-            <button type="button" data-v="US" aria-pressed="true">USA</button>
-            <button type="button" data-v="AU" aria-pressed="false">Australia</button>
-            <button type="button" data-v="AE" aria-pressed="false">UAE</button>
-          </div></div>
-        <div class="field"><label>Lists</label>
-          <div class="seg" id="iKinds">
-            <button type="button" data-v="movers" aria-pressed="true">Booming (Movers &amp; Shakers)</button>
-            <button type="button" data-v="new" aria-pressed="true">Hot new releases</button>
-          </div></div>
-        <label class="small"><input type="checkbox" id="iHide" checked> Hide risky products (electrical, kids, chemicals, medical)</label>
-        <button class="btn primary big" id="btnIdeas" type="button" style="margin-left:auto">Find product ideas</button>
-      </div>
-      <div id="iCatsWrap" hidden>
-        <div class="field"><label>Categories (click to switch on or off, then Find again)</label><div class="chips" id="iCats"></div></div>
-      </div>
-      <div class="progress" id="iProg"></div>
-    </div>
-
-    <div id="iOut" hidden style="display:grid; gap:14px">
-      <div class="head">
-        <div><h2 id="iTitle"></h2><div class="small" id="iSub"></div></div>
-        <div class="row">
-          <select id="iSort" title="Sort ideas">
-            <option value="score">Best ideas first</option><option value="pct">Biggest jump</option>
-            <option value="new">Newest releases</option><option value="reviews">Fewest reviews</option>
-          </select>
-          <button class="btn primary" id="btnIdeasCheck">Check top 12 in AU &amp; UAE</button>
+        <div id="listOut" hidden>
+          <div class="head" style="margin-block:6px 10px">
+            <h2>Listings</h2>
+            <div class="row">
+              <div class="seg" id="spdSeg">
+                <button type="button" data-v="all" aria-pressed="true">All</button>
+                <button type="button" data-v="fast" aria-pressed="false">Fast</button>
+                <button type="button" data-v="local" aria-pressed="false">Local</button>
+                <button type="button" data-v="overseas" aria-pressed="false">Not local</button>
+              </div>
+              <div class="seg" id="lmSeg"></div>
+              <label class="small"><input type="checkbox" id="hideAds" checked> Hide ads</label>
+            </div>
+          </div>
+          <div class="tablewrap"><table id="listTable"></table></div>
+          <p class="small" style="margin-top:8px">A green edge means it arrives within the fast window, so the stock is already in that country. Click a title to open it in your Chrome profile.</p>
         </div>
-      </div>
-      <div class="progress" id="iCheckProg"></div>
-      <div class="igrid" id="iGrid"></div>
-    </div>
 
-    <div class="panel" style="display:grid; gap:14px">
-      <div><h2>Search a niche</h2>
-        <div class="small">Type a niche, e.g. <i>tower fan</i>, <i>dog bed</i> or <i>kitchen organiser</i>. The app collects what shoppers type into Amazon's search box. Pick keywords to check demand and local sellers in each country.</div></div>
-      <form class="search" id="nForm" autocomplete="off" style="grid-template-columns: minmax(240px,1fr) auto auto">
-        <div class="field"><label for="nSeed">Niche</label><input type="text" id="nSeed" placeholder="e.g. tower fan"></div>
-        <div class="field"><label>Suggestions from</label>
-          <div class="seg" id="nMk">
-            <button type="button" data-v="US" aria-pressed="true">USA</button>
-            <button type="button" data-v="AU" aria-pressed="false">Australia</button>
-            <button type="button" data-v="AE" aria-pressed="false">UAE</button>
-          </div></div>
-        <div class="row"><button class="btn primary big" type="submit" id="btnNicheFind">Find niche keywords</button></div>
-      </form>
-      <div class="progress" id="nProg"></div>
-      <div id="nOut" hidden style="display:grid; gap:10px">
-        <div class="row" style="justify-content:space-between">
-          <div class="row"><span class="small">Check in</span>
-            <div class="seg" id="nCheckMk">
-              <button type="button" data-v="US" aria-pressed="true">USA</button>
-              <button type="button" data-v="AU" aria-pressed="true">Australia</button>
-              <button type="button" data-v="AE" aria-pressed="true">UAE</button>
-            </div></div>
-          <div class="row"><button class="btn" id="nTop">Select top 8</button><button class="btn primary" id="btnNiche">Check selected keywords</button></div>
+        <div class="panel empty" id="checkEmpty">
+          <h2>How many sellers deliver fast?</h2>
+          <p>Type a product and press <b>Check sellers</b>. All three Amazon sites are searched at the same time.<br>
+          If only <b>3–4 listings</b> arrive within a few days, the rest ship from overseas. Stock sent to Amazon (FBA) would stand out.</p>
         </div>
-        <div class="tablewrap"><table id="nTable"></table></div>
-        <p class="small"><b>Popularity</b> = how many of the app's suggestion searches returned this keyword. Higher means shoppers type it more. <b>Demand</b> = the top "bought in past month" badge in that country's results.</p>
-      </div>
-    </div>
-  </section>
+      </section>
 
-  <!-- 3. Xray -->
-  <section class="view" id="v-xray">
-    <div class="panel" style="display:grid; gap:14px">
-      <div class="search" style="grid-template-columns: minmax(240px,1fr) auto auto">
-        <div class="field">
-          <label for="xkw">Product / keyword</label>
-          <input type="text" id="xkw" placeholder="e.g. moving bags">
+      <!-- Product ideas -->
+      <section class="view" id="v-ideas">
+        <div class="panel stackv">
+          <div class="row" style="align-items:end; gap:16px">
+            <div class="field"><span class="lbl">Find ideas on</span>
+              <div class="seg" id="iMk">
+                <button type="button" data-v="US" aria-pressed="true">USA</button>
+                <button type="button" data-v="AU" aria-pressed="false">Australia</button>
+                <button type="button" data-v="AE" aria-pressed="false">UAE</button>
+              </div></div>
+            <div class="field"><span class="lbl">Lists</span>
+              <div class="seg" id="iKinds">
+                <button type="button" data-v="movers" aria-pressed="true">Booming (Movers &amp; Shakers)</button>
+                <button type="button" data-v="new" aria-pressed="true">Hot new releases</button>
+              </div></div>
+            <label class="small"><input type="checkbox" id="iHide" checked> Hide risky products (electrical, kids, chemicals, medical)</label>
+            <button class="btn primary big" id="btnIdeas" type="button" style="margin-left:auto">Find product ideas</button>
+          </div>
+          <div id="iCatsWrap" hidden>
+            <div class="field"><span class="lbl">Categories (click to switch on or off, then find again)</span><div class="chips" id="iCats"></div></div>
+          </div>
+          <div class="progress" id="iProg"></div>
         </div>
-        <div class="field">
-          <label>Amazon site</label>
-          <div class="seg" id="xMk">
-            <button type="button" data-v="AU" aria-pressed="true">Australia</button>
-            <button type="button" data-v="AE" aria-pressed="false">UAE</button>
-            <button type="button" data-v="US" aria-pressed="false">USA</button>
+
+        <div id="iOut" hidden class="stackv">
+          <div class="head">
+            <div><h2 id="iTitle"></h2><div class="small" id="iSub"></div></div>
+            <div class="row">
+              <select id="iSort" title="Sort ideas" aria-label="Sort ideas">
+                <option value="score">Best ideas first</option><option value="pct">Biggest jump</option>
+                <option value="new">Newest releases</option><option value="reviews">Fewest reviews</option>
+              </select>
+              <button class="btn primary" id="btnIdeasCheck">Check top 12 in AU &amp; UAE</button>
+            </div>
+          </div>
+          <div class="progress" id="iCheckProg"></div>
+          <div class="igrid" id="iGrid"></div>
+        </div>
+
+        <div class="panel empty" id="iEmpty">
+          <h2>What is booming on Amazon right now?</h2>
+          <p>Reads the Movers &amp; Shakers and Hot New Releases lists, then lets you check whether each idea has reached Australia and the UAE yet.<br>Few local sellers there means a gap.</p>
+        </div>
+      </section>
+
+      <!-- Niche keywords -->
+      <section class="view" id="v-niche">
+        <div class="panel stackv">
+          <form class="search" id="nForm" autocomplete="off">
+            <div class="field"><label for="nSeed">Niche</label><input type="text" id="nSeed" placeholder="e.g. tower fan, dog bed, kitchen organiser"></div>
+            <div class="field"><span class="lbl">Suggestions from</span>
+              <div class="seg" id="nMk">
+                <button type="button" data-v="US" aria-pressed="true">USA</button>
+                <button type="button" data-v="AU" aria-pressed="false">Australia</button>
+                <button type="button" data-v="AE" aria-pressed="false">UAE</button>
+              </div></div>
+            <div class="row"><button class="btn primary big" type="submit" id="btnNicheFind">Find niche keywords</button></div>
+          </form>
+          <div class="progress" id="nProg"></div>
+        </div>
+        <div id="nOut" hidden class="stackv">
+          <div class="row" style="justify-content:space-between">
+            <div class="row"><span class="small">Check in</span>
+              <div class="seg" id="nCheckMk">
+                <button type="button" data-v="US" aria-pressed="true">USA</button>
+                <button type="button" data-v="AU" aria-pressed="true">Australia</button>
+                <button type="button" data-v="AE" aria-pressed="true">UAE</button>
+              </div></div>
+            <div class="row"><button class="btn" id="nTop">Select top 8</button><button class="btn primary" id="btnNiche">Check selected keywords</button></div>
+          </div>
+          <div class="tablewrap"><table id="nTable"></table></div>
+          <p class="small"><b>Popularity</b> = how many of the app's suggestion searches returned this keyword. Higher means shoppers type it more. <b>Demand</b> = the top “bought in past month” badge in that country's results.</p>
+        </div>
+        <div class="panel empty" id="nEmpty">
+          <h2>Search a niche</h2>
+          <p>The app collects what shoppers type into Amazon's search box for your niche.<br>Pick keywords to check demand and local sellers in each country.</p>
+        </div>
+      </section>
+
+      <!-- Xray -->
+      <section class="view" id="v-xray">
+        <div class="panel stackv">
+          <div class="search">
+            <div class="field">
+              <label for="xkw">Product or keyword</label>
+              <input type="text" id="xkw" placeholder="e.g. moving bags">
+            </div>
+            <div class="field">
+              <span class="lbl">Amazon site</span>
+              <div class="seg" id="xMk">
+                <button type="button" data-v="AU" aria-pressed="true">Australia</button>
+                <button type="button" data-v="AE" aria-pressed="false">UAE</button>
+                <button type="button" data-v="US" aria-pressed="false">USA</button>
+              </div>
+            </div>
+            <div class="row"><button class="btn primary big" id="btnXOpen" type="button">Open search in Chrome<svg class="icon sm"><use href="#i-external"/></svg></button></div>
+          </div>
+          <ol class="steps">
+            <li><b>Open search in Chrome</b> opens the Amazon results in your Chrome profile (<span id="xProf">Sohaib</span>).</li>
+            <li>Click the <b>Helium 10</b> extension, then <b>Xray</b>. Wait until the numbers have loaded.</li>
+            <li>In Xray, click <b>Export</b> and save as <b>CSV</b>. The file is picked up from your Downloads folder automatically.</li>
+          </ol>
+          <div class="row" style="justify-content:space-between">
+            <div class="progress" id="xWatch"></div>
+            <label class="btn" style="cursor:pointer">Or choose an Xray file…<input type="file" id="xFile" accept=".csv,.xlsx,.xls" hidden></label>
           </div>
         </div>
-        <div class="row"><button class="btn primary big" id="btnXOpen" type="button">Open search in Chrome</button></div>
-      </div>
-      <ol class="steps">
-        <li><b>Open search in Chrome</b> opens the Amazon results in your Chrome profile (<span id="xProf">Sohaib</span>).</li>
-        <li>Click the <b>Helium 10</b> extension, then <b>Xray</b>. Wait until the numbers have loaded.</li>
-        <li>In Xray, click <b>Export</b> and save as <b>CSV</b>. The file is picked up from your Downloads folder automatically.</li>
-      </ol>
-      <div class="row" style="justify-content:space-between">
-        <div class="progress" id="xWatch"></div>
-        <label class="btn" style="cursor:pointer">Or choose an Xray file...<input type="file" id="xFile" accept=".csv,.xlsx,.xls" hidden></label>
-      </div>
-    </div>
 
-    <div id="xOut" hidden style="display:grid; gap:16px">
-      <div class="head">
-        <div><div class="eyebrow" id="xMeta"></div><h2 id="xTitle"></h2></div>
-        <div class="row"><button class="btn" id="btnXLocal">Check local sellers</button><button class="btn" id="btnXExport">Save to Excel</button></div>
-      </div>
-      <div class="xgrid">
-        <div class="panel xverdict" id="xVerdict"></div>
-        <div class="panel"><h3 style="margin-bottom:8px">Why</h3><ul class="reasons" id="xReasons"></ul></div>
-      </div>
-      <div class="kpis" id="xKpis"></div>
-      <div class="xgrid">
-        <div class="panel"><h3>Who fulfils the orders</h3><div id="xFul" style="margin-top:10px"></div></div>
-        <div class="panel"><h3>Where sellers are based</h3><div id="xCountry" style="margin-top:10px"></div></div>
-      </div>
-      <div>
-        <div class="head" style="margin-bottom:10px">
-          <h2>Listings by revenue</h2>
-          <div class="row">
-            <div class="seg" id="xShow">
-              <button type="button" data-v="all" aria-pressed="true">All</button>
-              <button type="button" data-v="beat" aria-pressed="false">Beatable</button>
-              <button type="button" data-v="new" aria-pressed="false">Under 1 year</button>
+        <div id="xOut" hidden class="stackv">
+          <div class="head">
+            <div><div class="eyebrow" id="xMeta"></div><h2 id="xTitle"></h2></div>
+            <div class="row"><button class="btn" id="btnXLocal">Check local sellers</button><button class="btn" id="btnXExport"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button></div>
+          </div>
+          <div class="xgrid">
+            <div class="panel xverdict" id="xVerdict"></div>
+            <div class="panel"><h3 style="margin-bottom:10px">Why</h3><ul class="reasons" id="xReasons"></ul></div>
+          </div>
+          <div class="kpis" id="xKpis"></div>
+          <div class="xgrid">
+            <div class="panel"><h3>Who fulfils the orders</h3><div id="xFul" style="margin-top:10px"></div></div>
+            <div class="panel"><h3>Where sellers are based</h3><div id="xCountry" style="margin-top:10px"></div></div>
+          </div>
+          <div>
+            <div class="head" style="margin-bottom:10px">
+              <h2>Listings by revenue</h2>
+              <div class="seg" id="xShow">
+                <button type="button" data-v="all" aria-pressed="true">All</button>
+                <button type="button" data-v="beat" aria-pressed="false">Beatable</button>
+                <button type="button" data-v="new" aria-pressed="false">Under 1 year</button>
+              </div>
+            </div>
+            <div class="tablewrap"><table id="xTable"></table></div>
+            <p class="small" style="margin-top:8px"><b>Beatable</b> = sells at least the target with few enough reviews to compete. <b>Left</b> = price minus the FBA fee and the 15% referral fee, before product cost and shipping.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Rank a file -->
+      <section class="view" id="v-rank">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a Helium 10 export">
+          <b>Drop a Helium 10 export here</b>
+          <span class="small">Black Box, Xray or any CSV / Excel with Title and Sales columns. Or click to choose a file.</span>
+          <input type="file" id="file" accept=".csv,.xlsx,.xls,.xlsm" hidden>
+        </div>
+        <div class="row" style="gap:16px">
+          <div class="field"><span class="lbl">Market</span>
+            <div class="seg" id="rkMk">
+              <button type="button" data-v="auto" aria-pressed="true">Auto</button>
+              <button type="button" data-v="AU" aria-pressed="false">Australia</button>
+              <button type="button" data-v="AE" aria-pressed="false">UAE</button>
+              <button type="button" data-v="US" aria-pressed="false">USA</button>
+            </div>
+          </div>
+          <div class="field"><span class="lbl">Show</span>
+            <div class="seg" id="rkShow">
+              <button type="button" data-v="10" aria-pressed="true">Top 10</button>
+              <button type="button" data-v="25" aria-pressed="false">Top 25</button>
+              <button type="button" data-v="good" aria-pressed="false">Good picks</button>
+              <button type="button" data-v="100" aria-pressed="false">Top 100</button>
             </div>
           </div>
         </div>
-        <div class="tablewrap"><table id="xTable"></table></div>
-        <p class="small"><b>Beatable</b> = sells at least the target with few enough reviews to compete. <b>Left</b> = price minus FBA fee and the 15% referral fee, before product cost and shipping.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- 3. Rank -->
-  <section class="view" id="v-rank">
-    <div class="drop" id="drop" tabindex="0">
-      <b>Drop a Helium 10 export here</b>
-      <span class="small">Black Box, Xray or any CSV / Excel with Title and Sales columns. Or click to choose a file.</span>
-      <input type="file" id="file" accept=".csv,.xlsx,.xls,.xlsm" hidden>
-    </div>
-    <div class="row">
-      <div class="field"><label>Market</label>
-        <div class="seg" id="rkMk">
-          <button type="button" data-v="auto" aria-pressed="true">Auto</button>
-          <button type="button" data-v="AU" aria-pressed="false">Australia</button>
-          <button type="button" data-v="AE" aria-pressed="false">UAE</button>
-          <button type="button" data-v="US" aria-pressed="false">USA</button>
+        <div id="rankOut" hidden class="stackv">
+          <div class="head">
+            <div><h2 id="rankTitle"></h2><div class="small" id="rankTarget"></div></div>
+            <div class="row">
+              <button class="btn primary" id="btnBatch">Check local sellers for these</button>
+              <button class="btn" id="btnExportRank"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
+            </div>
+          </div>
+          <div class="kpis" id="rankKpis"></div>
+          <div class="progress" id="batchProgress"></div>
+          <div class="tablewrap"><table id="rankTable"></table></div>
+          <p class="small"><b>Good pick</b> = enough sales, few reviews, no warning flags. <b>Check first</b> = good numbers, but read the flags. <b>Local sellers</b> = how many Amazon listings deliver fast for that product. Few means opportunity.</p>
         </div>
-      </div>
-      <div class="field"><label>Show</label>
-        <div class="seg" id="rkShow">
-          <button type="button" data-v="10" aria-pressed="true">Top 10</button>
-          <button type="button" data-v="25" aria-pressed="false">Top 25</button>
-          <button type="button" data-v="good" aria-pressed="false">Good picks</button>
-          <button type="button" data-v="100" aria-pressed="false">Top 100</button>
+      </section>
+
+      <!-- History -->
+      <section class="view" id="v-history">
+        <div class="head"><h2>Recent checks</h2><span class="small">Click one to see it again. No new search is used.</span></div>
+        <div class="hist" id="hist"></div>
+      </section>
+
+      <!-- Settings -->
+      <section class="view" id="v-settings">
+        <div class="sgrid">
+          <div class="panel stackv">
+            <h2>General</h2>
+            <div class="field"><span class="lbl">Theme</span>
+              <div class="seg" id="themeSeg2">
+                <button type="button" data-v="light"><svg class="icon sm"><use href="#i-sun"/></svg>Light</button>
+                <button type="button" data-v="dark"><svg class="icon sm"><use href="#i-moon"/></svg>Dark</button>
+                <button type="button" data-v="system"><svg class="icon sm"><use href="#i-monitor"/></svg>Same as Windows</button>
+              </div></div>
+            <div class="field"><label for="profile">Open links in this Chrome profile</label>
+              <div class="row"><select id="profile" style="flex:1; min-width:0"></select><button class="btn" id="btnProfiles">Refresh</button></div>
+            </div>
+            <div class="row"><button class="btn" id="btnTestProfile">Open Helium 10 in this profile<svg class="icon sm"><use href="#i-external"/></svg></button></div>
+            <div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
+            The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div>
+          </div>
+          <div class="panel stackv">
+            <h2>Delivery locations</h2>
+            <div class="row">
+              <div class="field"><label for="locAU">Australia postcode</label><input type="text" id="locAU" style="width:110px"></div>
+              <div class="field"><label for="locAE">UAE city</label><input type="text" id="locAE" style="width:110px"></div>
+              <div class="field"><label for="locUS">USA ZIP</label><input type="text" id="locUS" style="width:110px"></div>
+            </div>
+            <div class="row"><button class="btn" id="btnLoc">Set locations now</button><span class="small" id="locNote"></span></div>
+            <div class="small">Set automatically on the first check. If one stays orange, press <b>Checker browser</b>, click “Deliver to” on that Amazon tab and set it once.</div>
+          </div>
+          <div class="panel stackv">
+            <h2>Checks</h2>
+            <div class="row">
+              <div class="field"><label for="fastDays">Fast = within (days)</label><input type="number" id="fastDays" min="1" max="10"></div>
+              <div class="field"><label for="localDays">Local = within (days)</label><input type="number" id="localDays" min="2" max="21"></div>
+              <div class="field"><label for="pages">Result pages</label><input type="number" id="pages" min="1" max="3"></div>
+              <div class="field"><label for="cacheH">Reuse results (hours)</label><input type="number" id="cacheH" min="1" max="168"></div>
+            </div>
+            <div class="small">1 page = about 48–60 listings and is the fastest. Saved results are reused, so repeat checks are instant.</div>
+          </div>
+          <div class="panel stackv">
+            <h2>Background browser</h2>
+            <div class="row"><span id="bState" class="pill"></span>
+              <button class="btn" id="btnShow2">Show</button><button class="btn" id="btnHide">Hide</button><button class="btn" id="btnRestart">Restart</button></div>
+            <div class="log" id="log"></div>
+          </div>
         </div>
-      </div>
-    </div>
-    <div id="rankOut" hidden>
-      <div class="head" style="margin-bottom:10px">
-        <div><h2 id="rankTitle"></h2><div class="small" id="rankTarget"></div></div>
-        <div class="row">
-          <button class="btn primary" id="btnBatch">Check local sellers for these</button>
-          <button class="btn" id="btnExportRank">Save to Excel</button>
-        </div>
-      </div>
-      <div class="kpis" id="rankKpis" style="margin-bottom:14px"></div>
-      <div class="progress" id="batchProgress" style="margin-bottom:8px"></div>
-      <div class="tablewrap"><table id="rankTable"></table></div>
-      <p class="small"><b>Good pick</b> = enough sales, few reviews, no warning flags. <b>Check first</b> = good numbers, but read the flags. <b>Local sellers</b> = how many Amazon listings deliver fast for that product. Few means opportunity.</p>
-    </div>
-  </section>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-  <!-- 4. History -->
-  <section class="view" id="v-history">
-    <div class="head"><h2>Recent checks</h2><span class="small">Click one to see it again. No new search is used.</span></div>
-    <div class="hist" id="hist"></div>
-  </section>
-
-  <!-- 5. Settings -->
-  <section class="view" id="v-settings">
-    <div class="sgrid">
-      <div class="panel" style="display:grid; gap:12px; align-content:start">
-        <h2>Your Chrome profile</h2>
-        <div class="field"><label for="profile">Open links in</label>
-          <div class="row"><select id="profile" style="flex:1; min-width:0"></select><button class="btn" id="btnProfiles">Refresh</button></div>
-        </div>
-        <div class="row"><button class="btn" id="btnTestProfile">Open Helium 10 in this profile</button></div>
-        <div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.<br>
-        The automatic checks use a separate background browser. Chrome does not allow automation tools to control your everyday profile.</div>
-      </div>
-      <div class="panel" style="display:grid; gap:12px; align-content:start">
-        <h2>Delivery locations</h2>
-        <div class="row">
-          <div class="field"><label for="locAU">Australia postcode</label><input type="text" id="locAU" style="width:110px"></div>
-          <div class="field"><label for="locAE">UAE city</label><input type="text" id="locAE" style="width:110px"></div>
-          <div class="field"><label for="locUS">USA ZIP</label><input type="text" id="locUS" style="width:110px"></div>
-        </div>
-        <div class="row"><button class="btn" id="btnLoc">Set locations now</button><span class="small" id="locNote"></span></div>
-        <div class="small">Set automatically on the first check. If one stays orange, press <b>Show checker browser</b>, click "Deliver to" on that Amazon tab and set it once.</div>
-      </div>
-      <div class="panel" style="display:grid; gap:12px; align-content:start">
-        <h2>Checks</h2>
-        <div class="row">
-          <div class="field"><label for="fastDays">Fast = within (days)</label><input type="number" id="fastDays" min="1" max="10"></div>
-          <div class="field"><label for="pages">Result pages</label><input type="number" id="pages" min="1" max="3"></div>
-          <div class="field"><label for="localDays">Local = within (days)</label><input type="number" id="localDays" min="2" max="21"></div>
-          <div class="field"><label for="cacheH">Reuse results (hours)</label><input type="number" id="cacheH" min="1" max="168"></div>
-        </div>
-        <div class="small">1 page = about 48–60 listings and is the fastest. Saved results are reused so repeat checks are instant.</div>
-      </div>
-      <div class="panel" style="display:grid; gap:12px; align-content:start">
-        <h2>Background browser</h2>
-        <div class="row"><span id="bState" class="pill"></span>
-          <button class="btn" id="btnShow2">Show</button><button class="btn" id="btnHide">Hide</button><button class="btn" id="btnRestart">Restart</button></div>
-        <div class="log" id="log"></div>
-      </div>
-    </div>
-  </section>
-</main>
-<div class="toasts" id="toasts"></div>
-
-<script>
-'use strict';
-const $ = id => document.getElementById(id);
-const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const num = (v, d = 0) => v == null || v !== v ? '' : Number(v).toLocaleString('en-US', {maximumFractionDigits: d, minimumFractionDigits: d});
-const money = (v, cur, d = 2) => v == null ? '' : (cur ? cur + ' ' : '') + num(v, d);
-const ago = t => { const s = Date.now() / 1000 - t; return s < 90 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago'; };
-const MK = {AU: 'Australia', AE: 'UAE', US: 'USA'};
-let ST = {settings: {}, markets: {}, locations: {}, profiles: []};
-let lastMsg = 0;
-
-async function api(path, body, raw) {
-  const opt = body === undefined ? {} : {method: 'POST', headers: raw ? {} : {'Content-Type': 'application/json'}, body: raw ? body : JSON.stringify(body)};
-  const r = await fetch(path, opt);
-  const ct = r.headers.get('Content-Type') || '';
-  const data = ct.includes('json') ? await r.json() : await r.blob();
-  if (!r.ok) throw new Error((data && data.error) || ('Error ' + r.status));
-  return data;
-}
-function toast(msg, ms = 5000) {
-  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
-  $('toasts').appendChild(t); setTimeout(() => t.remove(), ms);
-  while ($('toasts').children.length > 4) $('toasts').firstChild.remove();
-}
-function seg(el, onChange) {
-  el.addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    if (el.dataset.multi) { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); }
-    else el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
-    onChange && onChange(b.dataset.v);
-  });
-}
-const segVal = el => (el.querySelector('[aria-pressed="true"]') || {}).dataset?.v;
-function openUrl(url) { api('/api/open', {url}).catch(e => toast(e.message)); }
-async function download(body) {
-  try {
-    const r = await fetch('/api/export', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-    if (!r.ok) throw new Error('Could not save the file');
-    const name = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'export.xlsx';
-    const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click();
-    toast('Saved ' + name + ' to your Downloads folder');
-  } catch (e) { toast(e.message); }
-}
-
-/* ---------- navigation ---------- */
-$('nav').addEventListener('click', e => {
-  const b = e.target.closest('button'); if (!b) return;
-  show(b.dataset.view);
-});
-function show(view) {
-  document.querySelectorAll('#nav button').forEach(x => { if (x.dataset.view !== view) x.removeAttribute('aria-current'); else x.setAttribute('aria-current', 'page'); });
-  document.querySelectorAll('section.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + view));
-  if (view === 'history') loadHistory();
-  try { localStorage.setItem('pcView', view); } catch (e) {}
-}
-
-/* ---------- status / heartbeat ---------- */
-async function poll() {
-  try {
-    const s = await api('/api/state?since=' + lastMsg);
-    ST = s;
-    renderStatus();
-    for (const m of s.messages) { lastMsg = Math.max(lastMsg, m.t); logLine(m); if (/captcha|could not|failed/i.test(m.msg)) toast(m.msg, 9000); }
-  } catch (e) { $('status').innerHTML = '<span class="pill bad"><i></i>App stopped. Start it again with start.bat</span>'; }
-}
-function logLine(m) {
-  const el = $('log'); const d = new Date(m.t * 1000);
-  el.textContent += d.toLocaleTimeString() + '  ' + m.msg + '\n'; el.scrollTop = el.scrollHeight;
-}
-function renderStatus() {
-  const b = ST.browser || {};
-  const bs = {ready: ['good', 'Checker ready'], starting: ['warn', 'Starting checker...'], error: ['bad', 'Checker error'], stopped: ['weak', 'Checker stopped']}[b.state] || ['weak', b.state];
-  const prof = (ST.profiles || []).find(p => p.id === ST.settings.profile);
-  let h = `<span class="pill ${bs[0]}" title="${esc(b.error || '')}"><i></i>${bs[1]}</span>`;
-  for (const c of Object.keys(MK)) {
-    const l = (ST.locations || {})[c] || {};
-    const cls = l.ok === true ? 'good' : l.ok === false ? 'warn' : 'weak';
-    const tip = l.text ? 'Amazon shows: ' + l.text : 'Checked on the first search';
-    h += `<span class="pill ${cls}" title="${esc(tip)}"><i></i>${c} · ${esc((ST.markets[c] || {}).location || '')}</span>`;
-  }
-  h += `<span class="pill accent" title="Links open in this browser profile">Links open in: ${esc(prof ? prof.name : 'default browser')}</span>`;
-  $('status').innerHTML = h;
-  $('xProf').textContent = prof ? prof.label : 'your default browser';
-  $('bState').className = 'pill ' + bs[0]; $('bState').innerHTML = '<i></i>' + bs[1] + (b.visible ? ' (visible)' : ' (minimised)');
-  if (!settingsFilled) fillSettings();
-}
-
-/* ---------- 1. check ---------- */
-$('mkSeg').dataset.multi = '1';
-seg($('mkSeg'));
-let currentJob = null, checkData = null;
-$('checkForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const keyword = $('kw').value.trim();
-  const markets = [...$('mkSeg').querySelectorAll('[aria-pressed="true"]')].map(b => b.dataset.mk);
-  if (!keyword) return $('kw').focus();
-  if (!markets.length) return toast('Pick at least one country');
-  runCheck(keyword, markets, $('refresh').checked);
-});
-async function runCheck(keyword, markets, refresh) {
-  $('btnCheck').disabled = true;
-  $('progress').innerHTML = '<span class="spin"></span><span>Starting...</span>';
-  try {
-    const {job} = await api('/api/check', {keyword, markets, refresh});
-    currentJob = job;
-    const res = await waitJob(job, line => $('progress').innerHTML = '<span class="spin"></span><span>' + esc(line) + '</span>');
-    $('progress').textContent = '';
-    $('refresh').checked = false;
-    renderCheck(res);
-  } catch (e) { $('progress').innerHTML = '<span class="pill bad"><i></i>' + esc(e.message) + '</span>'; }
-  $('btnCheck').disabled = false;
-}
-async function waitJob(id, onLine) {
-  for (;;) {
-    await new Promise(r => setTimeout(r, 600));
-    const j = await api('/api/job?id=' + id);
-    if (j.log.length && onLine) onLine(j.log[j.log.length - 1]);
-    if (j.status === 'done') return j.result;
-    if (j.status === 'error') throw new Error(j.error);
-  }
-}
-function renderCheck(res) {
-  checkData = res;
-  $('checkEmpty').hidden = true; $('checkOut').hidden = false; $('listOut').hidden = false;
-  $('checkTitle').textContent = '“' + res.keyword + '”';
-  const times = res.results.filter(r => r.checked_at).map(r => r.checked_at);
-  $('checkWhen').textContent = times.length ? 'Checked ' + ago(Math.min(...times)) + (res.results.some(r => r.cached) ? ' (saved result)' : '') : '';
-  $('cards').innerHTML = res.results.map(card).join('');
-  $('lmSeg').innerHTML = '<button type="button" data-v="all" aria-pressed="true">All</button>' +
-    res.results.filter(r => !r.error).map(r => `<button type="button" data-v="${r.market}" aria-pressed="false">${r.market}</button>`).join('');
-  renderList();
-}
-function card(r) {
-  if (r.error) return `<div class="panel mcard"><div class="mtop"><h2>${esc(r.name)}</h2></div><div class="verdict error">Could not check: ${esc(r.error)}</div></div>`;
-  const cur = r.currency;
-  const loc = r.location_ok ? `<span class="pill good"><i></i>${esc(r.location)}</span>` : `<span class="pill warn" title="Wanted: ${esc(r.location_wanted)}"><i></i>${esc(r.location || 'location?')}</span>`;
-  const local = r.local ?? r.fast, abroad = r.overseas ?? r.slow, lfast = r.fast, lother = r.local_other ?? 0;
-  const seg = [[lfast, 'var(--good)', 'Local, fast (≤' + r.fast_days + ' days)'], [lother, 'color-mix(in srgb, var(--good) 45%, var(--surface))', 'Local, slower'],
-               [r.overseas_intl || 0, 'var(--warn)', 'International delivery'], [r.overseas_slow || 0, 'var(--bad)', 'Ships ' + ((r.local_days || 9) + 1) + '+ days'],
-               [r.origin_unknown ?? r.unknown, 'var(--line)', 'No date shown']];
-  const pct = n => r.total ? Math.round(n / r.total * 100) : 0;
-  return `<div class="panel mcard ${r.level}">
-    <div class="mtop"><div><div class="eyebrow">${esc(r.market)}</div><h2>${esc(r.name)}</h2></div>${loc}</div>
-    <div class="split">
-      <div><span class="v" style="color:var(--good-text)">${local}</span><span class="of">local sellers<br><span class="num">${pct(local)}%</span> · ${lfast} deliver fast</span></div>
-      <div><span class="v" style="color:var(--warn-text)">${abroad}</span><span class="of">not local<br><span class="num">${pct(abroad)}%</span> · ship from overseas</span></div>
-    </div>
-    <div class="bar" style="height:12px">${seg.map(([n, c, l]) => n ? `<span title="${l}: ${n}" style="width:${n / Math.max(1, r.total) * 100}%;background:${c}"></span>` : '').join('')}</div>
-    <div class="legend" style="margin-top:0">${seg.filter(([n]) => n).map(([n, c, l]) => `<span><i style="background:${c}"></i>${l} <b class="num">${n}</b></span>`).join('')}</div>
-    <div class="verdict ${r.level}">${esc(r.verdict)}</div>
-    <dl class="facts">
-      <div><dt>Listings</dt><dd class="num">${r.total} organic + ${r.sponsored} ads</dd></div>
-      <div><dt>Fast sellers</dt><dd>${r.fast ? 'median ' + num(r.fast_reviews_median) + ' reviews' + (r.fast_price_min != null ? ', ' + money(r.fast_price_min, cur) + '–' + num(r.fast_price_max, 2) : '') : '<span class="muted">none</span>'}</dd></div>
-      <div><dt>Demand</dt><dd>${r.bought_listings ? r.bought_listings + ' listings show “bought in past month”, top ' + num(r.bought_top) + '+' : '<span class="muted">Amazon shows no sales badges</span>'}</dd></div>
-    </dl>
-    <div class="row"><button class="btn slim" data-open="${esc(r.search_url)}">Open search in Chrome</button>${r.cached ? '<span class="small">saved ' + ago(r.checked_at) + '</span>' : ''}</div>
-  </div>`;
-}
-let listSort = {k: 'speed', dir: 1};
-function renderList() {
-  if (!checkData) return;
-  const spd = segVal($('spdSeg')), lm = segVal($('lmSeg')), hide = $('hideAds').checked;
-  let rows = checkData.results.flatMap(r => (r.rows || []).map(x => ({...x, currency: r.currency})));
-  rows = rows.filter(x => (spd === 'all' || x.speed === spd || x.origin === spd) && (lm === 'all' || x.market === lm) && !(hide && x.sponsored));
-  const order = {fast: 0, slow: 1, unknown: 2}, oorder = {local: 0, unknown: 1, overseas: 2};
-  const key = {speed: x => order[x.speed] * 100 + (x.days ?? 99), origin: x => oorder[x.origin] * 100 + (x.days ?? 99), market: x => x.market,
-               days: x => x.days ?? 999, price: x => x.price ?? -1, reviews: x => x.reviews ?? -1, rating: x => x.rating ?? -1,
-               bought: x => x.bought ?? -1, title: x => x.title}[listSort.k];
-  rows.sort((a, b) => { const A = key(a), B = key(b); return (A > B ? 1 : A < B ? -1 : 0) * listSort.dir; });
-  const cols = [['market', 'Mkt'], ['origin', 'Ships from'], ['speed', 'Delivery'], ['days', 'Days', 'r'], ['price', 'Price', 'r'], ['reviews', 'Reviews', 'r'], ['rating', 'Rating', 'r'], ['bought', 'Bought/mo', 'r'], ['title', 'Product']];
-  const sp = {fast: '<span class="pill good">fast</span>', slow: '<span class="pill warn">slow</span>', unknown: '<span class="pill weak">no date</span>'};
-  const og = x => x.origin === 'local' ? '<span class="pill good"><i></i>local</span>' : x.origin === 'overseas' ?
-    `<span class="pill ${x.intl ? 'warn' : 'bad'}"><i></i>${x.intl ? 'international' : 'abroad'}</span>` : '<span class="pill weak">unknown</span>';
-  $('listTable').innerHTML = '<thead><tr>' + cols.map(([k, h, c]) => `<th class="${c || ''}" data-k="${k}">${h}${listSort.k === k ? (listSort.dir > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('') + '</tr></thead><tbody>' +
-    (rows.length ? rows.map(x => `<tr class="${x.speed}">
-      <td>${x.market}</td><td title="${esc(x.why || '')}">${og(x)}<div class="sub">${esc(x.why || '')}</div></td>
-      <td>${sp[x.speed]}${x.prime ? ' <span class="pill accent">prime</span>' : ''}${x.sponsored ? ' <span class="pill weak">ad</span>' : ''}</td>
-      <td class="r">${x.days ?? ''}</td><td class="r">${money(x.price, '')}</td><td class="r">${num(x.reviews)}</td><td class="r">${x.rating ?? ''}</td><td class="r">${x.bought ? num(x.bought) + '+' : ''}</td>
-      <td class="title"><a data-open="${esc(x.url)}">${esc(x.title)}</a><div class="sub">${esc(x.delivery)}</div></td></tr>`).join('')
-      : '<tr><td colspan="9" class="empty">No listings match these filters.</td></tr>') + '</tbody>';
-}
-$('listTable').addEventListener('click', e => {
-  const th = e.target.closest('th'); if (!th) return;
-  listSort = {k: th.dataset.k, dir: listSort.k === th.dataset.k ? -listSort.dir : 1}; renderList();
-});
-seg($('spdSeg'), renderList); seg($('lmSeg'), renderList);
-$('hideAds').addEventListener('change', renderList);
-$('btnExportCheck').addEventListener('click', () => currentJob ? download({kind: 'check', job: currentJob}) : toast('Run a new check to save it'));
-document.addEventListener('click', e => { const a = e.target.closest('[data-open]'); if (a) { e.preventDefault(); openUrl(a.dataset.open); } });
-
-/* ---------- 2. rank ---------- */
-let rankData = null, rankFile = null, local = {};
-seg($('rkMk'), () => rankFile && rankUpload(rankFile));
-seg($('rkShow'), () => renderRank());
-$('drop').addEventListener('click', () => $('file').click());
-$('drop').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') $('file').click(); });
-$('file').addEventListener('change', () => $('file').files[0] && rankUpload($('file').files[0]));
-['dragover', 'dragenter'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
-['dragleave', 'drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
-$('drop').addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) rankUpload(f); });
-async function rankUpload(f) {
-  rankFile = f;
-  $('drop').querySelector('b').textContent = 'Reading ' + f.name + '...';
-  try {
-    rankData = await api('/api/rank?name=' + encodeURIComponent(f.name) + '&market=' + segVal($('rkMk')) + '&top=100', f, true);
-    local = {};
-    $('drop').querySelector('b').textContent = f.name + ' — drop another file to replace it';
-    renderRank();
-  } catch (e) { $('drop').querySelector('b').textContent = 'Drop a Helium 10 export here'; toast(e.message, 8000); }
-}
-function shownRows() {
-  const v = segVal($('rkShow'));
-  return v === 'good' ? rankData.rows.filter(r => r.verdict === 'Good pick') : rankData.rows.slice(0, +v);
-}
-function renderRank() {
-  if (!rankData) return;
-  const d = rankData, cur = d.target.currency, c = d.counts;
-  $('rankOut').hidden = false;
-  $('rankTitle').textContent = MK[d.market] + ' · ' + d.file;
-  $('rankTarget').textContent = `Targets: ${cur} ${d.target.price[0]}–${d.target.price[1]}, at least ${d.target.sales} sales/month, at most ${d.target.reviews} reviews`;
-  const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
-  $('rankKpis').innerHTML = k(num(d.total), 'Products') + k(c['Good pick'] || 0, 'Good picks', 'targets met, no flags') +
-    k(c['Check first'] || 0, 'Check first', 'targets met, read flags') + k(c['Close'] || 0, 'Close', 'almost') + k(c['Skip'] || 0, 'Skip');
-  const vc = {'Good pick': 'good', 'Check first': 'warn', 'Close': 'weak', 'Skip': 'bad'};
-  const rows = shownRows();
-  $('rankTable').innerHTML = `<thead><tr><th class="r">#</th><th>Verdict</th><th>Product</th><th class="r">Price</th><th class="r">Sales/mo</th><th class="r">Revenue/mo</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th class="r">90d trend</th><th>Local sellers</th><th></th></tr></thead><tbody>` +
-    rows.map(r => {
-      const L = local[r.asin];
-      const lc = !L ? `<button class="btn slim" data-check="${esc(r.asin)}">Check</button>` : L === 'busy' ? '<span class="spin"></span>' : L.error ? '<span class="pill bad">failed</span>' :
-        `<span class="pill ${{opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'}[L.level]}" title="${esc(L.verdict)} Searched: ${esc(L.keyword)}">${L.fast} fast / ${L.total}</span><div class="sub">${L.local ?? '?'} local · ${L.overseas ?? '?'} abroad</div>`;
-      const tr = r.trend == null ? '' : `<span class="${r.trend >= 0 ? 'up' : 'down'}">${r.trend > 0 ? '+' : ''}${num(r.trend)}%</span>`;
-      return `<tr><td class="r">${r.rank}</td><td><span class="pill ${vc[r.verdict]}">${r.verdict}</span></td>
-        <td class="title"><a data-open="${esc(r.url || '')}">${esc(r.title)}</a><div class="sub">${esc(r.brand)}${r.asin ? ' · ' + esc(r.asin) : ''}</div>
-        ${r.flags.length ? '<div class="flags">' + r.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}</td>
-        <td class="r">${money(r.price, '')}</td><td class="r">${num(r.sales)}</td><td class="r">${money(r.revenue, '', 0)}</td><td class="r">${num(r.reviews)}</td>
-        <td class="r">${r.rating && r.reviews ? r.rating : ''}</td><td class="r">${r.age != null ? num(r.age) + ' mo' : ''}</td><td class="r">${tr}</td>
-        <td>${lc}</td><td><input type="text" value="${esc(r.search)}" data-search="${esc(r.asin)}" title="Words used to search Amazon" style="width:150px;padding:4px 6px;font-size:12.5px"></td></tr>`;
-    }).join('') + '</tbody>';
-}
-$('rankTable').addEventListener('click', e => { const b = e.target.closest('[data-check]'); if (b) batch([b.dataset.check]); });
-$('btnBatch').addEventListener('click', () => batch(shownRows().map(r => r.asin).filter(a => !local[a] || local[a].error)));
-async function batch(asins) {
-  if (!asins.length) return toast('These are already checked');
-  const items = asins.map(a => {
-    const inp = document.querySelector(`[data-search="${CSS.escape(a)}"]`);
-    const r = rankData.rows.find(x => x.asin === a);
-    return {key: a, market: rankData.market, search: (inp ? inp.value : r.search).trim()};
-  }).filter(i => i.search);
-  items.forEach(i => local[i.key] = 'busy'); renderRank();
-  $('batchProgress').innerHTML = `<span class="spin"></span><span>Checking ${items.length} product${items.length > 1 ? 's' : ''} on ${MK[rankData.market]}, 3 at a time...</span>`;
-  try {
-    const {job} = await api('/api/check_batch', {items});
-    const res = await waitJob(job, line => $('batchProgress').innerHTML = '<span class="spin"></span><span>' + esc(line) + '</span>');
-    Object.assign(local, res);
-    items.forEach(i => { if (local[i.key] === 'busy') local[i.key] = {error: 'no result'}; });
-    $('batchProgress').textContent = '';
-  } catch (e) { items.forEach(i => local[i.key] = {error: e.message}); $('batchProgress').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  renderRank();
-}
-$('btnExportRank').addEventListener('click', () => rankData && download({kind: 'rank', id: rankData.id, fast: Object.fromEntries(Object.entries(local).filter(([, v]) => v && v.fast != null))}));
-
-/* ---------- 2. new product ideas ---------- */
-let iData = null, iLocal = {}, nData = null, nLocal = {};
-['iKinds', 'nCheckMk'].forEach(id => $(id).dataset.multi = '1');
-seg($('iMk'), () => { $('iCatsWrap').hidden = true; $('iCats').innerHTML = ''; });
-seg($('iKinds')); seg($('nMk')); seg($('nCheckMk'), () => renderNiche());
-const pressed = el => [...el.querySelectorAll('[aria-pressed="true"]')].map(b => b.dataset.v);
-const trends = (kw, mk) => 'https://trends.google.com/trends/explore?date=today%205-y&geo=' + (mk || 'US') + '&q=' + encodeURIComponent(kw);
-const lvPill = {opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'};
-function localPill(L, mk) {
-  if (!L) return '';
-  mk = mk === 'AE' ? 'UAE' : mk;
-  if (L === 'busy') return `<span class="pill weak"><span class="spin" style="width:11px;height:11px"></span>${mk}</span>`;
-  if (L.error) return `<span class="pill bad" title="${esc(L.error)}">${mk}: failed</span>`;
-  const gap = L.total && L.local <= 4;
-  return `<span class="pill ${gap ? 'good' : lvPill[L.level]}" title="${esc(L.verdict)} Searched: ${esc(L.keyword)}"><i></i>${mk}: ${L.local} local · ${L.overseas} abroad${gap ? ' · gap' : ''}</span>`;
-}
-
-$('btnIdeas').addEventListener('click', () => runIdeas(false));
-$('iCats').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); });
-async function runIdeas(refresh) {
-  const kinds = pressed($('iKinds'));
-  if (!kinds.length) return toast('Pick at least one list');
-  const slugs = $('iCatsWrap').hidden ? [] : [...$('iCats').querySelectorAll('[aria-pressed="true"]')].map(b => b.dataset.slug);
-  $('btnIdeas').disabled = true;
-  $('iProg').innerHTML = '<span class="spin"></span><span>Starting...</span>';
-  try {
-    const {job} = await api('/api/ideas', {market: segVal($('iMk')), kinds, slugs, hide_risky: $('iHide').checked, refresh});
-    iData = await waitJob(job, line => $('iProg').innerHTML = '<span class="spin"></span><span>' + esc(line) + '</span>');
-    iLocal = {};
-    $('iProg').textContent = '';
-    renderIdeas();
-  } catch (e) { $('iProg').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  $('btnIdeas').disabled = false;
-}
-function sortedIdeas() {
-  const s = $('iSort').value, list = [...(iData.ideas || [])];
-  const k = {score: x => -x.score, pct: x => -(x.pct || 0), new: x => x.new_rank || 999, reviews: x => x.reviews ?? 1e9}[s];
-  return list.sort((a, b) => k(a) - k(b));
-}
-function renderIdeas() {
-  if (!iData) return;
-  const d = iData, cur = (ST.markets[d.market] || {}).currency || '';
-  $('iCatsWrap').hidden = false;
-  $('iCats').innerHTML = d.all_categories.map(c => `<button type="button" class="chip${c.risky ? ' risky' : ''}" data-slug="${esc(c.slug)}" aria-pressed="${c.on}" title="${c.risky ? 'Category with extra rules or big brands' : ''}">${esc(c.name)}</button>`).join('');
-  $('iOut').hidden = false;
-  $('iTitle').textContent = d.ideas.length + ' product ideas on Amazon ' + (MK[d.market] || d.market);
-  const boom = d.ideas.filter(i => i.label === 'Booming').length, nw = d.ideas.filter(i => i.lists.includes('new')).length;
-  $('iSub').textContent = `${d.scanned} products read from ${d.lists} lists · ${boom} booming · ${nw} new releases · scanned ${ago(d.at)}`;
-  $('btnIdeasCheck').hidden = d.market !== 'US';
-  const lab = {Booming: 'warn', Rising: 'accent', New: 'good', Moving: 'weak'};
-  $('iGrid').innerHTML = sortedIdeas().map(i => {
-    const checks = d.market === 'US' ? ['AU', 'AE'] : [d.market === 'AU' ? 'AE' : 'AU'];
-    return `<div class="panel icard">
-      <div class="pic">${i.image ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</div>
-      <div class="body">
-        <div class="row" style="gap:6px"><span class="pill ${lab[i.label]}">${i.label}${i.pct ? ' +' + num(i.pct) + '%' : ''}</span>
-          ${i.lists.includes('new') ? `<span class="pill good">New #${i.new_rank}</span>` : ''}
-          ${i.similar ? `<span class="pill accent" title="Other products like this are moving too">+${i.similar} similar</span>` : ''}
-          <span class="small muted" style="margin-left:auto">${esc(i.category)}</span></div>
-        <a class="clamp2" data-open="${esc(i.url)}" style="cursor:pointer;color:var(--ink);font-weight:500">${esc(i.title)}</a>
-        <div class="small">${i.price != null ? money(i.price, cur) : 'no price'} · ${i.rating ? '★ ' + i.rating : 'no rating'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.rank_before ? ` · rank ${num(i.rank_before)} → ${num(i.rank_now)}` : ''}</div>
-        ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
-      </div>
-      <div class="acts">
-        <input type="text" class="kwin" value="${esc(i.search)}" data-kw="${esc(i.asin)}" title="Words used to search the other Amazon sites">
-        ${checks.map(mk => localPill(iLocal[i.asin + ':' + mk], mk)).join('')}
-        <button class="btn slim" data-icheck="${esc(i.asin)}">Check ${checks.map(m => m === 'AE' ? 'UAE' : m).join(' & ')}</button>
-        <button class="btn slim" data-trend="${esc(i.asin)}" title="Google Trends, last 5 years">Trends</button>
-        <button class="btn slim" data-ixray="${esc(i.asin)}">Xray</button>
-      </div></div>`;
-  }).join('') || '<div class="panel empty">No ideas left after hiding risky products. Untick "Hide risky products" or choose other categories.</div>';
-}
-$('iSort').addEventListener('change', renderIdeas);
-const ideaKw = asin => ((document.querySelector(`[data-kw="${CSS.escape(asin)}"]`) || {}).value || '').trim();
-$('iGrid').addEventListener('click', e => {
-  const c = e.target.closest('[data-icheck]'), t = e.target.closest('[data-trend]'), x = e.target.closest('[data-ixray]');
-  if (c) ideaCheck([c.dataset.icheck]);
-  if (t) openUrl(trends(ideaKw(t.dataset.trend), iData.market));
-  if (x) { $('xkw').value = ideaKw(x.dataset.ixray); $('xMk').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === iData.market ? 'true' : 'false')); show('xray'); }
-});
-$('btnIdeasCheck').addEventListener('click', () => ideaCheck(sortedIdeas().slice(0, 12).map(i => i.asin)));
-async function ideaCheck(asins) {
-  const checks = iData.market === 'US' ? ['AU', 'AE'] : [iData.market === 'AU' ? 'AE' : 'AU'];
-  const items = asins.flatMap(a => checks.map(mk => ({key: a + ':' + mk, market: mk, search: ideaKw(a)}))).filter(i => i.search && !(iLocal[i.key] && iLocal[i.key].total != null));
-  if (!items.length) return toast('Already checked');
-  items.forEach(i => iLocal[i.key] = 'busy'); renderIdeas();
-  $('iCheckProg').innerHTML = `<span class="spin"></span><span>Searching ${items.length} times on ${checks.map(m => MK[m]).join(' and ')}, 3 at a time...</span>`;
-  try {
-    const {job} = await api('/api/check_batch', {items});
-    Object.assign(iLocal, await waitJob(job, line => $('iCheckProg').innerHTML = '<span class="spin"></span><span>' + esc(line) + '</span>'));
-    $('iCheckProg').innerHTML = '<span class="small">Green <b>gap</b> = 4 or fewer local sellers there.</span>';
-  } catch (e) { $('iCheckProg').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  items.forEach(i => { if (iLocal[i.key] === 'busy') iLocal[i.key] = {error: 'no result'}; });
-  renderIdeas();
-}
-
-$('nForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const seed = $('nSeed').value.trim(); if (!seed) return $('nSeed').focus();
-  $('btnNicheFind').disabled = true;
-  $('nProg').innerHTML = '<span class="spin"></span><span>Collecting what shoppers type...</span>';
-  try {
-    const {job} = await api('/api/niche', {market: segVal($('nMk')), seed});
-    nData = await waitJob(job); nLocal = {};
-    nData.keywords.forEach((k, i) => k.sel = i < 8);
-    $('nProg').textContent = ''; renderNiche();
-  } catch (e) { $('nProg').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  $('btnNicheFind').disabled = false;
-});
-function renderNiche() {
-  if (!nData) return;
-  $('nOut').hidden = false;
-  const mks = pressed($('nCheckMk'));
-  if (!nData.keywords.length) { $('nTable').innerHTML = '<tr><td class="empty">Amazon returned no suggestions. Try a shorter niche, e.g. one or two words.</td></tr>'; return; }
-  const maxHits = Math.max(...nData.keywords.map(k => k.hits));
-  $('nTable').innerHTML = `<thead><tr><th></th><th>Keyword</th><th>Popularity</th>${mks.map(m => `<th>${MK[m]}</th>`).join('')}<th></th></tr></thead><tbody>` +
-    nData.keywords.map((k, i) => `<tr><td><input type="checkbox" data-nsel="${i}" ${k.sel ? 'checked' : ''}></td>
-      <td><b>${esc(k.keyword)}</b></td>
-      <td><div class="bar" style="width:90px" title="${k.hits} suggestion lists"><span style="width:${k.hits / maxHits * 100}%;background:var(--accent)"></span></div></td>
-      ${mks.map(m => { const L = nLocal[k.keyword + '|' + m]; return `<td>${L ? localPill(L, m) +(L.total != null ? `<div class="sub">${L.bought_top ? 'demand ' + num(L.bought_top) + '+/mo' : 'no sales badges'} · ${L.fast} fast</div>` : '') : '<span class="muted small">–</span>'}</td>`; }).join('')}
-      <td style="white-space:nowrap"><button class="btn slim" data-ntrend="${i}">Trends</button> <button class="btn slim" data-nopen="${i}">Open</button></td></tr>`).join('') + '</tbody>';
-}
-$('nTable').addEventListener('change', e => { const c = e.target.closest('[data-nsel]'); if (c) nData.keywords[+c.dataset.nsel].sel = c.checked; });
-$('nTable').addEventListener('click', e => {
-  const t = e.target.closest('[data-ntrend]'), o = e.target.closest('[data-nopen]');
-  if (t) openUrl(trends(nData.keywords[+t.dataset.ntrend].keyword, nData.market));
-  if (o) openUrl(((ST.markets[nData.market] || {}).site || 'https://www.amazon.com') + '/s?k=' + encodeURIComponent(nData.keywords[+o.dataset.nopen].keyword).replace(/%20/g, '+'));
-});
-$('nTop').addEventListener('click', () => { nData.keywords.forEach((k, i) => k.sel = i < 8); renderNiche(); });
-$('btnNiche').addEventListener('click', async () => {
-  const mks = pressed($('nCheckMk')), kws = nData.keywords.filter(k => k.sel).slice(0, 15);
-  if (!kws.length || !mks.length) return toast('Tick some keywords and at least one country');
-  const items = kws.flatMap(k => mks.map(m => ({key: k.keyword + '|' + m, market: m, search: k.keyword})));
-  items.forEach(i => nLocal[i.key] = 'busy'); renderNiche();
-  $('nProg').innerHTML = `<span class="spin"></span><span>${items.length} searches, 3 at a time...</span>`;
-  try {
-    const {job} = await api('/api/check_batch', {items});
-    Object.assign(nLocal, await waitJob(job, line => $('nProg').innerHTML = '<span class="spin"></span><span>' + esc(line) + '</span>'));
-    $('nProg').textContent = '';
-  } catch (e) { $('nProg').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  items.forEach(i => { if (nLocal[i.key] === 'busy') nLocal[i.key] = {error: 'no result'}; });
-  renderNiche();
-});
-
-/* ---------- 3. xray ---------- */
-let xData = null, xWatch = null;
-seg($('xMk'));
-seg($('xShow'), () => renderXTable());
-$('btnXOpen').addEventListener('click', () => {
-  const kw = $('xkw').value.trim(); if (!kw) return $('xkw').focus();
-  const site = (ST.markets[segVal($('xMk'))] || {}).site || 'https://www.amazon.com.au';
-  openUrl(site + '/s?k=' + encodeURIComponent(kw).replace(/%20/g, '+'));
-  startWatch();
-});
-$('xFile').addEventListener('change', async () => {
-  const f = $('xFile').files[0]; if (!f) return;
-  stopWatch();
-  xBusy('Analysing ' + f.name + '...');
-  try { renderXray(await api('/api/xray?name=' + encodeURIComponent(f.name) + '&market=' + segVal($('xMk')) + '&keyword=' + encodeURIComponent($('xkw').value.trim()), f, true)); }
-  catch (e) { $('xWatch').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  $('xFile').value = '';
-});
-const xBusy = t => $('xWatch').innerHTML = '<span class="spin"></span><span>' + esc(t) + '</span>';
-function startWatch() {
-  stopWatch();
-  const since = Date.now() / 1000 - 3, until = Date.now() + 20 * 60 * 1000;
-  xBusy('Waiting for your Xray export in Downloads... (run Xray, then Export to CSV)');
-  $('xWatch').insertAdjacentHTML('beforeend', ' <button class="btn slim" id="xStop">Stop waiting</button>');
-  $('xStop').addEventListener('click', () => { stopWatch(); $('xWatch').textContent = ''; });
-  xWatch = setInterval(async () => {
-    if (Date.now() > until) { stopWatch(); $('xWatch').textContent = 'Stopped waiting after 20 minutes. Choose the file instead.'; return; }
-    try {
-      const w = await api('/api/xray/watch?since=' + since);
-      if (!w.found) return;
-      stopWatch();
-      xBusy('Found ' + w.found.name + ', analysing...');
-      renderXray(await api('/api/xray/load', {path: w.found.path, market: segVal($('xMk')), keyword: $('xkw').value.trim()}));
-    } catch (e) { stopWatch(); $('xWatch').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-  }, 2000);
-}
-function stopWatch() { if (xWatch) clearInterval(xWatch); xWatch = null; }
-function renderXray(a) {
-  xData = a;
-  $('xWatch').innerHTML = '<span class="pill good"><i></i>Analysed ' + esc(a.file) + '</span>';
-  $('xOut').hidden = false;
-  $('xMeta').textContent = a.name + ' · ' + a.metrics.listings + ' listings (' + a.metrics.sponsored + ' sponsored) · ' + a.file;
-  $('xTitle').textContent = '“' + (a.keyword || 'this market') + '”';
-  if (a.keyword && !$('xkw').value.trim()) $('xkw').value = a.keyword;
-  const pts = Math.max(0, Math.min(10, a.points));
-  $('xVerdict').className = 'panel xverdict ' + a.level;
-  $('xVerdict').innerHTML = `<span class="eyebrow">Verdict</span><span class="v">${esc(a.verdict)}</span>
-    <div class="meter" style="color:var(--${a.level === 'good' ? 'good' : a.level === 'warn' ? 'warn' : 'bad'})">${Array.from({length: 10}, (_, i) => `<i class="${i < pts ? 'on' : ''}"></i>`).join('')}</div>
-    <span class="small">${a.points} of 10 points: demand, review barrier, competition spread, newcomers, Amazon, margin</span>
-    <div id="xLocal" class="small"></div>`;
-  $('xReasons').innerHTML = a.reasons.map(r => `<li class="${r.level}">${esc(r.text)}</li>`).join('');
-  const m = a.metrics, cur = a.currency, pct = v => v == null ? '–' : Math.round(v * 100) + '%';
-  const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
-  $('xKpis').innerHTML = k(money(m.total_revenue, cur, 0), 'Revenue / month', m.organic + ' organic listings') +
-    k(num(m.top10_sales_median), 'Top 10 sales / mo', 'median, target ' + a.target.sales) +
-    k(m.price_p25 != null ? num(m.price_p25, 0) + '–' + num(m.price_p75, 0) : '–', 'Price (' + cur + ')', 'middle half of listings') +
-    k(num(m.review_barrier), 'Review barrier', 'median reviews, top 10') +
-    k(pct(m.top3_share), 'Top 3 share', m.top_brand ? 'biggest brand ' + esc(m.top_brand) + ' ' + pct(m.top_brand_share) : '') +
-    k(m.new_winners, 'New winners', 'under 1 year, selling ' + a.target.sales + '+') +
-    k(m.beatable, 'Beatable', 'enough sales, few reviews') +
-    k(m.left_median != null ? money(m.left_median, cur) : '–', 'Left per sale', m.left_pct != null ? pct(m.left_pct) + ' of price, after fees' : 'no FBA fee column');
-  const COL = ['var(--accent)', 'var(--warn)', 'var(--good)', 'var(--bad)', 'var(--muted)', 'var(--ink-2)'];
-  const stack = (obj, names) => {
-    const ent = Object.entries(obj || {}); const tot = ent.reduce((s, [, v]) => s + v, 0);
-    if (!tot) return '<span class="small muted">Not in this export</span>';
-    return '<div class="stack">' + ent.map(([kk, v], i) => `<span style="width:${v / tot * 100}%;background:${COL[i % COL.length]}" title="${esc(kk)}: ${v}"></span>`).join('') + '</div>' +
-      '<div class="legend">' + ent.map(([kk, v], i) => `<span><i style="background:${COL[i % COL.length]}"></i>${esc(names[kk] || kk)} <b class="num">${v}</b></span>`).join('') + '</div>';
-  };
-  $('xFul').innerHTML = stack(m.fulfillment, {FBA: 'FBA (Amazon warehouse)', FBM: 'FBM (seller ships)', AMZ: 'Amazon itself'});
-  $('xCountry').innerHTML = stack(m.countries, {CN: 'China', US: 'USA', AU: 'Australia', AE: 'UAE', GB: 'UK', HK: 'Hong Kong', IN: 'India', DE: 'Germany'});
-  renderXTable();
-  show('xray');
-}
-function renderXTable() {
-  if (!xData) return;
-  const v = segVal($('xShow')), cur = xData.currency;
-  const rows = xData.rows.filter(r => v === 'all' || (v === 'beat' && r.beatable) || (v === 'new' && r.new));
-  $('xTable').innerHTML = `<thead><tr><th class="r">#</th><th>Product</th><th class="r">Price</th><th class="r">Sales/mo</th><th class="r">Revenue/mo</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th>Ships</th><th class="r">Left</th><th></th></tr></thead><tbody>` +
-    (rows.length ? rows.map(r => `<tr class="${r.beatable ? 'fast' : ''}"><td class="r">${r.pos}</td>
-      <td class="title"><a data-open="${esc(r.url || '')}">${esc(r.title)}</a><div class="sub">${esc(r.brand)}${r.country ? ' · ' + esc(r.country) : ''}${r.size_tier ? ' · ' + esc(r.size_tier) : ''}</div>
-      ${r.flags.length ? '<div class="flags">' + r.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}</td>
-      <td class="r">${money(r.price, '')}</td><td class="r">${num(r.sales)}</td><td class="r">${money(r.revenue, '', 0)}</td><td class="r">${num(r.reviews)}</td>
-      <td class="r">${r.rating && r.reviews ? r.rating : ''}</td><td class="r">${r.age != null ? num(r.age) + ' mo' : ''}</td>
-      <td>${esc(r.fulfillment)}${r.amazon ? ' <span class="pill bad">Amazon</span>' : ''}</td><td class="r">${r.left != null ? money(r.left, '') : ''}</td>
-      <td>${r.beatable ? '<span class="pill good">beatable</span>' : ''}${r.new ? ' <span class="pill accent">new</span>' : ''}</td></tr>`).join('')
-      : '<tr><td colspan="11" class="empty">No listings match.</td></tr>') + '</tbody>';
-}
-$('btnXExport').addEventListener('click', () => xData && download({kind: 'xray', id: xData.id}));
-$('btnXLocal').addEventListener('click', async () => {
-  if (!xData) return;
-  const kw = $('xkw').value.trim() || xData.keyword;
-  if (!kw) return toast('Type the keyword first');
-  $('xLocal').innerHTML = '<span class="spin" style="display:inline-block;vertical-align:-3px"></span> Checking how many sellers deliver fast...';
-  try {
-    const {job} = await api('/api/check', {keyword: kw, markets: [xData.market]});
-    const res = await waitJob(job);
-    const r = res.results[0];
-    $('xLocal').innerHTML = r.error ? '<span class="pill bad">' + esc(r.error) + '</span>' :
-      `<span class="pill ${{opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'}[r.level]}"><i></i>${r.local} local · ${r.overseas} not local · ${r.fast} fast (of ${r.total})</span> ${esc(r.verdict)}`;
-  } catch (e) { $('xLocal').innerHTML = '<span class="pill bad">' + esc(e.message) + '</span>'; }
-});
-$('btnToXray').addEventListener('click', () => {
-  if (!checkData) return;
-  $('xkw').value = checkData.keyword; show('xray'); $('btnXOpen').focus();
-});
-
-/* ---------- 4. history ---------- */
-async function loadHistory() {
-  const h = await api('/api/history');
-  const lv = {opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak'};
-  $('hist').innerHTML = h.length ? h.map(x => `<button class="panel hitem" data-hist="${x.id}">
-      <div class="head"><h3>${esc(x.keyword)}</h3><span class="small">${ago(x.at)}</span></div>
-      <div class="row">${x.markets.map(m => `<span class="pill ${lv[m.level]}" title="${m.fast} deliver fast">${m.market} · ${m.local} local · ${m.overseas} abroad / ${m.total}</span>`).join('')}</div></button>`).join('')
-    : '<div class="panel empty">No checks yet.</div>';
-}
-$('hist').addEventListener('click', async e => {
-  const b = e.target.closest('[data-hist]'); if (!b) return;
-  const item = await api('/api/history/item?id=' + b.dataset.hist);
-  currentJob = null; $('kw').value = item.keyword;
-  renderCheck({keyword: item.keyword, results: item.results.map(r => ({...r, cached: true}))});
-  show('check');
-});
-
-/* ---------- 4. settings ---------- */
-let settingsFilled = false;
-function fillSettings() {
-  if (!ST.settings || !ST.settings.locations) return;
-  settingsFilled = true;
-  const s = ST.settings;
-  $('profile').innerHTML = (ST.profiles.length ? ST.profiles : [{id: '', label: 'Default browser (no Chrome profiles found)'}])
-    .map(p => `<option value="${esc(p.id)}" ${p.id === s.profile ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
-  $('locAU').value = s.locations.AU; $('locAE').value = s.locations.AE; $('locUS').value = s.locations.US;
-  $('fastDays').value = s.fast_days; $('pages').value = s.pages; $('cacheH').value = s.cache_hours; $('localDays').value = s.local_days || 9;
-}
-async function saveSettings() {
-  try {
-    const r = await api('/api/settings', {profile: $('profile').value, fast_days: +$('fastDays').value || 3, pages: Math.min(3, +$('pages').value || 1),
-      cache_hours: +$('cacheH').value || 6, local_days: +$('localDays').value || 9, locations: {AU: $('locAU').value, AE: $('locAE').value, US: $('locUS').value}});
-    ST.settings = r.settings; renderStatus(); toast('Settings saved', 1800);
-  } catch (e) { toast(e.message); }
-}
-['profile', 'locAU', 'locAE', 'locUS', 'fastDays', 'localDays', 'pages', 'cacheH'].forEach(id => $(id).addEventListener('change', saveSettings));
-$('btnProfiles').addEventListener('click', async () => { ST.profiles = await api('/api/profiles', {}); settingsFilled = false; fillSettings(); toast(ST.profiles.length + ' profiles found'); });
-$('btnTestProfile').addEventListener('click', () => openUrl('https://members.helium10.com/'));
-$('btnH10').addEventListener('click', () => openUrl('https://members.helium10.com/'));
-$('btnLoc').addEventListener('click', () => { api('/api/browser', {action: 'locations'}); $('locNote').textContent = 'Setting... watch the pills at the top.'; });
-const browser = a => api('/api/browser', {action: a});
-$('btnShow').addEventListener('click', () => browser('show')); $('btnShow2').addEventListener('click', () => browser('show'));
-$('btnHide').addEventListener('click', () => browser('hide')); $('btnRestart').addEventListener('click', () => browser('restart'));
-
-/* ---------- start ---------- */
-try { const v = localStorage.getItem('pcView'); if (v && $('v-' + v)) show(v); } catch (e) {}
-poll(); setInterval(poll, 2000);
-$('kw').focus();
-</script>
+<script src="/ui/js/format.js"></script>
+<script src="/ui/js/api.js"></script>
+<script src="/ui/js/components.js"></script>
+<script src="/ui/js/app.js"></script>
+<script src="/ui/js/legacy.js"></script>
 </body>
 </html>

@@ -14,7 +14,9 @@ import time
 from pathlib import Path
 from urllib.parse import quote_plus
 
-APP_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker'
+import config
+
+APP_DIR = config.APP_DIR
 PROFILE_DIR = APP_DIR / 'checker-browser'
 
 MARKETS = {

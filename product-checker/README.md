@@ -3,11 +3,14 @@
 A small Windows app that runs on your own PC, in its own window.
 
 1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**.
-2. **New product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet. You can also **search a niche** to see what shoppers type and how each keyword does in every country.
+2. **Product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet.
+   **Niche keywords** shows what shoppers type for a niche and how each keyword does in every country.
 3. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
-4. **Top products from a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
+4. **Rank a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
 5. **History:** past checks open again instantly, without a new search.
-6. **Settings:** your Chrome profile, delivery locations and how checks run.
+6. **Settings:** theme (light, dark, or the same as Windows), your Chrome profile, delivery locations and how checks run.
+
+The tools are in the sidebar on the left. The theme switch is at the bottom of the sidebar. Each tool has its own address (for example `#/rank`), so the window reopens where you left it.
 
 ## Install
 
@@ -130,8 +133,13 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 
 | File | What it does |
 |---|---|
-| `app.py` | local web server and app window; settings, history and jobs |
-| `ui/index.html` | the whole interface (plain HTML, CSS and JavaScript) |
+| `app.py` | local web server and app window; API routes, history and jobs. Only this app's own page can call the API (per-run token plus Host/Origin checks) |
+| `config.py` | settings schema with validation, keyword normalising, each marketplace's local date |
+| `jobs.py` | background jobs started from the window (checks, scans), pruned after 30 minutes |
+| `ui/index.html` | the page shell: sidebar, top bar and the views |
+| `ui/css/tokens.css`, `ui/css/app.css` | colours for the light and dark themes (tested for contrast), layout and components |
+| `ui/js/` | `api.js` (every request carries the token), `app.js` (routes, theme, status), `components.js`, `format.js`, `legacy.js` (the tools) |
+| `engine/` | analysis maths without any I/O: sales-badge ranges, Google Trends features and labels, list surges, alerts |
 | `amazon_check.py` | background browser (Playwright) that searches Amazon and reads delivery dates |
 | `xray.py` | Xray export analysis and the Downloads watcher |
 | `ideas.py` | Movers & Shakers / New Releases scan, idea scoring, and niche keywords from Amazon's search suggestions |
