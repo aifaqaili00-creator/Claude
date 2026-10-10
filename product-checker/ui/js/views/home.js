@@ -47,6 +47,10 @@
         ${sc.paused === 'paused by you' ? '<button class="btn" id="hResume">Resume</button>' : '<button class="btn" id="hPause">Pause 1 hour</button>'}
       </div>
       ${todo ? `<div class="panel stackv"><h3>Getting started</h3><ul class="reasons">${steps.map(s => `<li class="${s[0] ? 'good' : 'warn'}"><a href="${s[2]}">${esc(s[1])}</a></li>`).join('')}</ul></div>` : ''}
+      ${(d.opportunities || []).length ? `<div class="panel"><h3 style="margin-bottom:8px">Best opportunities among your watched keywords</h3><div class="tablewrap" style="box-shadow:none"><table><tbody>
+        ${d.opportunities.map(o => `<tr><td><a href="#/k/${o.market}/${encodeURIComponent(o.kw)}"><b>${esc(o.kw)}</b></a></td><td>${esc(MK_SHORT[o.market])}</td>
+          <td><span class="pill ${({Strong: 'good', 'Worth a look': 'accent', Weak: 'warn', Skip: 'bad'})[o.label] || 'weak'}">${esc(o.label)} · ${Math.round(o.score)}</span></td><td class="small">${esc(o.why.join(' · '))}</td></tr>`).join('')}
+        </tbody></table></div></div>` : ''}
       ${d.gaps.length ? `<div class="panel"><h3 style="margin-bottom:8px">Gaps in Australia and the UAE (watched keywords)</h3><div class="row">${d.gaps.map(g => `<a class="pill good" href="#/k/${g.market}/${encodeURIComponent(g.kw)}">${icon('ok')}${esc(g.kw)} · ${MK_SHORT[g.market]} · ${g.fast} fast${g.units ? ' · ~' + compact(g.units) + '/mo' : ''}</a>`).join('')}</div></div>` : ''}
       <h2 class="section">Alerts</h2>
       ${Object.keys(days).length ? Object.entries(days).map(([day, list]) => `<div class="panel stackv"><h3>${esc(day === new Date().toDateString() ? 'Today' : day)}</h3>

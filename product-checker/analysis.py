@@ -71,6 +71,23 @@ def parse_health(conn, now):
     return out
 
 
+def plan_alerts(conn, watches, now):
+    """Order-by reminders for watched keywords with a reliable seasonal pattern."""
+    from engine import planner
+    items = []
+    for w in watches:
+        if w['kind'] != 'keyword' or w.get('stage') in ('rejected', 'launched'):
+            continue
+        tf = storage.trends_feature(conn, w['target'], w['market']) or {}
+        se = tf.get('seasonality') or {}
+        if not se.get('reliable'):
+            continue
+        plan = planner.plan(se['si'], se.get('strength'), True, se.get('peak_month'),
+                            config.market_day(now, w['market']), market=w['market'])
+        items.append({'market': w['market'], 'target': w['target'], 'display': w.get('display') or w['target'], 'plan': plan})
+    return rules.order_by_rule(items, now)
+
+
 def ops_alerts(conn, S, watches, now):
     stale = []
     for t in storage._rows(conn.execute('SELECT * FROM task WHERE enabled=1')):
@@ -85,7 +102,8 @@ def ops_alerts(conn, S, watches, now):
         r = conn.execute("SELECT MAX(as_of) FROM import_file WHERE kind='xray' AND market=? AND kw_norm=?",
                          (w['market'], w['target'])).fetchone()
         xray.append({**w, 'last_xray_import_ts': r[0]})
-    ctx = {'source_state': S.throttle.state(now) if S and getattr(S, 'throttle', None) else {},
+    from engine import fees
+    ctx = {'fees_as_of': fees.DEFAULTS.get('as_of'), 'source_state': S.throttle.state(now) if S and getattr(S, 'throttle', None) else {},
            'stale': [s for s in stale if s['last_ok_ts']], 'parse_health': parse_health(conn, now), 'watched': xray}
     return rules.ops_rules(ctx, now)
 
@@ -106,6 +124,10 @@ def run(S, results=(), now=None):
             d = r.get('data') or {}
             if r.get('kind') == 'trends' and d.get('new'):
                 found += rules.trend_rules(r['target'], r['market'], d.get('old'), d['new'], now)
+        try:
+            found += plan_alerts(conn, watches, now)
+        except Exception:                                       # noqa: BLE001
+            log.exception('order-by alerts')
         try:
             found += ops_alerts(conn, S, watches, now)
         except Exception:                                       # noqa: BLE001

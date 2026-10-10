@@ -468,7 +468,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _xray(self, path, q, name=None):
         try:
-            a = xray.analyse(path, q.get('market') or 'auto', (q.get('keyword') or '').strip())
+            mk = q.get('market') or 'auto'
+            a = xray.analyse(path, mk, (q.get('keyword') or '').strip(),
+                             registered=bool(S.settings.get('registered', {}).get(mk)))
         except Exception as e:
             log.exception('xray')
             return self._send(400, {'error': str(e).splitlines()[0][:300]})
@@ -798,7 +800,9 @@ def api_beat(h, q):
 # ---------------- automatic refresh, watchlist, alerts ----------------
 @route('GET', '/api/home')
 def api_home(h, q):
-    return h._send(200, reports.home(S.db, S))
+    out = reports.home(S.db, S)
+    out['opportunities'] = reports.opportunities(S.db, S.settings)
+    return h._send(200, out)
 
 
 @route('GET', '/api/radar')
@@ -917,6 +921,44 @@ def api_report_product_refresh(h, q):
         await S.refit_curve(market)
         return await asyncio.to_thread(reports.product_report, S.db, market, asin, S.settings)
     return h._send(200, {'job': S.new_job('product', work)})
+
+
+@route('GET', '/api/report/money')
+def api_report_money(h, q):
+    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    kw = ' '.join(str(q.get('kw') or '').split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+    return h._send(200, reports.money(S.db, market, kw, S.settings))
+
+
+@route('POST', '/api/profit')
+def api_profit(h, q):
+    """The profit calculator: unit economics, the price grid with fee steps, and the highest product cost for 20%."""
+    from engine import profit as pf
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+
+    def num(k, lo=0.0, hi=1e6):
+        try:
+            return max(lo, min(hi, float(d[k]))) if d.get(k) not in (None, '') else None
+        except (TypeError, ValueError):
+            return None
+    dims = [num('l'), num('w'), num('h')]
+    inp = {'market': market, 'price': num('price', 0.01), 'category': str(d.get('category') or '')[:80],
+           'dims_cm': dims if all(dims) else None, 'kg': num('kg', 0.001, 500), 'cogs_usd': num('cogs_usd') or 0.0,
+           'freight_mode': 'air' if d.get('freight_mode') == 'air' else 'sea', 'duty_pct': num('duty_pct', 0, 1),
+           'tacos_pct': num('tacos_pct', 0, 1), 'registered': bool(d.get('registered')),
+           'fba_fee_override': num('fba_fee'), 'date': config.market_today(market).isoformat()}
+    inp = {k: v for k, v in inp.items() if v is not None}
+    e = pf.unit_economics(inp)
+    if not e:
+        return h._send(400, {'error': 'Enter a selling price.'})
+    if d.get('kw') and d.get('save_cogs'):
+        kw = config.norm_kw(d['kw'])
+        S.db.write(lambda c: c.execute("UPDATE watch SET cogs=? WHERE kind='keyword' AND market=? AND target=?",
+                                       (inp.get('cogs_usd'), market, kw)))
+    return h._send(200, {'economics': e, 'grid': pf.price_grid(inp), 'max_cogs_20': pf.max_cogs(inp, 0.20)})
 
 
 @route('GET', '/api/calibration')

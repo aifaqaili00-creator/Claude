@@ -27,6 +27,13 @@ A small Windows app that runs on your own PC, in its own window.
 
 10. **Product report** (open it from a keyword report's top listings, a radar card, or `#/p/<market>/<ASIN>`): the Best Sellers Rank over time, and **units sold and revenue per month for that one product**, estimated from its rank through a sales curve the app fits for each marketplace. Listings that show both a rank and a "bought in past month" badge teach the curve, as do your Helium 10 exports; **Track daily** reads the page every day. Until a marketplace has 30 readings the curve leans on default values, and the report says so. **Health** shows how well each curve fits.
 
+11. **Money and decisions** (in every keyword report):
+    - **Opportunity score** (0–100, Strong / Worth a look / Weak / Skip), built from demand, momentum, competition, the local gap and margin, with a reason for each part. Risky product types lower it.
+    - **Profit per sale**: Amazon's referral, FBA, storage and placement fees for that marketplace, GST/VAT (set whether you are registered under Settings), freight by sea or air, duty, ads and returns. It also gives return on stock, break-even ad spend, the highest product cost for a 20% margin, and a price grid that marks fee steps.
+    - **Launch plan**: from the seasonal pattern, the dates to order, ship and be in stock before demand rises, by sea and by air. Home reminds you two weeks before an order-by date.
+    - For US keywords, **Bring it from the USA?** scores how well the product would travel to Australia and the UAE.
+    - Fee tables are dated 2026-10-09 and include links to check them; the Australian and UAE tables are estimates. US duty changed several times in 2026, so check it before ordering.
+
 **Your history is kept.** Every check, Google Trends sample and Helium 10 export is stored in `%LOCALAPPDATA%\ProductChecker\market.db`, with automatic backups in its `backup` folder. Helium 10 exports (Xray, Black Box, Magnet, Cerebro) in your Downloads folder are imported when the app starts, so months you researched before give you history from day one.
 
 The tools are in the sidebar on the left. The theme switch is at the bottom of the sidebar. Each tool has its own address (for example `#/rank`), so the window reopens where you left it.

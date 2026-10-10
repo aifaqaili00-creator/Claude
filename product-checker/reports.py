@@ -10,7 +10,8 @@ import amazon_check as ac
 import config
 import storage
 
-H10_ERROR = 0.25          # Helium 10 estimates are typically 15-30% off: shown as a +-25% range
+H10_ERROR = 0.25
+ASSUMED_LANDED_SHARE = 0.25   # product + freight as a share of the price, until you enter a product cost          # Helium 10 estimates are typically 15-30% off: shown as a +-25% range
 BACKCAST_MONTHS = 24
 FORECAST_MONTHS = 6
 MIN_TRENDS_QUALITY = 0.5
@@ -492,4 +493,90 @@ def calibration(db):
             out[m] = {'points': kinds, 'curve': {k: cv.get(k) for k in ('status', 'n_obs', 'beta', 'sigma', 'delta_h', 'fitted_at',
                                                                        'diag', 'n_by_kind', 'converged')} if cv else None}
         return out
+    return db.read(build)
+
+
+# ---------- Phase 4: money and decisions ----------
+def niche_inputs(conn, market, kw, settings, cogs_usd=None):
+    """Everything the scores need for one keyword in one market, from the newest valid search."""
+    from engine import badge, profit, scores
+    s = latest(conn, market, kw, settings)
+    if not s:
+        return None
+    organic = [r for r in s['rows'] if not r['sponsored']]
+    products = [{'units': badge.badge_estimate(r['bought'], market) if r.get('bought') else None, 'reviews': r.get('reviews'),
+                 'origin': r.get('origin'), 'speed': r.get('speed'), 'sponsored': r.get('sponsored')} for r in s['rows']]
+    m = scores.niche_metrics(products, market=market)
+    tf = storage.trends_feature(conn, kw, market) or {}
+    m['momentum'] = scores.niche_momentum(tf.get('score'), None, tf.get('q'))
+    m['risk_flags'] = scores.risk_flags([r.get('title') for r in organic[:10]])
+    m['market'] = market
+    prices = sorted(r['price'] for r in organic if r.get('price'))
+    price = prices[len(prices) // 2] if prices else None
+    econ = None
+    if price:
+        econ = profit.unit_economics({'market': market, 'price': price, 'cogs_usd': cogs_usd or 0.0,
+                                      'registered': bool(settings.get('registered', {}).get(market)),
+                                      'category': ''})
+        if cogs_usd:
+            m['margin'] = econ['Margin']
+        else:                                     # without a product cost: what is left after Amazon, minus an assumed
+            # 25% of the price for product and freight (scores count this at half weight)
+            after = (econ['Profit'] + econ['Landed']) / econ['NetSales'] if econ['NetSales'] else None
+            m['left_pct'] = max(0.0, after - ASSUMED_LANDED_SHARE) if after is not None else None
+    sat = scores.saturation(m)
+    return {'summary': s, 'metrics': m, 'price': price, 'economics': econ, 'opportunity': scores.opportunity(m),
+            'saturation': sat, 'trend': tf, 'bought_mid_sum': sum((p['units'] or {}).get('v') or 0 for p in products
+                                                                if not p['sponsored'])}
+
+
+def money(db, market, kw, settings, now=None):
+    """Opportunity, saturation, unit economics at the median price, launch plan, and US -> AU/UAE arbitrage."""
+    from engine import planner, scores
+    kw_norm = config.norm_kw(kw)
+
+    def build(conn):
+        w = conn.execute("SELECT cogs FROM watch WHERE kind='keyword' AND market=? AND target=?", (market, kw_norm)).fetchone()
+        cogs = w[0] if w and w[0] else None
+        n = niche_inputs(conn, market, kw_norm, settings, cogs)
+        tf = storage.trends_feature(conn, kw_norm, market) or {}
+        season = tf.get('seasonality') or {}
+        plan = planner.plan(season.get('si'), season.get('strength'), season.get('reliable'), season.get('peak_month'),
+                            config.market_today(market).isoformat(), market=market) if season.get('si') else \
+            {'status': 'unknown', 'note': 'Seasonality unknown: fetch Google Trends for this keyword first'}
+        out = {'market': market, 'cogs_usd': cogs, 'plan': plan, 'arbitrage': {}}
+        if n:
+            m = dict(n['metrics'])
+            m.pop('target', None)
+            out.update(opportunity=n['opportunity'], saturation=n['saturation'], economics=n['economics'], price=n['price'],
+                       metrics=m)
+        if market == 'US':
+            us = {'trend_score': tf.get('score')}
+            for t in ('AU', 'AE'):
+                nt = niche_inputs(conn, t, kw_norm, settings, cogs)
+                if not nt:
+                    out['arbitrage'][t] = None
+                    continue
+                ttf = nt['trend']
+                tm = {'market': t, 'autocomplete': None, 'trends_monthly': ttf.get('monthly'), 'bought_mid_sum': nt['bought_mid_sum'],
+                      'osd_share': nt['metrics'].get('osd_share'), 'fast_local': nt['metrics'].get('fast_local'),
+                      'margin': nt['metrics'].get('margin'), 'left_pct': nt['metrics'].get('left_pct'), 'trend_label': ttf.get('label')}
+                out['arbitrage'][t] = scores.arbitrage(us, tm)
+        return out
+    return db.read(build)
+
+
+def opportunities(db, settings, limit=10):
+    """Watched keywords ranked by opportunity, and US keywords ranked by how well they would travel to AU / UAE."""
+    def build(conn):
+        rows = []
+        for w in storage.watches(conn):
+            if w['kind'] != 'keyword':
+                continue
+            n = niche_inputs(conn, w['market'], w['target'], settings, w.get('cogs'))
+            if n and n['opportunity'].get('score') is not None:
+                rows.append({'market': w['market'], 'kw': w['target'], 'score': n['opportunity']['score'],
+                             'label': n['opportunity']['label'], 'why': n['opportunity']['why'][:2]})
+        rows.sort(key=lambda r: -r['score'])
+        return rows[:limit]
     return db.read(build)

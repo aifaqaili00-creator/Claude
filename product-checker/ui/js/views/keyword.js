@@ -65,6 +65,7 @@
         ${d.demand.volume && d.demand.volume.length ? tile('Searches / month', compact(d.demand.volume[d.demand.volume.length - 1].volume), 'Helium 10 ' + esc(d.demand.volume[d.demand.volume.length - 1].source) + ', ' + esc(d.demand.volume[d.demand.volume.length - 1].month)) : ''}
         ${tile('Price', comp && comp.prices.length ? esc(cur) + ' ' + num(median(comp.prices), 0) : '–', comp && comp.prices.length ? 'median of ' + comp.prices.length + ' listings' : '')}
       </div>
+      <div id="kMoney" class="stackv"></div>
       ${tr.why && tr.why.length ? `<div class="panel"><h3 style="margin-bottom:8px">Why “${esc(tr.label)}”</h3><ul class="reasons">${tr.why.map(w => `<li class="${/Declining|Fad/.test(tr.label) ? 'bad' : /Spike|Mixed|Seasonal/.test(tr.label) ? 'warn' : 'good'}">${esc(w)}</li>`).join('')}</ul></div>` : ''}
       <h2 class="section">Demand</h2>
       <div class="grid2">
@@ -103,6 +104,83 @@
     drawCompetition(d);
     drawMarkets(d);
     drawData(d);
+    loadMoney(d);
+  }
+
+  /* ---------- opportunity, profit and launch plan ---------- */
+  const LABEL_TONE = {Strong: 'good', 'Worth a look': 'accent', Weak: 'warn', Skip: 'bad'};
+  async function loadMoney(d) {
+    let m;
+    try { m = await api('/api/report/money?market=' + d.market + '&kw=' + encodeURIComponent(d.keyword)); }
+    catch (e) { return; }
+    if (!current || current.kw_norm !== d.kw_norm || current.market !== d.market) return;
+    const o = m.opportunity, cur = d.currency;
+    const part = p => `<div class="part"><span class="small">${esc(p.name)}</span><div class="bar" style="height:8px"><span style="width:${Math.round((p.v || 0) * 100)}%;background:var(--s-demand)"></span></div><span class="small tnum">${p.known ? Math.round((p.v || 0) * 100) : '?'}</span><div class="sub" style="grid-column:1/-1">${esc(p.why || '')}</div></div>`;
+    const plan = m.plan || {};
+    const dates = x => x ? `order by <b>${esc(x.order_by)}</b> · ship by ${esc(x.ship_by)} · in stock by ${esc(x.in_stock_by)}` : '–';
+    $('kMoney').innerHTML = `
+      <div class="grid2">
+        <div class="panel stackv">
+          <div class="head"><h3>Opportunity</h3>${o ? `<span class="pill ${LABEL_TONE[o.label] || 'weak'}">${esc(o.label)} · ${o.score != null ? Math.round(o.score) : '?'} / 100</span>` : ''}</div>
+          ${o ? `<div class="parts">${o.parts.map(part).join('')}</div>
+            <div class="small">Crowding ${m.saturation && m.saturation.score != null ? Math.round(m.saturation.score) + ' / 100' : 'unknown'} · confidence ${esc(o.conf)}${o.risk && o.risk.n ? ' · risky: ' + esc(o.risk.flags.join(', ')) : ''}</div>`
+            : '<div class="small">Check sellers for this keyword first.</div>'}
+          ${Object.keys(m.arbitrage).length ? `<div class="divider"></div><h3>Bring it from the USA?</h3>${Object.entries(m.arbitrage).map(([t, a]) => a ? `<div class="row" style="justify-content:space-between"><span><b>${esc(MK[t])}</b> <span class="small">${esc((a.why || []).slice(0, 2).join(' · '))}</span></span><span class="pill ${LABEL_TONE[a.label] || 'weak'}">${esc(a.label || '')} ${a.score != null ? Math.round(a.score) : '?'}</span></div>` : `<div class="small">${esc(MK[t])}: not checked yet. <a href="#/k/${t}/${encodeURIComponent(d.keyword)}">Open</a> and refresh.</div>`).join('')}` : ''}
+        </div>
+        <div class="panel stackv">
+          <h3>Launch plan</h3>
+          ${plan.status === 'unknown' ? `<div class="small">${esc(plan.note || 'Seasonality unknown.')}</div>` : `
+            <div class="small">Peak in <b>${esc(Charts.MONTHS[(plan.peak_month || 1) - 1])}</b>, demand starts rising in ${esc(Charts.MONTHS[(plan.upswing_month || 1) - 1])}.</div>
+            ${plan.status === 'too_late' ? `<div class="verdict some">${icon('warn')}<span>Too late by sea for this season (by ${plan.late_by_days} days). By air: ${dates(plan.air)}.</span></div>` : ''}
+            ${plan.status === 'next_year' ? `<div class="verdict none">${icon('dot')}<span>This season is too close. Plan for next year: ${dates(plan.sea)}.</span></div>` : ''}
+            ${plan.status === 'ok' ? `<div><b>By sea:</b> ${dates(plan.sea)}</div><div><b>By air:</b> ${dates(plan.air)}</div>` : ''}
+            <div class="small muted">Production 30 days, transit by sea or air, Amazon check-in, then 45 days to rank before the season.</div>`}
+        </div>
+      </div>
+      <div class="panel stackv" id="kProfit">
+        <div class="head"><h3>Profit per sale</h3><span class="small">Fee tables as of ${esc('2026-10-09')}${d.market !== 'US' ? ' (estimates for ' + esc(MK[d.market]) + ': check on Amazon)' : ''}</span></div>
+        <form class="row" id="pfForm" style="align-items:end">
+          <div class="field"><label>Price (${esc(cur)})</label><input type="number" step="0.01" name="price" value="${m.price != null ? m.price : ''}"></div>
+          <div class="field"><label>Product cost (US$)</label><input type="number" step="0.01" name="cogs_usd" value="${m.cogs_usd != null ? m.cogs_usd : ''}" placeholder="from supplier"></div>
+          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" name="l" style="width:64px" value="30"><input type="number" name="w" style="width:64px" value="20"><input type="number" name="h" style="width:64px" value="10"></div></div>
+          <div class="field"><label>Weight (kg)</label><input type="number" step="0.01" name="kg" value="0.5"></div>
+          <div class="field"><label>Freight</label><select name="freight_mode"><option value="sea">Sea</option><option value="air">Air</option></select></div>
+          ${d.market !== 'US' ? `<label class="small"><input type="checkbox" name="registered" ${(ST.settings.registered || {})[d.market] ? 'checked' : ''}> Registered for ${d.market === 'AU' ? 'GST' : 'VAT'}</label>` : ''}
+          <label class="small"><input type="checkbox" name="save_cogs"> Remember the cost</label>
+        </form>
+        <div id="pfOut"></div>
+      </div>`;
+    const form = $('pfForm');
+    const run = async () => {
+      const f = Object.fromEntries(new FormData(form));
+      f.registered = !!form.registered && form.registered.checked;
+      f.save_cogs = form.save_cogs.checked;
+      Object.assign(f, {market: d.market, kw: d.keyword});
+      try { renderProfit(await api('/api/profit', f), m, cur); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
+    };
+    form.addEventListener('change', run);
+    form.addEventListener('submit', e => { e.preventDefault(); run(); });
+    if (m.price) run();
+  }
+
+  function renderProfit(r, m, cur) {
+    const e = r.economics, mny = v => (v < 0 ? '−' : '') + cur + ' ' + num(Math.abs(v), 2);
+    const units = m.metrics && m.metrics.units_top10_median;
+    $('pfOut').innerHTML = `
+      <div class="kpis" style="margin:8px 0">
+        <div class="kpi"><span class="eyebrow">Profit per sale</span><span class="v" style="color:var(--${e.Profit >= 0 ? 'good' : 'bad'}-text)">${mny(e.Profit)}</span><span class="s">${e.Margin != null ? Math.round(e.Margin * 100) + '% margin' : ''}</span></div>
+        <div class="kpi"><span class="eyebrow">Return on stock</span><span class="v">${e.ROI != null ? Math.round(e.ROI * 100) + '%' : '–'}</span><span class="s">profit ÷ landed cost</span></div>
+        <div class="kpi"><span class="eyebrow">Break-even ad spend</span><span class="v">${e.BreakEvenACoS != null ? Math.round(e.BreakEvenACoS * 100) + '%' : '–'}</span><span class="s">ACoS where profit hits zero</span></div>
+        <div class="kpi"><span class="eyebrow">Highest product cost</span><span class="v">${r.max_cogs_20 != null ? 'US$ ' + num(r.max_cogs_20, 2) : '–'}</span><span class="s">for a 20% margin</span></div>
+        ${units ? `<div class="kpi"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">~${num(units)} sales a month (badge estimate, rough)</span></div>` : ''}
+      </div>
+      <div class="grid2">
+        <div><table><tbody>${e.waterfall.map(([k, v]) => `<tr${k === 'Profit' ? ' class="fast"' : ''}><td>${esc({NetSales: e.registered ? 'Price without GST/VAT' : 'Price', Referral: 'Referral fee', FBA: 'FBA fee (' + e.fee_source + ')', Storage: 'Storage', Placement: 'Inbound placement', FeeTax: 'GST/VAT on fees', Landed: 'Product + freight + duty', Ads: 'Ads (12% of sales)', Returns: 'Returns (2.5%)', Other: 'Other', Profit: 'Profit'}[k] || k)}</td><td class="r">${k === 'NetSales' || k === 'Profit' ? mny(v) : '− ' + num(v, 2)}</td></tr>`).join('')}</tbody></table>
+          ${e.warnings.map(w => `<div class="small">${icon('warn')} ${esc(w)}</div>`).join('')}</div>
+        <div><table><thead><tr><th class="r">Price</th><th class="r">Profit</th><th class="r">Margin</th><th></th></tr></thead><tbody>
+          ${r.grid.filter((g, i) => i % 2 === 0 || g.cliff).map(g => `<tr><td class="r">${num(g.price, 2)}</td><td class="r ${g.profit < 0 ? 'down' : ''}">${num(g.profit, 2)}</td><td class="r">${g.margin != null ? Math.round(g.margin * 100) + '%' : ''}</td><td>${g.cliff ? '<span class="pill warn">fee step</span>' : ''}</td></tr>`).join('')}
+        </tbody></table></div>
+      </div>`;
   }
 
   const median = v => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };

@@ -94,7 +94,19 @@ def _med(s):
     return float(s.median()) if len(s) else None
 
 
-def analyse(path, market='auto', keyword=''):
+def left_per_sale(market, price, fba_fee, category='', registered=False):
+    """What is left per sale after Amazon's referral and FBA fees (and GST/VAT), before product cost and shipping."""
+    from engine import fees
+    if price != price or price is None or fba_fee != fba_fee or fba_fee is None:
+        return float('nan')
+    tax = (fees.market_table(market) or {}).get('tax') or {}
+    v, v_fees = float(tax.get('price') or 0), float(tax.get('fees') or 0)
+    net = price / (1 + v) if registered else price
+    amazon = (fees.referral_fee(market, category or '', price) or price * REFERRAL) + fba_fee
+    return net - amazon - (0.0 if registered else v_fees * amazon)
+
+
+def analyse(path, market='auto', keyword='', registered=False):
     mk, d = fr.prepare(path, market)
     T = fr.TARGETS[mk]
     d = fr.score(d, T)
@@ -104,7 +116,8 @@ def analyse(path, market='auto', keyword=''):
     d['amazon'] = d.apply(fr.amazon_sells, axis=1)
     d['new'] = d['age'].between(0, 12)
     d['beatable'] = (d['sales'] >= T['sales']) & (d['reviews'].fillna(0) <= T['reviews'])
-    d['left'] = d['price'] - d['fba_fees'] - d['price'] * REFERRAL               # per unit, before product + shipping
+    d['left'] = [left_per_sale(mk, p, f, c, registered)                         # per unit, before product + shipping
+                 for p, f, c in zip(d['price'], d['fba_fees'], d['category'])]
     organic = d[~d['is_ad']]
     base = (organic if len(organic) >= 5 else d).sort_values('revenue', ascending=False).reset_index(drop=True)
     top10 = base.head(10)

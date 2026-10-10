@@ -58,6 +58,7 @@
     const s = ST.settings || {};
     if (filled || s.auto_refresh === undefined) return;
     filled = true;
+    $('regAU').checked = !!(s.registered || {}).AU; $('regAE').checked = !!(s.registered || {}).AE;
     document.querySelectorAll('#autoPanel [data-set]').forEach(el => {
       const v = s[el.dataset.set];
       if (el.type === 'checkbox') el.checked = !!v; else el.value = v == null ? '' : v;
@@ -65,6 +66,11 @@
   }
   onState(() => fill());
   $('autoPanel').addEventListener('change', async e => {
+    if (e.target.id === 'regAU' || e.target.id === 'regAE') {
+      try { const r = await api('/api/settings', {registered: {AU: $('regAU').checked, AE: $('regAE').checked}}); ST.settings = r.settings; toast('Saved', 1500); }
+      catch (err) { toast(err.message); }
+      return;
+    }
     const el = e.target.closest('[data-set]'); if (!el) return;
     const v = el.type === 'checkbox' ? el.checked : el.value;
     try { const r = await api('/api/settings', {[el.dataset.set]: v}); ST.settings = r.settings; toast('Saved', 1500); }

@@ -115,3 +115,19 @@ def test_library(db):
     lib = reports.library(db)
     assert lib['keywords'][0]['kw_norm'] == 'moving bags' and lib['keywords'][0]['markets'] == ['AU']
     assert lib['imports'][0]['kind'] == 'xray' and lib['counts']['serp_snapshot'] == 5
+
+
+def test_money_section_and_opportunities(db):
+    fill(db)
+    db.write(storage.add_watch, 'keyword', 'AU', 'moving bags')
+    m = reports.money(db, 'AU', 'moving bags', SETTINGS)
+    json.dumps(m, allow_nan=False)
+    assert m['opportunity']['label'] in ('Strong', 'Worth a look', 'Weak', 'Skip') and m['economics']['Profit'] is not None
+    assert m['plan']['status'] == 'unknown' and m['arbitrage'] == {}
+    db.write(lambda c: c.execute("UPDATE watch SET cogs=3"))
+    m2 = reports.money(db, 'AU', 'moving bags', SETTINGS)
+    assert m2['cogs_usd'] == 3 and m2['metrics']['margin'] is not None
+    ops = reports.opportunities(db, SETTINGS)
+    assert ops and ops[0]['kw'] == 'moving bags'
+    us = reports.money(db, 'US', 'moving bags', SETTINGS)
+    assert set(us['arbitrage']) == {'AU', 'AE'} and us['arbitrage']['AE'] is None

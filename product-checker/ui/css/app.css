@@ -292,3 +292,7 @@ h2.section { margin: 10px 0 -4px; font-size: 15px; color: var(--ink-2); }
 .lane-item { display: grid; padding: 6px 8px; border-radius: var(--r); text-decoration: none; color: var(--ink); background: var(--sunk); }
 .lane-item:hover { background: var(--accent-soft); }
 .verdict .btn { margin-left: 8px; }
+
+/* opportunity parts */
+.parts { display: grid; gap: 8px; }
+.part { display: grid; grid-template-columns: 110px 1fr 34px; gap: 4px 10px; align-items: center; }
