@@ -23,6 +23,10 @@ import chrome_profiles as cp
 import config
 import file_rank as fr
 import ideas
+import importer
+import reports
+import storage
+import trends
 import xray
 from jobs import JobManager
 
@@ -30,7 +34,8 @@ HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / 'ui'
 APP_DIR = config.APP_DIR
 SETTINGS_FILE = APP_DIR / 'settings.json'
-HISTORY_FILE = APP_DIR / 'history.json'
+HISTORY_FILE = APP_DIR / 'history.json'                       # v5 only: imported into market.db on first start
+DB_FILE = APP_DIR / 'market.db'
 PORT_FILE = APP_DIR / 'port.txt'
 HELIUM10 = 'https://members.helium10.com/'
 VERSION = config.VERSION
@@ -100,11 +105,10 @@ class State:
         if not self.settings.get('profile') or self.settings['profile'] not in [p['id'] for p in self.profiles]:
             self.settings['profile'] = cp.pick_default(self.profiles)
         self.apply_locations()
-        self.history = load_json(HISTORY_FILE, [])
-        self.cache = {}                                           # (market, norm keyword, pages) -> summary
-        for h in reversed(self.history):
-            for s in h.get('results', []):
-                self.cache[(s['market'], config.norm_kw(s['keyword']), h.get('pages', 1))] = s
+        self.db = storage.DB(DB_FILE).open()                      # every search, scan and import is kept here
+        self.db.write(storage.interrupt_stale_runs)
+        if Path(HISTORY_FILE).exists():
+            storage.import_history_file(self.db, HISTORY_FILE)
         self.ranks = {}                                           # rank id -> DataFrame
         self.xrays = {}                                           # xray analysis id -> result
         self.idea_cats = {}                                       # market -> Movers & Shakers categories
@@ -119,6 +123,8 @@ class State:
         if start_loop:                                            # one event loop thread owns the browser
             threading.Thread(target=self.loop.run_forever, daemon=True, name='browser').start()
         self.checker = ac.Checker(log=self.say)
+        self.trends = trends.BrowserTrends(self.checker, self.say)
+        self.trends.breaker.load(self.db.read(storage.get_state, 'trends_breaker'))
         self.jobs = JobManager(self.run, self.say)
 
     def apply_locations(self):
@@ -152,16 +158,57 @@ class State:
     def resummarize(self, s):
         """Recount a saved result with the current day limits (also upgrades results saved by older versions)."""
         fast, local, _ = self.days()
-        return ac.summarize(s['market'], s['keyword'], s.get('location', ''), s.get('rows', []), fast, local, s.get('checked_at'))
+        out = ac.summarize(s['market'], s['keyword'], s.get('location', ''), s.get('rows', []), fast, local,
+                           s.get('checked_at'))
+        if s.get('snapshot_id'):
+            out['snapshot_id'] = s['snapshot_id']
+        return out
 
     def cached(self, code, kw, pages):
-        s = self.cache.get((code, config.norm_kw(kw), pages))
-        if s and time.time() - s['checked_at'] < self.settings['cache_hours'] * 3600:
-            return {**self.resummarize(s), 'cached': True}
-        return None
+        """A search from the last few hours for the same place and page count, recounted. None if there is none."""
+        s = self.db.read(storage.latest_serp, code, kw, pages, self.settings['locations'].get(code),
+                         self.settings['cache_hours'] * 3600, statuses=storage.VALID + ('wrong_location',))
+        return {**self.resummarize(s), 'cached': True} if s else None
+
+    async def save_check(self, s, run_id, pages, source='user'):
+        """Keep a finished search in market.db. A database problem is logged, never shown as a failed check."""
+        try:
+            s['snapshot_id'] = await self.db.awrite(storage.save_serp, s, source, run_id, pages,
+                                                     self.settings['locations'].get(s['market']))
+        except Exception:                                           # noqa: BLE001
+            log.exception('could not save the search')
+
+    def import_folders(self):
+        folders = [xray.downloads_dir()]
+        if self.settings.get('import_folder'):
+            folders.append(Path(self.settings['import_folder']))
+        return folders
+
+    def scan_imports(self, progress=None):
+        """Import new Helium 10 exports from Downloads (and the chosen folder). Safe to run any time."""
+        out = importer.scan(self.db, self.import_folders(), progress)
+        n = sum(1 for r in out if r['status'] == 'imported')
+        if n:
+            self.say('Imported %d Helium 10 export%s into your history.' % (n, '' if n == 1 else 's'))
+        return out
+
+    async def refresh_trends(self, kw, geo, progress=None, force=False):
+        """Google Trends for one term and country. Google refusing pauses Trends; that is reported, not raised."""
+        try:
+            if progress:
+                progress('Google Trends: %s in %s...' % (kw, ac.MARKETS[geo]['name']))
+            return await trends.refresh(self.db, self.trends, kw, geo, force=force, with_related=True)
+        except trends.TrendsError as e:
+            if progress:
+                progress('Google Trends: %s' % e)
+            return None
+        finally:
+            await self.db.awrite(storage.set_state, 'trends_breaker', self.trends.breaker.state())
 
     async def check_many(self, keyword, markets, refresh, progress):
         fast, local, pages = self.days()
+        run_id = await self.db.awrite(storage.start_run, 'check', 'user')
+        fresh = []
 
         async def one(code):
             hit = None if refresh else self.cached(code, keyword, pages)
@@ -172,30 +219,26 @@ class State:
             try:
                 s = await self.checker.check(keyword, code, fast, pages, progress, local)
             except Exception as e:
-                progress('%s failed: %s' % (ac.MARKETS[code]['name'], str(e).splitlines()[0][:150]))
-                return {'market': code, 'name': ac.MARKETS[code]['name'], 'keyword': keyword, 'error': str(e).splitlines()[0][:200]}
-            self.cache[(code, config.norm_kw(keyword), pages)] = s
+                msg = (str(e).strip() or e.__class__.__name__).splitlines()[0][:200]
+                progress('%s failed: %s' % (ac.MARKETS[code]['name'], msg[:150]))
+                gap = {'market': code, 'name': ac.MARKETS[code]['name'], 'keyword': keyword, 'error': msg,
+                       'status': getattr(e, 'status', 'error')}
+                await self.save_check(dict(gap), run_id, pages)                 # stored as a gap, never as zero
+                return gap
+            await self.save_check(s, run_id, pages)
+            fresh.append(s)
             return s
         results = await asyncio.gather(*(one(c) for c in markets))
-        good = [r for r in results if 'error' not in r]
-        if good:
-            entry = {'id': uuid.uuid4().hex[:8], 'keyword': keyword, 'at': time.time(), 'pages': pages,
-                     'results': good}
-            with self.lock:
-                self.history = [h for h in self.history
-                                if not (config.norm_kw(h['keyword']) == config.norm_kw(keyword) and
-                                        {r['market'] for r in h['results']} == {r['market'] for r in good})]
-                self.history.insert(0, entry)
-                self.history = self.history[:40]
-                data = clean(self.history)
-            await asyncio.to_thread(save_json, HISTORY_FILE, data)
-        return {'keyword': keyword, 'results': results}
+        failed = sum(1 for r in results if 'error' in r)
+        await self.db.awrite(storage.finish_run, run_id, 'done' if fresh or not failed else 'error', len(fresh), failed)
+        return {'keyword': keyword, 'results': results, 'run_id': run_id}
 
     async def check_batch(self, items, progress):
         """Check several products (from a ranked file or ideas), 3 at a time."""
         fast, local, pages = self.days()
         sem = asyncio.Semaphore(3)
         out = {}
+        run_id = await self.db.awrite(storage.start_run, 'batch', 'user')
 
         async def one(it):
             async with sem:
@@ -204,17 +247,22 @@ class State:
                 if not hit:
                     try:
                         hit = await self.checker.check(kw, code, fast, pages, None, local)
-                        self.cache[(code, config.norm_kw(kw), pages)] = hit
+                        await self.save_check(hit, run_id, pages)
                     except Exception as e:
-                        out[it['key']] = {'error': str(e).splitlines()[0][:150]}
+                        msg = (str(e).strip() or e.__class__.__name__).splitlines()[0][:150]
+                        await self.save_check({'market': code, 'keyword': kw, 'error': msg,
+                                               'status': getattr(e, 'status', 'error')}, run_id, pages)
+                        out[it['key']] = {'error': msg}
                         progress('"%s" failed' % kw)
                         return
                 out[it['key']] = {k: hit.get(k) for k in (
                     'fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median', 'bought_top', 'bought_total',
                     'bought_listings', 'search_url', 'keyword', 'location_ok', 'local', 'overseas', 'overseas_intl',
-                    'market', 'fast_price_min', 'fast_price_max')}
+                    'market', 'fast_price_min', 'fast_price_max', 'status')}
                 progress('"%s": %d fast, %d local, %d overseas of %d' % (kw, hit['fast'], hit['local'], hit['overseas'], hit['total']))
         await asyncio.gather(*(one(i) for i in items))
+        n_fail = sum(1 for v in out.values() if 'error' in v)
+        await self.db.awrite(storage.finish_run, run_id, 'done', len(out) - n_fail, n_fail)
         return out
 
     async def find_ideas(self, code, slugs, kinds, hide, refresh, progress):
@@ -346,19 +394,23 @@ class Handler(BaseHTTPRequestHandler):
                 mk, top, all_, summary = fr.rank(path, q.get('market', 'auto'), config._coerce('top', q.get('top') or 10))
             except Exception as e:
                 return self._send(400, {'error': str(e)})
+            imported = importer.import_file(S.db, path, market=mk, name=name)
         rid = uuid.uuid4().hex[:8]
         S.ranks[rid] = all_
         S.ranks = dict(list(S.ranks.items())[-10:])
         counts = all_['verdict'].value_counts().to_dict()
         return self._send(200, {'id': rid, 'file': name, 'market': mk, 'summary': summary, 'counts': counts,
-                                'total': len(all_), 'target': fr.TARGETS[mk], 'rows': fr.to_records(all_.head(100))})
+                                'total': len(all_), 'target': fr.TARGETS[mk], 'rows': fr.to_records(all_.head(100)),
+                                'imported': imported})
 
-    def _xray(self, path, q):
+    def _xray(self, path, q, name=None):
         try:
             a = xray.analyse(path, q.get('market') or 'auto', (q.get('keyword') or '').strip())
         except Exception as e:
             log.exception('xray')
             return self._send(400, {'error': str(e).splitlines()[0][:300]})
+        a['imported'] = importer.import_file(S.db, path, market=a.get('market'), kind='xray',
+                                             keyword=a.get('keyword') or None, name=name or Path(path).name)
         a['id'] = uuid.uuid4().hex[:8]
         S.xrays[a['id']] = a
         S.xrays = dict(list(S.xrays.items())[-20:])
@@ -438,22 +490,91 @@ def api_xray_watch(h, q):
 @route('GET', '/api/history')
 def api_history(h, q):
     out = []
-    for item in S.history:
-        res = [S.resummarize(r) for r in item['results']]
-        out.append({'id': item['id'], 'keyword': item['keyword'], 'at': item['at'],
-                    'markets': [{k: r[k] for k in ('market', 'fast', 'local', 'overseas', 'total', 'level')} for r in res]})
+    try:
+        limit = max(1, min(200, int(q.get('limit') or 40)))
+    except ValueError:
+        limit = 40
+    for item in S.db.read(storage.recent_checks, limit):
+        markets = []
+        for snap in item['snapshots']:
+            markets.append({'market': snap['market'], 'fast': snap['fast'], 'local': snap['local'],
+                            'overseas': snap['overseas'], 'total': snap['organic'], 'status': snap['status'],
+                            'level': ac.level_for(snap['fast'], snap['organic'])})
+        out.append({'id': item['id'], 'keyword': item['keyword'], 'at': item['at'], 'markets': markets})
     return h._send(200, out)
 
 
 @route('GET', '/api/history/item')
 def api_history_item(h, q):
-    item = next((x for x in S.history if x['id'] == q.get('id')), None)
-    if not item:
+    try:
+        run_id = int(q.get('id') or 0)
+    except ValueError:
+        run_id = 0
+    snaps = S.db.read(storage.run_snapshots, run_id)
+    if not snaps:
         return h._send(404, {'error': 'not found'})
-    return h._send(200, {'keyword': item['keyword'], 'results': [S.resummarize(r) for r in item['results']]})
+    return h._send(200, {'keyword': snaps[0]['keyword'], 'results': [S.resummarize(r) for r in snaps]})
+
+
+@route('GET', '/api/report/keyword')
+def api_report_keyword(h, q):
+    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    kw = ' '.join(str(q.get('kw') or '').split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+    return h._send(200, reports.keyword_report(S.db, market, kw, S.settings))
+
+
+@route('GET', '/api/library')
+def api_library(h, q):
+    return h._send(200, reports.library(S.db))
+
+
+@route('GET', '/api/trends/state')
+def api_trends_state(h, q):
+    return h._send(200, S.trends.breaker.state())
 
 
 # ---------------- POST routes ----------------
+@route('POST', '/api/report/refresh')
+def api_report_refresh(h, q):
+    """Search Amazon again for this keyword and market, and fetch Google Trends if it is older than a week."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    kw = ' '.join(str(d.get('kw', '')).split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+
+    async def work(progress):
+        if d.get('amazon', True):
+            await S.check_many(kw, [market], True, progress)
+        if d.get('trends', True) and S.settings.get('trends_enabled', True):
+            await S.refresh_trends(kw, market, progress, force=bool(d.get('force_trends')))
+        return await asyncio.to_thread(reports.keyword_report, S.db, market, kw, S.settings)
+    return h._send(200, {'job': S.new_job('report', work)})
+
+
+@route('POST', '/api/import/scan')
+def api_import_scan(h, q):
+    async def work(progress):
+        progress('Looking for Helium 10 exports in %s...' % ', '.join(str(f) for f in S.import_folders()))
+        return await asyncio.to_thread(S.scan_imports, progress)
+    return h._send(200, {'job': S.new_job('import', work)})
+
+
+@route('POST', '/api/import/upload')
+def api_import_upload(h, q):
+    name = os.path.basename(q.get('name') or 'export.csv')
+    if os.path.splitext(name)[1].lower() not in importer.EXTS:
+        return h._send(400, {'error': 'Please use a .csv or .xlsx file exported from Helium 10.'})
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, name)
+        Path(path).write_bytes(h._body())
+        r = importer.import_file(S.db, path, market=q.get('market') if q.get('market') in ac.MARKETS else None,
+                                 keyword=(q.get('keyword') or '').strip() or None, name=name)
+    return h._send(200 if r['status'] != 'error' else 400, r if r['status'] != 'error' else {'error': r['error'], **r})
+
+
 @route('POST', '/api/check')
 def api_check(h, q):
     d = h._json()
@@ -512,7 +633,7 @@ def api_xray_upload(h, q):
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, name)
         Path(path).write_bytes(h._body())
-        return h._xray(path, q)
+        return h._xray(path, q, name)
 
 
 @route('POST', '/api/xray/load')
@@ -619,6 +740,10 @@ def shutdown():
     except Exception:
         pass
     try:
+        S.db.close()
+    except Exception:
+        pass
+    try:
         PORT_FILE.unlink()
     except OSError:
         pass
@@ -677,6 +802,7 @@ def main():
     log.info('started on %s', url)
     print('Product Checker running at', url, flush=True)
     S.run(S.checker.start())                                      # warm up the background browser
+    threading.Thread(target=S.scan_imports, daemon=True, name='import-scan').start()
     if not no_window:
         S.window = cp.open_app_window(url, APP_DIR / 'app-window')
         threading.Thread(target=watchdog, daemon=True).start()

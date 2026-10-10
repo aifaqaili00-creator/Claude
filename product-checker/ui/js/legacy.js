@@ -9,7 +9,6 @@ view('niche', {title: 'Niche keywords', sub: 'What shoppers type into Amazon, wi
                onShow: () => $('nSeed').focus()});
 view('xray', {title: 'Xray analysis', sub: 'Run Helium 10 Xray in your Chrome; the export is picked up and analysed here'});
 view('rank', {title: 'Rank a file', sub: 'Top products from a Black Box, Xray or any export, with local seller checks'});
-view('history', {title: 'History', sub: 'Your recent checks. Opening one does not search again', onShow: () => loadHistory()});
 view('settings', {title: 'Settings', sub: 'Theme, Chrome profile, delivery locations and checks'});
 
 /* Search phrases the user edited, kept across re-renders (key: "rank:<asin>" or "idea:<asin>"). */
@@ -85,9 +84,12 @@ function card(r) {
       <div><span class="swatch" style="background:var(--s-overseas)"></span><span class="v">${parts[1].n}</span><span class="of">not local<br><span class="tnum">${share(parts[1].n)}%</span> ship from overseas</span></div>
     </div>
     <div>${originBar(parts, r.total, 12)}${legend(parts)}</div>
-    <div class="verdict ${r.level}">${icon(LEVEL_ICON[r.level] || 'dot')}<span>${esc(r.verdict)}</span></div>
+    ${r.status === 'empty_suspect' ? `<div class="verdict error">${icon('warn')}<span>Amazon returned an empty page without saying “no results”. It may be limiting requests. This is not counted as zero sellers; try again in a few minutes.</span></div>`
+      : `<div class="verdict ${r.level}">${icon(LEVEL_ICON[r.level] || 'dot')}<span>${esc(r.verdict)}</span></div>`}
+    ${r.location_ok === false ? `<div class="small">${icon('warn')} Amazon showed “${esc(r.location || '?')}” instead of ${esc(r.location_wanted)}, so delivery times may be off. This search is not used in charts.</div>` : ''}
+    ${r.layout_warning ? `<div class="small">${icon('warn')} The page looked different from usual; some numbers may be missing.</div>` : ''}
     <dl class="facts">
-      <div><dt>Listings</dt><dd class="tnum">${r.total} organic + ${r.sponsored} ads</dd></div>
+      <div><dt>Listings</dt><dd class="tnum">${r.total} organic + ${r.sponsored} ads${r.results_total ? ` · Amazon says ${r.results_over ? 'over ' : ''}${num(r.results_total)} results` : ''}</dd></div>
       <div><dt>Fast sellers</dt><dd>${r.fast ? r.fast + ' · median ' + num(r.fast_reviews_median) + ' reviews' + (r.fast_price_min != null ? ' · ' + money(r.fast_price_min, cur) + '–' + num(r.fast_price_max, 2) : '') : '<span class="muted">none</span>'}</dd></div>
       <div><dt>Demand</dt><dd>${r.bought_listings ? r.bought_listings + ' listings show “bought in past month”, top ' + num(r.bought_top) + '+' : '<span class="muted">Amazon shows no sales badges</span>'}</dd></div>
     </dl>
@@ -445,6 +447,11 @@ $('btnXLocal').addEventListener('click', async () => {
     $('xLocal').innerHTML = r.error ? failPill(r.error) :
       `<span class="pill ${LEVEL[r.level] || 'weak'}"><i></i>${r.local} local · ${r.overseas} not local · ${r.fast} fast (of ${r.total})</span> ${esc(r.verdict)}`;
   } catch (e) { $('xLocal').innerHTML = failPill(e.message); }
+});
+$('btnReport').addEventListener('click', () => {
+  if (!checkData) return;
+  const first = checkData.results.find(r => !r.error) || checkData.results[0];
+  go('k', first.market, checkData.keyword);
 });
 $('btnToXray').addEventListener('click', () => {
   if (!checkData) return;

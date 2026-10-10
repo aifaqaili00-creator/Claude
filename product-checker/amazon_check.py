@@ -7,12 +7,13 @@ The checks run in their own browser profile (Chrome blocks automation of your ev
 kept minimised in the background. It shows itself only when Amazon asks for a captcha.
 """
 import asyncio
+import contextvars
 import datetime as dt
 import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import config
 
@@ -41,6 +42,80 @@ RANGE = re.compile(r'\b(\d{1,2})\s*[-–]\s*\d{1,2}\s+' + MON, re.I)   # 15 - 16
 INTERNATIONAL = re.compile(r'international delivery|international items|ships from abroad|global store|'
                            r'ships from outside|imported from|from overseas|international shipping', re.I)
 LOCAL_MAX_DAYS = 9          # slower than this (and no "international" text) = probably shipped from abroad
+
+# True while the scheduler runs background work: then a captcha must never pop the window up.
+BACKGROUND = contextvars.ContextVar('pc_background', default=False)
+
+
+class BlockedError(Exception):
+    """Amazon did not give us a normal page. `status` is stored with the snapshot, so it shows as a gap."""
+    status = 'blocked'
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+class CaptchaRequired(BlockedError):
+    """A captcha appeared during background work. The user can solve it later from the app."""
+
+    def __init__(self, message):
+        super().__init__('captcha', message)
+
+
+class CaptchaTimeout(BlockedError):
+    def __init__(self, message):
+        super().__init__('captcha', message)
+
+
+BLOCK_TEXT = {
+    'blocked': '%s showed an error page instead of results. It may be limiting requests; try again later.',
+    'geo_redirect': '%s sent the browser to a different Amazon site.',
+    'timeout': '%s did not load in 60 seconds.',
+    'offline': 'No internet connection while opening %s.',
+}
+
+# Runs inside the page: Amazon's error and robot pages.
+BLOCK_JS = r"""
+() => {
+  const title = (document.title || '').toLowerCase();
+  const body = ((document.body && document.body.innerText) || '').slice(0, 4000).toLowerCase();
+  return {
+    dog: /sorry! something went wrong|something went wrong on our end|meet the dogs of amazon/.test(body)
+         || !!document.querySelector('img[alt*="Dogs of Amazon" i], a[href*="dogsofamazon"]'),
+    robot: title.includes('robot check') || /not a robot|to discuss automated access|api-services-support@amazon/.test(body),
+  };
+}
+"""
+
+# Runs inside a search page: "1-48 of over 2,000 results for ..." and the no-results message.
+RESULT_INFO_JS = r"""
+() => {
+  const bar = document.querySelector('[data-component-type="s-result-info-bar"], .s-desktop-toolbar, .s-breadcrumb');
+  const body = ((document.body && document.body.innerText) || '').slice(0, 6000);
+  return {text: bar ? (bar.innerText || bar.textContent || '').slice(0, 300) : '',
+          no_results: /no results for|did not match any products|try checking your spelling/i.test(body)};
+}
+"""
+
+
+def parse_results_info(text):
+    """'1-48 of over 2,000 results for "x"' -> (2000, True). (None, None) when Amazon shows no count."""
+    t = (text or '').replace('\xa0', ' ')
+    m = re.search(r'of\s+(over\s+|more than\s+)?([\d,.]+)\s+results', t, re.I) or \
+        re.search(r'^\s*(over\s+)?([\d,.]+)\s+results', t, re.I)
+    if not m:
+        return None, None
+    n = parse_count(m.group(2))
+    return n, bool(m.group(1)) if n is not None else None
+
+
+def parse_health(rows):
+    """Share of listings where the page parser found a title and a price or a delivery text (layout canary)."""
+    if not rows:
+        return None
+    good = sum(1 for r in rows if r.get('title') and (r.get('price') or r.get('delivery')))
+    return round(good / len(rows), 2)
 
 
 def delivery_days(text, today=None):
@@ -78,12 +153,13 @@ def classify(row, fast_days=3, local_days=LOCAL_MAX_DAYS):
         origin, why = 'local', 'arrives today' if d == 0 else 'arrives tomorrow' if d == 1 else 'arrives in %d days' % d
     elif d is not None:
         origin, why = 'overseas', 'takes %d+ days' % d
-    elif row.get('prime') or 'first order' in text.lower():
+    elif row.get('prime') or row.get('first_order') or 'first order' in text.lower():
         origin, why = 'local', 'Prime / shipped by Amazon' if row.get('prime') else 'free first-order delivery (shipped by Amazon)'
     else:
         origin, why = 'unknown', 'no delivery date shown'
     speed = 'fast' if d is not None and d <= fast_days and not intl else 'slow' if d is not None or intl else 'unknown'
-    return {**row, 'intl': intl, 'speed': speed, 'origin': origin, 'why': why}
+    first_order = bool(row.get('first_order')) or 'first order' in text.lower()
+    return {**row, 'intl': intl, 'first_order': first_order, 'speed': speed, 'origin': origin, 'why': why}
 
 
 def parse_count(text):
@@ -121,6 +197,7 @@ EXTRACT_JS = r"""
       .map(x => (x.innerText || x.textContent || '').trim()).filter(Boolean).join(' | ');
     if (!delivery) delivery = all.split('\n').filter(l => /deliver|get it|arrives|ships/i.test(l)).join(' | ');
     const bought = (all.match(/([\d.,]+\s*[KkMm]?\+?)\s+bought in past month/i) || [])[1] || '';
+    const badge = (all.split('\n').find(l => /bought in (the )?past month/i.test(l)) || '').trim();
     const img = q('img.s-image');
     return {
       asin: e.dataset.asin,
@@ -132,15 +209,12 @@ EXTRACT_JS = r"""
       prime: !!q('i.a-icon-prime, [aria-label="Amazon Prime"], .s-prime'),
       sponsored: !!q('.puis-sponsored-label-text, .s-sponsored-label-text') || /^\s*Sponsored/m.test(all),
       bought: bought,
+      badge: badge.slice(0, 80),
       image: img ? (img.getAttribute('src') || '') : '',
       intl: /international delivery|international items|ships from abroad|global store|ships from outside/i.test(all),
     };
   })
 """
-
-
-class CaptchaTimeout(Exception):
-    pass
 
 
 class Checker:
@@ -151,7 +225,8 @@ class Checker:
         self.pw = None
         self.ctx = None
         self.home = None
-        self.visible = False
+        self._shows = 0                              # captchas currently waiting for the user
+        self.pinned = False                          # the user pressed "Show"
         self.state = 'stopped'                       # stopped / starting / ready / error
         self.error = ''
         self.locations = {c: {'ok': None, 'text': ''} for c in MARKETS}
@@ -194,10 +269,14 @@ class Checker:
                 self.state, self.error = 'error', str(e)
                 raise
 
+    @property
+    def visible(self):
+        return self.pinned or self._shows > 0
+
     def _closed(self):
         self.ctx = self.home = None
         self.state = 'stopped'
-        self.visible = False
+        self._shows, self.pinned = 0, False
 
     async def _route(self, route):
         req = route.request
@@ -218,9 +297,13 @@ class Checker:
         except Exception:
             pass
 
-    async def show(self, page=None):
+    async def show(self, page=None, user=True):
+        """Bring the checker window up: pinned by the user, or counted for each captcha waiting."""
         await self.start()
-        self.visible = True
+        if user:
+            self.pinned = True
+        else:
+            self._shows += 1
         await self._window('normal')
         try:
             await (page or self.home).bring_to_front()
@@ -228,8 +311,14 @@ class Checker:
             pass
 
     async def hide(self):
-        if self.ctx:
-            self.visible = False
+        self.pinned = False
+        if self.ctx and not self.visible:
+            await self._window('minimized')
+
+    async def _release(self):
+        """A captcha is done. Minimise again once no other captcha waits and the user did not pin the window."""
+        self._shows = max(0, self._shows - 1)
+        if self.ctx and not self.visible:
             await self._window('minimized')
 
     async def close(self):
@@ -248,8 +337,36 @@ class Checker:
 
     # ---------- page helpers ----------
     async def _goto(self, page, url, code):
-        await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        """Open a page, get past Amazon's interstitials, and raise BlockedError for anything that is not a real page."""
+        name = MARKETS[code]['name']
+        try:
+            resp = await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        except Exception as e:
+            msg = str(e)
+            if 'timeout' in type(e).__name__.lower() or 'Timeout' in msg[:120]:
+                raise BlockedError('timeout', BLOCK_TEXT['timeout'] % name)
+            if 'net::ERR_' in msg:
+                raise BlockedError('offline', BLOCK_TEXT['offline'] % name)
+            raise
         await self._get_past_blocks(page, code)
+        kind = await self._block_kind(page, code, resp.status if resp else None)
+        if kind:
+            raise BlockedError(kind, BLOCK_TEXT[kind] % name)
+        return resp.status if resp else None
+
+    async def _block_kind(self, page, code, http):
+        want = (urlparse(MARKETS[code]['site']).hostname or '').lower()
+        got = (urlparse(page.url).hostname or '').lower()
+        base = want[4:] if want.startswith('www.') else want
+        if got and base and got != base and not got.endswith('.' + base):
+            return 'geo_redirect'
+        try:
+            info = await page.evaluate(BLOCK_JS)
+        except Exception:
+            info = {}
+        if info.get('dog') or info.get('robot') or (http or 0) >= 500:
+            return 'blocked'
+        return None
 
     async def _get_past_blocks(self, page, code):
         """Handle Amazon's "continue shopping" page and captcha. Waits up to 3 minutes for a captcha."""
@@ -266,15 +383,21 @@ class Checker:
             captcha = await page.locator('form[action*="validateCaptcha"], #captchacharacters').count()
             if not captcha:
                 if shown:
-                    await self.hide()
+                    await self._release()
                 return
+            if BACKGROUND.get():                         # never pop the window up for background work
+                raise CaptchaRequired('%s asked for a captcha during the automatic refresh.' % MARKETS[code]['name'])
             if not shown:
                 self.log('%s: Amazon wants you to type the characters from a picture. The browser window is open, '
                          'please solve it there.' % MARKETS[code]['name'])
-                await self.show(page)
-                await page.reload()
+                await self.show(page, user=False)
                 shown = True
+                try:
+                    await page.reload()
+                except Exception:
+                    pass
             if time.time() > deadline:
+                await self._release()
                 raise CaptchaTimeout('Amazon captcha was not solved in 3 minutes')
             await page.wait_for_timeout(1500)
 
@@ -365,15 +488,19 @@ class Checker:
 
     # ---------- the check ----------
     async def check(self, keyword, code, fast_days=3, pages=1, progress=None, local_days=LOCAL_MAX_DAYS):
-        """Search one marketplace. Returns a summary dict with every listing."""
+        """Search one marketplace. Returns a summary dict with every listing, plus how the page looked:
+        status (ok / empty / empty_suspect), Amazon's result count and the parser's health."""
+        from engine import badge
         await self.start()
         m = MARKETS[code]
         page = await self.ctx.new_page()
         rows, seen = [], set()
         location = ''
+        info = {}
+        today = config.market_today(code)
         try:
             for n in range(1, pages + 1):
-                url = '%s/s?k=%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % n if n > 1 else '')
+                url = search_url(code, keyword, n)
                 await self._goto(page, url, code)
                 if n == 1:
                     location = await self._location_text(page)
@@ -387,6 +514,11 @@ class Checker:
                 except Exception:
                     pass
                 raw = await page.evaluate(EXTRACT_JS)
+                if n == 1:
+                    try:
+                        info = await page.evaluate(RESULT_INFO_JS)
+                    except Exception:
+                        info = {}
                 for r in raw:
                     if r['asin'] in seen:
                         continue
@@ -394,9 +526,10 @@ class Checker:
                     rows.append({
                         'market': code, 'asin': r['asin'], 'title': r['title'][:200],
                         'price': parse_price(r['price']), 'rating': parse_price(r['rating']),
-                        'reviews': parse_count(r['reviews']), 'bought': parse_count(r['bought']),
+                        'reviews': parse_count(r['reviews']),
+                        'bought': badge.parse_badge(r.get('badge')) or parse_count(r['bought']),
                         'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:240],
-                        'days': delivery_days(r['delivery']), 'intl': bool(r.get('intl')),
+                        'days': delivery_days(r['delivery'], today), 'intl': bool(r.get('intl')),
                         'url': '%s/dp/%s' % (m['site'], r['asin']), 'image': r['image'],
                     })
                 if progress:
@@ -405,12 +538,35 @@ class Checker:
                     break
         finally:
             await page.close()
-        return summarize(code, keyword, location, rows, fast_days, local_days)
+        s = summarize(code, keyword, location, rows, fast_days, local_days)
+        total, over = parse_results_info(info.get('text'))
+        s.update(results_total=total, results_over=over, parse_health=parse_health(rows))
+        if not rows:
+            # no listings and no "no results" message: probably a soft block or a changed page, not zero sellers
+            s['status'] = 'empty' if info.get('no_results') else 'empty_suspect'
+        elif s['parse_health'] is not None and len(rows) >= 8 and s['parse_health'] < 0.5:
+            s['layout_warning'] = True
+            self.log('%s: the search page looks different from usual; some numbers may be missing.' % m['name'])
+        return s
+
+
+def search_url(code, keyword, page=1):
+    """Amazon search address. amazon.ae is asked for English, so delivery texts can be read."""
+    m = MARKETS[code]
+    return '%s/s?k=%s%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % page if page > 1 else '',
+                              '&language=en_AE' if code == 'AE' else '')
 
 
 def _median(v):
     v = sorted(v)
     return v[len(v) // 2] if v else None
+
+
+def level_for(fast, organic):
+    """opportunity (4 or fewer fast listings), some (up to 10), crowded, or none (no results)."""
+    if not organic:
+        return 'none'
+    return 'opportunity' if (fast or 0) <= 4 else 'some' if fast <= 10 else 'crowded'
 
 
 def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_DAYS, checked_at=None):
@@ -426,15 +582,16 @@ def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_D
     bought = [r['bought'] for r in organic if r['bought']]
     prices = [r['price'] for r in fast if r['price']]
     abroad_txt = ' %d of %d ship from overseas.' % (len(abroad), len(organic)) if abroad else ''
-    if not organic:
-        level, text = 'none', 'No results found.'
-    elif len(fast) <= 4:
-        level, text = 'opportunity', 'Only %d listing%s deliver fast.%s Stock sent to Amazon (FBA) would stand out.' % (
+    level = level_for(len(fast), len(organic))
+    if level == 'none':
+        text = 'No results found.'
+    elif level == 'opportunity':
+        text = 'Only %d listing%s deliver fast.%s Stock sent to Amazon (FBA) would stand out.' % (
             len(fast), '' if len(fast) == 1 else 's', abroad_txt)
-    elif len(fast) <= 10:
-        level, text = 'some', '%d listings deliver fast. Some local competition.%s' % (len(fast), abroad_txt)
+    elif level == 'some':
+        text = '%d listings deliver fast. Some local competition.%s' % (len(fast), abroad_txt)
     else:
-        level, text = 'crowded', '%d listings deliver fast. Crowded with local stock.%s' % (len(fast), abroad_txt)
+        text = '%d listings deliver fast. Crowded with local stock.%s' % (len(fast), abroad_txt)
     return {
         'market': code, 'name': m['name'], 'currency': m['currency'], 'keyword': keyword,
         'location': location, 'location_ok': any(k in (location or '').lower() for k in m['expect']),

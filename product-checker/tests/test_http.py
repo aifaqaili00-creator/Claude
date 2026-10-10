@@ -16,8 +16,9 @@ import app  # noqa: E402
 @pytest.fixture(scope='module')
 def server(tmp_path_factory):
     tmp = tmp_path_factory.mktemp('appdir')
-    saved = (app.SETTINGS_FILE, app.HISTORY_FILE, app.PORT_FILE)
+    saved = (app.SETTINGS_FILE, app.HISTORY_FILE, app.PORT_FILE, app.DB_FILE)
     app.SETTINGS_FILE, app.HISTORY_FILE, app.PORT_FILE = tmp / 'settings.json', tmp / 'history.json', tmp / 'port.txt'
+    app.DB_FILE = tmp / 'market.db'
     (tmp / 'settings.json').write_text(json.dumps({'pages': 9, 'cache_hours': 'abc', 'theme': 'dark', 'old_key': 1}))
     app.S = app.State(start_loop=False)
     httpd = ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
@@ -25,7 +26,8 @@ def server(tmp_path_factory):
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield app.S
     httpd.shutdown()
-    app.SETTINGS_FILE, app.HISTORY_FILE, app.PORT_FILE = saved
+    app.S.db.close()
+    app.SETTINGS_FILE, app.HISTORY_FILE, app.PORT_FILE, app.DB_FILE = saved
 
 
 def call(S, method, path, body=None, token=True, host=None, origin=None, headers=None):

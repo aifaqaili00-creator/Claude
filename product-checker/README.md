@@ -10,6 +10,16 @@ A small Windows app that runs on your own PC, in its own window.
 5. **History:** past checks open again instantly, without a new search.
 6. **Settings:** theme (light, dark, or the same as Windows), your Chrome profile, delivery locations and how checks run.
 
+7. **Keyword report** (press **Open report** after a check, or open a keyword in the Library):
+   - search interest over 5 years (Google Trends) and the seasonal pattern;
+   - **units sold and revenue per month**: Helium 10 numbers when you have an Xray export for that month, otherwise an estimate from Amazon's "bought in past month" badges, plus a backcast from the Google Trends shape;
+   - **demand vs supply** since you started checking: page-1 sales next to local and overseas sellers;
+   - prices, reviews, the top listings, and every market side by side.
+   Every estimate shows its range and where it came from. A blocked search is shown as a gap, never as zero.
+8. **Library:** every keyword you have checked, your recent checks, and your Helium 10 imports.
+
+**Your history is kept.** Every check, Google Trends sample and Helium 10 export is stored in `%LOCALAPPDATA%\ProductChecker\market.db`, with automatic backups in its `backup` folder. Helium 10 exports (Xray, Black Box, Magnet, Cerebro) in your Downloads folder are imported when the app starts, so months you researched before give you history from day one.
+
 The tools are in the sidebar on the left. The theme switch is at the bottom of the sidebar. Each tool has its own address (for example `#/rank`), so the window reopens where you left it.
 
 ## Install
@@ -139,7 +149,12 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 | `ui/index.html` | the page shell: sidebar, top bar and the views |
 | `ui/css/tokens.css`, `ui/css/app.css` | colours for the light and dark themes (tested for contrast), layout and components |
 | `ui/js/` | `api.js` (every request carries the token), `app.js` (routes, theme, status), `components.js`, `format.js`, `legacy.js` (the tools) |
+| `storage.py` | `market.db` (SQLite): every search, list scan, Trends sample and import; one writer thread, backups, retention |
+| `importer.py` | Helium 10 exports (Xray, Black Box, Magnet, Cerebro) into the database, once per file |
+| `trends.py` | Google Trends through the background browser, one request at a time, paused when Google pushes back |
+| `reports.py` | the keyword report and Library data, built from the database plus `engine/` |
 | `engine/` | analysis maths without any I/O: sales-badge ranges, Google Trends features and labels, list surges, alerts |
+| `ui/js/charts.js`, `ui/js/views/` | the charts (plain SVG) and the keyword report and Library screens |
 | `amazon_check.py` | background browser (Playwright) that searches Amazon and reads delivery dates |
 | `xray.py` | Xray export analysis and the Downloads watcher |
 | `ideas.py` | Movers & Shakers / New Releases scan, idea scoring, and niche keywords from Amazon's search suggestions |
