@@ -61,6 +61,22 @@ CHECKS = [
     ('bulky', R(r'\b(mattress|pillows?|duvet|quilt|throw|blanket|desk|chair mat|shelf|shelves|cabinet|table|ladder|wheelbarrow)\b')),
 ]
 
+# Phones, tablets, computers and their accessories: left out of ideas when "No phones / laptops" is on.
+TECH = ('phone/computer', R(
+    r"\b(phones?|iphones?|smartphones?|cell ?phones?|mobile ?phones?|galaxy|pixel \d+|tablets? (?:case|stand|holder|cover)|"
+    r"ipads?|tablet pc|android tablet|laptops?|macbook\w*|chromebooks?|notebook (?:computer|pc|laptop)|computers?|pc|"
+    r"desktop pc|monitors? (?:arm|stand|mount|riser)|computer monitor|gaming monitor|keyboards?|"
+    r"computer mouse|wireless mouse|gaming mouse|bluetooth mouse|mouse ?pads?|earbuds|ear ?buds|airpods|headphones?|"
+    r"headsets?|chargers?|charging (?:station|stand|dock|pad|cable)|(?:usb|usb-c|hdmi|lightning|phone|data|ethernet|aux|type[- ]c) cables?|"
+    r"usb[- ]c|lightning (?:cable|charger|adapter)|power ?banks?|magsafe|screen protectors?|"
+    r"tempered glass|stylus|webcams?|ssd|hard drive|memory card|sd card|wi-?fi routers?|gaming (?:mouse|keyboard|headset|monitor|laptop|pc|controller)|"
+    r"playstation|xbox|controllers? for|"
+    r"nintendo|apple watch|smart ?watch\w*|kindle|e-?reader)\b"))
+
+
+def is_tech(title):
+    return bool(TECH[1].search(title or ''))
+
 
 def _norm(s):
     s = re.sub(r'\(.*?\)', ' ', str(s).lower())          # drop "(months)", "(90 days) (%)"

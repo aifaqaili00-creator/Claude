@@ -24,6 +24,7 @@ import chrome_profiles as cp
 import collectors
 import config
 import file_rank as fr
+import fxrates
 import ideas
 import importer
 import product
@@ -341,7 +342,7 @@ class State:
         cats = menu['cats'] if menu else []
         safe = [c for c in cats if not c['risky']]
         chosen = [c for c in cats if c['slug'] in slugs] if slugs else (
-            safe if any(c.get('default') for c in safe) else safe[:8])
+            safe if any(c.get('default') for c in safe) else safe[:collectors.USER_CATEGORIES])
         if not chosen:
             raise RuntimeError('No categories found on Amazon %s. Try again in a minute.' % ac.MARKETS[code]['name'])
         if any(c.get('default') for c in chosen):
@@ -366,10 +367,14 @@ class State:
                 menu['cats'] = [c for c in menu['cats'] if not c.get('default') or c['slug'] in found] or menu['cats']
             self.idea_cache[key] = raw
         # "hide risky" is applied when reading, so switching it never re-scrapes
-        scored = await asyncio.to_thread(ideas.score_ideas, raw['items'], code, hide)
+        prange = fxrates.ranges(self.settings)[code] if self.settings.get('price_filter', True) else None
+        stats = {}
+        scored = await asyncio.to_thread(ideas.score_ideas, raw['items'], code, hide, prange,
+                                         self.settings.get('exclude_tech', True), stats)
         chosen_slugs = {c['slug'] for c in chosen}
-        return {**{k: v for k, v in raw.items() if k != 'items'}, 'ideas': scored,
-                'all_categories': [{**c, 'on': c['slug'] in chosen_slugs} for c in cats], 'kinds': kinds}
+        return {**{k: v for k, v in raw.items() if k != 'items'}, 'ideas': scored, 'filtered': stats,
+                'price_range': prange, 'all_categories': [{**c, 'on': c['slug'] in chosen_slugs} for c in cats],
+                'kinds': kinds}
 
 
 S = None
@@ -550,6 +555,7 @@ class Handler(BaseHTTPRequestHandler):
 @route('GET', '/api/state')
 def api_state(h, q):
     S.last_beat = time.time()
+    fxrates.refresh_soon()                              # at most once a day, in the background
     since = float(q.get('since') or 0)
     return h._send(200, {
         'version': VERSION, 'settings': S.settings, 'profiles': S.profiles,
@@ -563,7 +569,15 @@ def api_state(h, q):
         'scheduler': S.scheduler.status(),
         'alerts_unseen': (S.db.one('SELECT COUNT(*) AS n FROM alert WHERE seen_at IS NULL AND dismissed_at IS NULL') or {}).get('n', 0),
         'messages': [m for m in S.messages if m['t'] > since],
+        'fx': fxrates.summary(S.settings),
     })
+
+
+@route('POST', '/api/fx/refresh')
+def api_fx_refresh(h, q):
+    """Fetch today's exchange rates now (they are also refreshed by themselves once a day)."""
+    fxrates.refresh(force=True)
+    return h._send(200, fxrates.summary(S.settings))
 
 
 @route('GET', '/api/job')
@@ -761,7 +775,7 @@ def api_settings(h, q):
         S.apply_startup_setting()
     if d.get('auto_refresh'):
         S.scheduler.poke()
-    return h._send(200, {'ok': True, 'settings': S.settings})
+    return h._send(200, {'ok': True, 'settings': S.settings, 'fx': fxrates.summary(S.settings)})
 
 
 @route('POST', '/api/open')
@@ -832,7 +846,13 @@ def api_home(h, q):
 @route('GET', '/api/radar')
 def api_radar(h, q):
     market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
-    return h._send(200, {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db)})
+    return h._send(200, {**reports.radar(S.db, market, **radar_filters(market)), 'trends': reports.search_trends(S.db)})
+
+
+def radar_filters(market):
+    """Your price range (in the marketplace's money) and the phone / laptop filter, from settings."""
+    return {'price_range': fxrates.ranges(S.settings)[market] if S.settings.get('price_filter', True) else None,
+            'exclude_tech': bool(S.settings.get('exclude_tech', True))}
 
 
 @route('GET', '/api/watchlist')
@@ -1001,7 +1021,8 @@ def api_radar_scan(h, q):
         out = await S.collectors.lists({'kind': 'lists', 'market': market, 'target': 'all'}, progress)
         progress((out.get('note') or '') + ' · grouping similar products…')
         await asyncio.to_thread(analysis.run, S, [])
-        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db),
+        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market, **radar_filters(market)),
+                                                'trends': reports.search_trends(S.db),
                                                 'scan_note': out.get('note') or ''})
     return h._send(200, {'job': S.new_job('radar', work)})
 
@@ -1108,6 +1129,7 @@ def main():
         S.run(S.checker.start())                                  # warm up the background browser
     threading.Thread(target=S.scan_imports, daemon=True, name='import-scan').start()
     S.run(S.scheduler.run_forever())                              # automatic refresh
+    fxrates.refresh_soon()                                         # today's exchange rates, in the background
     if not no_window:
         S.window = cp.open_app_window(url, APP_DIR / 'app-window')
         threading.Thread(target=watchdog, daemon=True).start()

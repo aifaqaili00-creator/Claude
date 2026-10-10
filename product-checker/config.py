@@ -12,7 +12,7 @@ try:
 except ImportError:                                          # pragma: no cover (Python < 3.9)
     ZoneInfo = None
 
-VERSION = '6.1'
+VERSION = '6.2'
 APP_DIR = Path(os.environ.get('PC_APP_DIR') or
                Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker')
 MARKETS = ('US', 'AU', 'AE')
@@ -37,6 +37,11 @@ SCHEMA = {
     'toast_min_severity': (int, 2, (1, 3)),
     'trends_enabled': (bool, True, None),
     'import_folder': (str, '', None),
+    'price_filter': (bool, True, None),                 # show only ideas selling within your price range
+    'price_min': (float, 20.0, (1, 5000)),
+    'price_max': (float, 50.0, (1, 5000)),
+    'price_currency': (str, 'USD', ('USD', 'EUR')),    # the range is typed in this currency, converted per market
+    'exclude_tech': (bool, True, None),                 # no phones, laptops or their accessories
 }
 DEFAULT_LOCATIONS = {'US': '10001', 'AU': '2000', 'AE': 'Dubai'}
 
@@ -55,6 +60,15 @@ def _coerce(key, value):
         if isinstance(value, str):
             return value.strip().lower() in ('1', 'true', 'yes', 'on')
         return bool(value)
+    if typ is float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            raise ValueError('%s must be a number' % key)
+        if v != v:                                          # NaN
+            raise ValueError('%s must be a number' % key)
+        lo, hi = extra
+        return round(max(lo, min(hi, v)), 2)
     if typ is int:
         try:
             v = int(float(value))

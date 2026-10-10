@@ -182,3 +182,14 @@ def test_radar_scan_reads_the_body_once_and_answers_at_once(server, monkeypatch)
     with pytest.raises(RuntimeError, match='stop here'):
         asyncio.run(got[0](lines.append))
     assert 'Amazon Australia' in lines[0] and lines[1] == 'AU'
+
+
+def test_state_has_exchange_rates_and_your_ranges(server):
+    st, _, raw = call(server, 'GET', '/api/state')
+    fx = json.loads(raw)['fx']
+    assert st == 200 and fx['currency'] == 'USD' and fx['ranges']['US'] == [20, 50]
+    assert fx['ranges']['AE'][0] > 70 and fx['per_usd']['AED'] == 3.6725
+    st, _, raw = call(server, 'POST', '/api/settings', {'price_currency': 'EUR', 'price_min': 10})
+    d = json.loads(raw)
+    assert st == 200 and d['settings']['price_min'] == 10 and d['fx']['ranges']['US'][0] > 10
+    call(server, 'POST', '/api/settings', {'price_currency': 'USD', 'price_min': 20})

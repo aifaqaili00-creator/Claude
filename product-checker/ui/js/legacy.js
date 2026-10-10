@@ -202,7 +202,8 @@ $('btnExportRank').addEventListener('click', () => rankData && download({kind: '
 /* ---------- Product ideas ---------- */
 let iData = null, iLocal = {};
 $('iKinds').dataset.multi = '1';
-seg($('iMk'), () => { $('iCatsWrap').hidden = true; $('iCats').innerHTML = ''; });
+const iPrice = priceBar($('iPrice'), () => segVal($('iMk')), () => { if (iData) runIdeas(false); });
+seg($('iMk'), () => { $('iCatsWrap').hidden = true; $('iCats').innerHTML = ''; iPrice.draw(); });
 seg($('iKinds'));
 const trends = (kw, mk) => 'https://trends.google.com/trends/explore?date=today%205-y&geo=' + (mk || 'US') + '&q=' + encodeURIComponent(kw);
 function localPill(L, mk) {
@@ -247,7 +248,11 @@ function renderIdeas() {
   $('iOut').hidden = false;
   $('iTitle').textContent = d.ideas.length + ' product ideas on Amazon ' + (MK[d.market] || d.market);
   const boom = d.ideas.filter(i => i.label === 'Booming').length, nw = d.ideas.filter(i => i.lists.includes('new')).length;
-  $('iSub').textContent = `${d.scanned} products read from ${d.lists} lists · ${boom} booming · ${nw} new releases · scanned ${ago(d.at)}`;
+  const f = d.filtered || {}, hidden = [];
+  if (f.out_of_range) hidden.push(`${num(f.out_of_range)} outside ${d.price_range ? rangeText(d.market) : 'your price range'}`);
+  if (f.tech) hidden.push(`${num(f.tech)} phone / computer`);
+  $('iSub').textContent = `${d.scanned} products read from ${d.lists} lists · ${boom} booming · ${nw} new releases · scanned ${ago(d.at)}` +
+    (hidden.length ? ' · hidden: ' + hidden.join(', ') : '');
   $('btnIdeasCheck').hidden = d.market !== 'US';
   const lab = {Booming: 'warn', Rising: 'accent', New: 'good', Moving: 'weak'};
   const checks = ideaChecks(d.market);
@@ -268,9 +273,14 @@ function renderIdeas() {
         <button class="btn slim" data-icheck="${esc(i.asin)}">Check ${checks.map(m => MK_SHORT[m]).join(' & ')}</button>
         <button class="btn slim" data-trend="${esc(i.asin)}" title="Google Trends, last 5 years">Trends${icon('external')}</button>
         <button class="btn slim" data-ixray="${esc(i.asin)}">Xray</button>
-      </div></div>`).join('') || '<div class="panel empty">No ideas left after hiding risky products. Untick “Hide risky products” or choose other categories.</div>';
+        ${sourcingHtml(i.asin)}
+      </div></div>`).join('') || '<div class="panel empty">No ideas left after the filters. Widen your price range, untick “Hide risky products”, or choose other categories.</div>';
 }
 $('iSort').addEventListener('change', renderIdeas);
+wireSourcing($('iGrid'), asin => {
+  const i = iData && (iData.ideas || []).find(x => x.asin === asin);
+  return i && {market: iData.market, price: i.price, category: i.category, search: ideaSearch(i)};
+});
 const ideaKw = asin => {
   const i = (iData.ideas || []).find(x => x.asin === asin);
   return (i ? ideaSearch(i) : '').trim();

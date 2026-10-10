@@ -211,9 +211,17 @@ async def read_list(checker, code, kind, slug, name):
     return items
 
 
-def score_ideas(items, code, hide_risky=True):
-    """Merge products from both lists, score them and group similar products into ideas."""
+def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=False, stats=None):
+    """Merge products from both lists, score them and group similar products into ideas.
+
+    price_range (lo, hi) in the marketplace's money keeps only products selling within it (a product with no price
+    shown is kept, scored lower and flagged). exclude_tech leaves out phones, laptops and their accessories.
+    stats, if given, receives how many products each filter removed.
+    """
     T = fr.TARGETS[code]
+    lo, hi = price_range or T['price']
+    st = stats if stats is not None else {}
+    st.update(out_of_range=0, tech=0, no_price=0)
     by_asin = {}
     for it in items:
         cur = by_asin.setdefault(it['asin'], {**it, 'lists': set()})
@@ -227,13 +235,23 @@ def score_ideas(items, code, hide_risky=True):
             cur['mover_rank'] = it['rank']
     ideas = []
     for p in by_asin.values():
-        flags = [n for n, rx in fr.CHECKS if rx.search(p['title'])]
         price, rv = p.get('price'), p.get('reviews') or 0
-        if price is not None and price < T['price'][0]:
+        if exclude_tech and fr.is_tech(p['title']):
+            st['tech'] += 1
+            continue
+        if price_range and price is not None and not lo <= price <= hi:
+            st['out_of_range'] += 1
+            continue
+        flags = [n for n, rx in fr.CHECKS if rx.search(p['title'])]
+        if price is None:
+            st['no_price'] += 1
+            if price_range:
+                flags.append('price unknown')
+        elif price < lo:
             flags.append('cheap')
-        if price is not None and price > T['price'][1]:
+        elif price > hi:
             flags.append('expensive')
-        risky = [f for f in flags if f not in ('cheap', 'expensive')]
+        risky = [f for f in flags if f not in ('cheap', 'expensive', 'price unknown')]
         if hide_risky and risky:
             continue
         s, why = 0.0, []
@@ -248,8 +266,10 @@ def score_ideas(items, code, hide_risky=True):
             s += 10
             why.append('on both lists')
         s += 15 if rv < 100 else 8 if rv < 500 else 0 if rv < 2000 else -10
-        if price is not None and T['price'][0] <= price <= T['price'][1]:
+        if price is not None and lo <= price <= hi:
             s += 10
+        elif price is None and price_range:
+            s -= 10
         s -= 15 * len(risky)
         label = 'Booming' if pct and pct >= 300 else 'Rising' if pct and pct >= 50 else 'New' if 'new' in p['lists'] else 'Moving'
         ideas.append({**p, 'lists': sorted(p['lists']), 'flags': flags, 'score': round(s, 1), 'label': label,

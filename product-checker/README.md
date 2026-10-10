@@ -20,7 +20,7 @@ A small Windows app that runs on your own PC, in its own window.
 
 9. **Automatic refresh:** watch a keyword (Watchlist, or **Watch** on a report) and the app checks it again every day, fetches Google Trends weekly, and reads the Movers & Shakers and New Releases lists (every 12 hours for the USA, daily for Australia and the UAE).
    - **Home** shows what changed: new trends, gaps opening in Australia or the UAE, demand jumps, captchas waiting.
-   - **Trend radar** shows the products climbing Amazon's lists, grouped into similar products, with your keywords' Google Trends labels.
+   - **Trend radar** shows the products climbing Amazon's lists, grouped into similar products, with your keywords' Google Trends labels. It uses the same price range and phone / laptop filter as Product ideas, and each card has **Find on Alibaba** and **Profit?**.
    - **Health** shows every source, its daily budget and any pause.
    - Under **Settings → Automatic refresh**, turn on **Keep refreshing after I close the window** and **Start with Windows** to keep the data fresh all the time. Important news then arrives as a Windows notification (not at night, and not while the app is in front of you).
    - Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; that marketplace pauses and Home offers **Solve now**.
@@ -76,6 +76,12 @@ A market is most interesting when it has **real demand, few fast local listings,
 
 The app starts with the safe categories (Home & Kitchen, Kitchen & Dining, Garden, Pets, Sports, Office, Tools, Crafts). Categories with extra rules or big brands, such as Electronics, Toys, Beauty, Health and Appliances, have a dashed outline; click one to include it. **Hide risky products** hides electrical, kids, chemical and medical products. Untick it to see everything, for example tower fans, which count as electrical.
 
+**Your price range:** by default only products that **sell on Amazon for 20–50 US$** are shown. Change the numbers, or switch to **€**, right above the categories (or in Settings). The range is converted automatically: about A$31–78 in Australia and AED 73–184 in the UAE, with the European Central Bank's daily rates (the dirham is fixed to the dollar). Untick **Amazon price** to see every price. The line under the title says how many products the range hid. Changing the range never re-reads Amazon.
+
+**No phones / laptops** (on by default) leaves out phones, tablets, laptops, computers and their accessories: cases, chargers, cables, screen protectors, stands, keyboards, computer mice and earbuds. A mouse trap or a paper notebook stays.
+
+A scan you start yourself reads up to 16 categories (the automatic refresh reads 8, to stay gentle with Amazon).
+
 **How ideas are scored:**
 - **Higher:** a bigger rank jump, being high on New Releases, appearing on both lists, few reviews, a price in the target range, and several similar products moving at once (shown as "+N similar").
 - **Lower:** warning flags.
@@ -85,6 +91,8 @@ The app starts with the safe categories (Home & Kitchen, Kitchen & Dining, Garde
 - **Trends:** Google Trends for the last 5 years in your Chrome. Use it to see whether the rise is real and lasting or just a one-off spike.
 - **Xray:** jumps to the Xray tab with the keyword filled in.
 - **Click the title:** opens the product in your Chrome profile.
+- **Find on Alibaba:** opens an Alibaba search for the product in your Chrome, so you can compare supplier prices.
+- **Profit?:** type the supplier price per piece (in your US$ or €) and press **Profit?**. You get a rough profit per sale and margin in A$, AED or US$, after Amazon's fees, sea freight, duty, GST/VAT, 12% ads and returns. It assumes a small standard-size item; hover over the result to see the breakdown, and check the real size and weight before ordering.
 
 The words used to search the other countries are shown in a box on each card, and you can edit them.
 

@@ -55,3 +55,86 @@ function catParts(obj, names) {
   if (other) parts.push({label: 'Other', n: other, color: 'var(--s-other)'});
   return parts;
 }
+
+/* ---------- your price range (Product ideas, Trend radar, Settings) ---------- */
+const CUR_SYM = {USD: 'US$', EUR: '€', AUD: 'A$', AED: 'AED'};
+const MK_CUR = {US: 'USD', AU: 'AUD', AE: 'AED'};
+function rangeText(mk) {
+  const r = ((ST.fx || {}).ranges || {})[mk];
+  return r ? `${CUR_SYM[MK_CUR[mk]]} ${num(r[0], r[0] < 10 ? 1 : 0)}–${num(r[1], r[1] < 10 ? 1 : 0)}` : '';
+}
+function fxNote() {
+  const f = ST.fx || {};
+  return f.source === 'ECB' ? `ECB rates of ${f.as_of}` : 'approximate rates (offline)';
+}
+/* Renders min / max / currency and the two filters into el. getMarket() picks which converted range to show.
+   onChange() runs after the settings are saved. */
+function priceBar(el, getMarket, onChange) {
+  const draw = () => {
+    const s = ST.settings || {}, mk = getMarket(), cur = s.price_currency || 'USD';
+    el.innerHTML = `
+      <label class="small"><input type="checkbox" data-pb="price_filter"${s.price_filter !== false ? ' checked' : ''}> Amazon price</label>
+      <input type="number" class="pbnum" data-pb="price_min" min="1" step="1" value="${esc(s.price_min ?? 20)}" aria-label="Lowest selling price">
+      <span class="small">–</span>
+      <input type="number" class="pbnum" data-pb="price_max" min="1" step="1" value="${esc(s.price_max ?? 50)}" aria-label="Highest selling price">
+      <div class="seg slim" data-pbcur><button type="button" data-v="USD" aria-pressed="${cur === 'USD'}">US$</button><button type="button" data-v="EUR" aria-pressed="${cur === 'EUR'}">€</button></div>
+      <span class="small muted" data-pbconv title="${esc(fxNote())}">${mk !== 'US' || cur !== 'USD' ? '= ' + esc(rangeText(mk)) : ''}</span>
+      <label class="small"><input type="checkbox" data-pb="exclude_tech"${s.exclude_tech !== false ? ' checked' : ''}> No phones / laptops</label>`;
+  };
+  async function save(change) {
+    try { const r = await api('/api/settings', change); ST.settings = r.settings; ST.fx = r.fx || ST.fx; draw(); if (onChange) onChange(); }
+    catch (e) { toast(e.message); draw(); }
+  }
+  el.addEventListener('change', e => {
+    const k = e.target.dataset.pb; if (!k) return;
+    save({[k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value});
+  });
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-pbcur] button'); if (b) save({price_currency: b.dataset.v});
+  });
+  // redraw when the settings or rates arrive or change, but never while you are typing in it
+  let last = '';
+  const maybe = () => {
+    const k = JSON.stringify([ST.settings && [ST.settings.price_min, ST.settings.price_max, ST.settings.price_currency,
+                                              ST.settings.price_filter, ST.settings.exclude_tech], (ST.fx || {}).ranges, getMarket()]);
+    if (k !== last && !el.contains(document.activeElement)) { last = k; draw(); }
+  };
+  if (typeof onState === 'function') onState(maybe);
+  draw();
+  return {draw: maybe};
+}
+
+/* ---------- Find on Alibaba + a rough profit check, on idea and radar cards ---------- */
+const alibabaUrl = words => 'https://www.alibaba.com/trade/search?SearchText=' + encodeURIComponent((words || '').trim());
+function sourcingHtml(key) {
+  const cur = (ST.settings || {}).price_currency || 'USD';
+  return `<button class="btn slim" data-alibaba="${esc(key)}" title="Search suppliers for this product on Alibaba">Find on Alibaba${icon('external')}</button>
+    <span class="profit" data-pkey="${esc(key)}"><input type="number" min="0" step="0.01" class="pbnum" data-cogs="${esc(key)}" placeholder="Cost ${CUR_SYM[cur]}" aria-label="Supplier price per piece in ${CUR_SYM[cur]}" title="Supplier price per piece (${CUR_SYM[cur]})">
+    <button class="btn slim" data-profit="${esc(key)}">Profit?</button><span class="small" data-pout="${esc(key)}"></span></span>`;
+}
+/* One shared click handler. find(key) -> {market, price, category, search}. */
+function wireSourcing(root, find) {
+  root.addEventListener('click', async e => {
+    const a = e.target.closest('[data-alibaba]'), p = e.target.closest('[data-profit]');
+    if (a) { const it = find(a.dataset.alibaba); if (it) openUrl(alibabaUrl(it.search)); }
+    if (!p) return;
+    const key = p.dataset.profit, it = find(key), out = root.querySelector(`[data-pout="${CSS.escape(key)}"]`);
+    const inp = root.querySelector(`[data-cogs="${CSS.escape(key)}"]`), cost = parseFloat(inp && inp.value);
+    if (!it || !out) return;
+    if (!(cost >= 0)) { out.textContent = 'Type the supplier price first'; return; }
+    if (it.price == null) { out.textContent = 'No Amazon price to compare with'; return; }
+    const s = ST.settings || {}, per = ((ST.fx || {}).per_usd) || {USD: 1, EUR: 0.92};
+    const cogsUsd = cost / (per[s.price_currency || 'USD'] || 1);
+    out.innerHTML = busy('…');
+    try {
+      const r = await api('/api/profit', {market: it.market, price: it.price, category: it.category || '', cogs_usd: cogsUsd,
+                                          registered: !!((s.registered || {})[it.market])});
+      const e2 = r.economics, c = CUR_SYM[MK_CUR[it.market]], m = e2.Margin || 0;
+      const fees = e2.Referral + e2.FBA + e2.Storage + e2.Placement + e2.FeeTax;
+      const tip = `Rough estimate at ${c} ${num(it.price, 2)}: Amazon fees ${c} ${num(fees, 2)}, product + shipping + duty ${c} ${num(e2.Landed, 2)}, ` +
+        `ads ${c} ${num(e2.Ads, 2)}, returns ${c} ${num(e2.Returns, 2)}. Assumes a small standard-size item and sea freight; ` +
+        'check the real size and weight before ordering.';
+      out.innerHTML = `<span class="pill ${e2.Profit > 0 && m >= 0.15 ? 'good' : e2.Profit > 0 ? 'warn' : 'bad'}" title="${esc(tip)}">≈ ${c} ${num(e2.Profit, 2)} profit / sale · ${Math.round(m * 100)}% margin</span>`;
+    } catch (err) { out.innerHTML = failPill(err.message); }
+  });
+}

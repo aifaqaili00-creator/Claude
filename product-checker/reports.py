@@ -286,8 +286,11 @@ def library(db):
 RADAR_DAYS = 14
 
 
-def radar(db, market, now=None, limit=60):
-    """Amazon surges for one market (Movers & Shakers / New Releases history), grouped into similar products."""
+def radar(db, market, now=None, limit=60, price_range=None, exclude_tech=False):
+    """Amazon surges for one market (Movers & Shakers / New Releases history), grouped into similar products.
+
+    price_range (lo, hi) in local money keeps products selling within it (no price shown: kept, flagged);
+    exclude_tech leaves out phones, laptops and their accessories. 'filtered' says how many each removed."""
     import file_rank as fr
     from engine import surge
     now = now or time.time()
@@ -301,15 +304,24 @@ def radar(db, market, now=None, limit=60):
         for sc in scans:                                           # newest wins
             for it in sc['items']:
                 info[it['asin']] = {**it, 'category': sc['category'], 'kind': sc['kind'], 'slug': sc['slug']}
-        rows = []
+        rows, filtered = [], {'out_of_range': 0, 'tech': 0}
         for a, f in feats.items():
             if not f.get('appearances') or a not in info:
                 continue
             it = info[a]
+            if exclude_tech and fr.is_tech(it.get('title')):
+                filtered['tech'] += 1
+                continue
+            price = it.get('price')
+            if price_range and price is not None and not price_range[0] <= price <= price_range[1]:
+                filtered['out_of_range'] += 1
+                continue
             label = ('Deal-driven' if f.get('deal_driven') else
                      'New on the lists' if (f.get('recent_hits') or 0) >= 2 and not f.get('seen_before_window') else
                      'Rising' if (f.get('streak_days') or 0) >= 3 or f.get('rank_improving') else 'Moving')
             flags = [name for name, rx in fr.CHECKS if rx.search(it.get('title') or '')]
+            if price_range and price is None:
+                flags.append('price unknown')
             rows.append({'asin': a, 'title': it.get('title'), 'image': it.get('image'), 'category': it['category'],
                          'price': it.get('price'), 'reviews': it.get('reviews'), 'rating': it.get('rating'),
                          'pct': it.get('pct'), 'rank_now': it.get('rank_now'), 'surge': f.get('surge'), 'label': label,
@@ -326,6 +338,7 @@ def radar(db, market, now=None, limit=60):
         clusters.sort(key=lambda c: -(c['surge'] or 0))
         valid = [s for s in scans if s['status'] in ('ok', 'partial')]
         return {'market': market, 'scans': len(scans), 'valid_scans': len(valid), 'items': rows[:limit],
+                'filtered': filtered, 'price_range': price_range,
                 'clusters': clusters[:20], 'last_scan': scans[-1]['ts'], 'first_scan': scans[0]['ts']}
     return db.read(build)
 

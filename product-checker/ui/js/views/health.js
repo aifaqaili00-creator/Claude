@@ -65,6 +65,20 @@
     });
   }
   onState(() => fill());
+  priceBar($('sPrice'), () => 'AU', () => fxLine());
+  function fxLine() {
+    const f = ST.fx || {}, s = ST.settings || {};
+    if (!f.ranges) return;
+    $('fxLine').textContent = `${num(s.price_min)}–${num(s.price_max)} ${CUR_SYM[s.price_currency || 'USD']} = ${rangeText('AU')} · ${rangeText('AE')}` +
+      (s.price_currency === 'EUR' ? ' · ' + rangeText('US') : '') + ` (${fxNote()})`;
+  }
+  onState(fxLine);
+  $('btnFx').addEventListener('click', async () => {
+    $('btnFx').disabled = true;
+    try { ST.fx = await api('/api/fx/refresh', {}); fxLine(); toast(ST.fx.source === 'ECB' ? 'Rates updated' : 'Could not reach the ECB; using saved rates', 2500); }
+    catch (e) { toast(e.message); }
+    $('btnFx').disabled = false;
+  });
   $('autoPanel').addEventListener('change', async e => {
     if (e.target.id === 'regAU' || e.target.id === 'regAE') {
       try { const r = await api('/api/settings', {registered: {AU: $('regAU').checked, AE: $('regAE').checked}}); ST.settings = r.settings; toast('Saved', 1500); }

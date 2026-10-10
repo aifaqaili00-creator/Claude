@@ -16,7 +16,8 @@ import storage
 import throttle
 
 log = logging.getLogger('pc')
-LIST_CATEGORIES = 8                     # categories per market when you have not chosen any
+LIST_CATEGORIES = 8                     # categories per market when you have not chosen any (automatic refresh)
+USER_CATEGORIES = 16                    # ... in a scan you start yourself
 CATEGORY_TTL = 24 * 3600                # Amazon's category menu is read again once a day
 
 
@@ -60,7 +61,7 @@ class Collectors:
         return {'products': self.products, 'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
                 'import_scan': self.import_scan, 'maintenance': self.maintenance}
 
-    async def _categories(self, market):
+    async def _categories(self, market, limit=LIST_CATEGORIES):
         chosen = self.S.settings.get('categories', {}).get(market) or []
         hit = self.cats.get(market)
         if not hit or not hit['cats'] or time.time() - hit['at'] > CATEGORY_TTL:
@@ -71,7 +72,7 @@ class Collectors:
         if chosen:
             return [c for c in cats if c['slug'] in chosen] or [{'slug': s, 'name': s, 'risky': False} for s in chosen]
         safe = [c for c in cats if not c['risky']]
-        return safe if any(c.get('default') for c in safe) else safe[:LIST_CATEGORIES]
+        return safe if any(c.get('default') for c in safe) else safe[:limit]
 
     def _forget(self, market, slug):
         """A built-in category slug that Amazon does not have: stop asking for it."""
@@ -91,7 +92,7 @@ class Collectors:
         say('%s: opening the browser…' % name)
         await self.S.checker.start()
         say('%s: reading the category list…' % name)
-        cats = await self._categories(market)
+        cats = await self._categories(market, USER_CATEGORIES if progress else LIST_CATEGORIES)
         if not cats:
             raise RuntimeError('No categories found on Amazon %s. Try again in a few minutes.' % name)
         defaults = any(c.get('default') for c in cats)

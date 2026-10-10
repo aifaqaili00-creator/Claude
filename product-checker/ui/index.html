@@ -103,6 +103,7 @@
           </div>
           <div class="row"><span class="small" id="rWhen"></span><button class="btn primary" id="rScan"><svg class="icon sm"><use href="#i-refresh"/></svg>Scan now</button></div>
         </div>
+        <div class="pricebar" id="rPrice"></div>
         <div class="progress" id="rProg"></div>
         <div id="radarOut" class="stackv"></div>
       </section>
@@ -201,6 +202,7 @@
             <label class="small"><input type="checkbox" id="iHide" checked> Hide risky products (electrical, kids, chemicals, medical)</label>
             <button class="btn primary big" id="btnIdeas" type="button" style="margin-left:auto">Find product ideas</button>
           </div>
+          <div class="pricebar" id="iPrice"></div>
           <div id="iCatsWrap" hidden>
             <div class="field"><span class="lbl">Categories (click to switch on or off, then find again)</span><div class="chips" id="iCats"></div></div>
           </div>
@@ -416,6 +418,14 @@
             <div class="row"><button class="btn" id="btnTestProfile">Open Helium 10 in this profile<svg class="icon sm"><use href="#i-external"/></svg></button></div>
             <div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
             The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div>
+          </div>
+          <div class="panel stackv">
+            <h2>Price range for product ideas</h2>
+            <div class="pricebar" id="sPrice"></div>
+            <div class="row"><span class="small" id="fxLine"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
+            <div class="note">Product ideas and the Trend radar show only products that sell on Amazon within this range.
+            It is converted to Australian dollars and UAE dirhams automatically with the European Central Bank's daily rates
+            (the dirham is fixed to the US dollar at 3.6725).</div>
           </div>
           <div class="panel stackv">
             <h2>Delivery locations</h2>

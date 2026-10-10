@@ -175,3 +175,13 @@ def test_collector_watch_kw_saves_gaps_and_reraises(S):
     with pytest.raises(ac.CaptchaRequired):
         asyncio.run(c.watch_kw({'kind': 'watch_kw', 'market': 'AU', 'target': 'moving bags'}))
     assert saved[0]['status'] == 'captcha'
+
+
+def test_radar_keeps_your_price_range_and_drops_phones(S):
+    list_history(S)
+    r = reports.radar(S.db, 'US', now=NOW, limit=1000, price_range=(20, 50), exclude_tech=True)
+    asins = {i['asin'] for i in r['items']}
+    assert not asins & {'FAN0', 'FAN1', 'FAN2', 'DEAL'}                    # fans at 59 are outside, the phone case is tech
+    assert r['filtered']['out_of_range'] == 3 and r['filtered']['tech'] == 1 and r['price_range'] == (20, 50)
+    wide = reports.radar(S.db, 'US', now=NOW, limit=1000, price_range=(20, 60))
+    assert {'FAN0', 'DEAL'} - {i['asin'] for i in wide['items']} == {'DEAL'}  # DEAL at 5 is below the range

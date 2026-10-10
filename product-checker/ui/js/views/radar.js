@@ -5,7 +5,8 @@
   let data = null, local = {};
   view('radar', {title: 'Trend radar', sub: 'Products climbing Amazon’s lists, and where search interest is going',
                  onShow: () => load()});
-  seg($('rMk'), () => { local = {}; load(); });
+  const rPrice = priceBar($('rPrice'), () => segVal($('rMk')), () => load());
+  seg($('rMk'), () => { local = {}; rPrice.draw(); load(); });
   $('rHide').addEventListener('change', render);
   $('rScan').addEventListener('click', async () => {
     $('rScan').disabled = true;
@@ -28,10 +29,15 @@
   function render() {
     if (!data) return;
     const d = data, hide = $('rHide').checked, cur = (ST.markets[d.market] || {}).currency || '';
-    $('rWhen').textContent = d.last_scan ? `${d.scans} list scans in 14 days · last ${ago(d.last_scan)}` : '';
-    const items = d.items.filter(i => !hide || (!i.deal && !i.flags.length));
+
+    const items = d.items.filter(i => !hide || (!i.deal && !i.flags.some(f => f !== 'price unknown')));
+    const f = d.filtered || {}, hidden = [];
+    if (f.out_of_range) hidden.push(`${num(f.out_of_range)} outside ${rangeText(d.market)}`);
+    if (f.tech) hidden.push(`${num(f.tech)} phone / computer`);
     const checks = d.market === 'US' ? ['AU', 'AE'] : [d.market === 'AU' ? 'AE' : 'AU'];
     const lanes = d.trends || {};
+    $('rWhen').textContent = d.last_scan ? `${d.scans} list scans in 14 days · last ${ago(d.last_scan)}` +
+      (hidden.length ? ' · hidden: ' + hidden.join(', ') : '') : '';
     $('radarOut').innerHTML = `
       ${!d.scans ? `<div class="panel empty"><h2>No list scans for ${esc(MK[d.market])} yet</h2><p>Press <b>Scan now</b>, or leave automatic refresh on: the lists are read every 12 hours (USA) or daily (Australia, UAE).<br>Rising products need at least two scans to show up.</p></div>` : ''}
       ${d.clusters.length ? `<div class="panel"><h3 style="margin-bottom:8px">Groups of similar products moving together</h3><div class="row" style="gap:6px">${d.clusters.map(c => `<span class="pill ${c.surge >= 60 ? 'good' : 'weak'}" title="${c.size} similar products">${esc(c.key || 'similar products')} · ${c.size} · surge ${Math.round(c.surge)}</span>`).join('')}</div></div>` : ''}
@@ -51,12 +57,17 @@
           <button class="btn slim" data-rrep="${esc(i.search)}">${icon('chart')}Report</button>
           <a class="btn slim" href="#/p/${esc(data.market)}/${esc(i.asin)}">Product</a>
           <button class="btn slim" data-rwatch="${esc(i.search)}">${icon('eye')}Watch</button>
+          ${sourcingHtml(i.asin)}
         </div></div>`).join('')}</div>` : d.scans ? '<div class="panel empty">Nothing left after hiding risky and deal-driven products.</div>' : ''}
       <h2 class="section">Search interest of your watched keywords (Google Trends)</h2>
       <div class="lanes">${Object.entries(lanes).map(([lane, list]) => `<div class="panel lane"><h3>${esc(lane)} <span class="muted small">${list.length}</span></h3>
         ${list.map(t => `<a class="lane-item" href="#/k/${t.geo}/${encodeURIComponent(t.term)}"><b>${esc(t.term)}</b><span class="small">${esc(MK_SHORT[t.geo] || t.geo)} · ${esc(t.label)}${t.score != null ? ' · ' + Math.round(t.score) : ''}</span></a>`).join('') || '<span class="small muted">none</span>'}</div>`).join('')}</div>`;
   }
 
+  wireSourcing($('radarOut'), asin => {
+    const i = data && data.items.find(x => x.asin === asin);
+    return i && {market: data.market, price: i.price, category: i.category, search: i.search};
+  });
   $('radarOut').addEventListener('click', async e => {
     const c = e.target.closest('[data-rcheck]'), r = e.target.closest('[data-rrep]'), w = e.target.closest('[data-rwatch]');
     if (r) go('k', data.market, r.dataset.rrep);

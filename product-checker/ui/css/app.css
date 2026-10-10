@@ -296,3 +296,10 @@ h2.section { margin: 10px 0 -4px; font-size: 15px; color: var(--ink-2); }
 /* opportunity parts */
 .parts { display: grid; gap: 8px; }
 .part { display: grid; grid-template-columns: 110px 1fr 34px; gap: 4px 10px; align-items: center; }
+
+/* price range bar and sourcing on idea cards */
+.pricebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pricebar input.pbnum, .icard input.pbnum { width: 76px; flex: none; padding: 5px 8px; min-height: 30px; font-size: 13px; }
+.icard input.pbnum[data-cogs] { width: 104px; }
+.seg.slim button { padding: 4px 10px; font-size: 13px; }
+.icard .profit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
