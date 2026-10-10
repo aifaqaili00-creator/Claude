@@ -56,7 +56,7 @@ EXTRACT_LIST_JS = r"""
     const reviews = fromTitle || (countEl && countEl.textContent.trim()) || (nums.length ? nums[nums.length - 1] : '');
     const priceEl = e.querySelector('[class*="price"], .p13n-sc-price, .a-color-price');
     out.push({
-      asin,
+      asin, deal: /limited time deal|deal of the day|lightning deal|\bdeal\b|\d+% off/i.test(all),
       title: ((clamp && (clamp.innerText || clamp.textContent)) || (img && img.alt) || (link && link.innerText) || '').trim(),
       image: img ? (img.getAttribute('src') || '') : '',
       rank: ((e.querySelector('.zg-bdg-text') || {}).textContent || (all.match(/#\s?(\d+)/) || [])[0] || ''),
@@ -104,15 +104,26 @@ async def categories(checker, code):
     return out
 
 
+COUNT_JS = "() => document.querySelectorAll('[id=\"gridItemRoot\"], .zg-grid-general-faceout, li.zg-item-immersion').length"
+
+
 async def read_list(checker, code, kind, slug, name):
     """One Movers & Shakers or New Releases page (up to 50 products)."""
     site = ac.MARKETS[code]['site']
     page = await checker.ctx.new_page()
     try:
         await checker._goto(page, '%s%s/%s' % (site, LISTS[kind], slug), code)
-        for _ in range(4):                                   # the second half of the list loads on scroll
+        last = -1
+        for _ in range(8):                                   # the second half of the list loads on scroll
+            n = await page.evaluate(COUNT_JS)
+            if n >= 50 or (n == last and n > 0):
+                break
+            last = n
             await page.mouse.wheel(0, 4000)
-            await page.wait_for_timeout(400)
+            try:
+                await page.wait_for_function('n => (%s)() > n' % COUNT_JS, arg=n, timeout=1500)
+            except Exception:
+                pass
         raw = await page.evaluate(EXTRACT_LIST_JS)
     finally:
         await page.close()
@@ -121,7 +132,7 @@ async def read_list(checker, code, kind, slug, name):
         mv = r.get('movement') or ''
         items.append({
             'asin': r['asin'], 'title': r['title'][:200], 'image': r['image'], 'market': code,
-            'url': '%s/dp/%s' % (site, r['asin']), 'category': name, 'kind': kind,
+            'url': '%s/dp/%s' % (site, r['asin']), 'category': name, 'kind': kind, 'slug': slug, 'deal': bool(r.get('deal')),
             'rank': _int(r['rank']), 'pct': _int(r['pct']) if kind == 'movers' else None,
             'rank_now': _int(re.search(r'rank:\s*([\d,]+)', mv, re.I).group(1)) if re.search(r'rank:\s*([\d,]+)', mv, re.I) else None,
             'rank_before': _int(re.search(r'previously\s*([\d,]+)', mv, re.I).group(1)) if re.search(r'previously\s*([\d,]+)', mv, re.I) else None,
@@ -226,14 +237,18 @@ async def suggest(checker, code, seed, progress=None):
     found = {}
     sem = asyncio.Semaphore(5)
 
+    failed = [0]
+
     async def one(i, prefix):
         async with sem:
             q = '%s?limit=11&prefix=%s&suggestion-type=KEYWORD&page-type=Search&lop=%s&site-variant=desktop' \
                 '&client-info=amazon-search-ui&mid=%s&alias=aps' % (url, quote(prefix), lop, mid)
             try:
-                r = await checker.ctx.request.get(q, timeout=15000)
-                data = await r.json()
+                async with checker.slot('complete:' + code):
+                    r = await checker.ctx.request.get(q, timeout=15000)
+                    data = await r.json()
             except Exception:
+                failed[0] += 1
                 return
             for n, s in enumerate(data.get('suggestions') or []):
                 kw = ' '.join(str(s.get('value') or '').lower().split())
@@ -248,7 +263,7 @@ async def suggest(checker, code, seed, progress=None):
     out.sort(key=lambda f: (-f['hits'], f['best'], f['first']))
     if progress:
         progress('%d keyword ideas for "%s"' % (len(out), seed))
-    return {'market': code, 'seed': seed, 'keywords': out[:40]}
+    return {'market': code, 'seed': seed, 'keywords': out[:40], 'n_calls': len(prefixes), 'n_failed': failed[0]}
 
 
 def trends_url(keyword, code='US'):

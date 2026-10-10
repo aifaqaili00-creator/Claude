@@ -37,6 +37,11 @@
   <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 3.9L2.6 17.5a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4.5M12 17h.01"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M7 15l4-4 3 3 5-6"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></symbol>
@@ -50,6 +55,9 @@
       <div><b>Product Checker</b><span>Amazon AU · UAE · US</span></div>
     </div>
     <nav class="nav" id="nav" aria-label="Main">
+      <a href="#/home" data-view="home" title="Home"><svg class="icon"><use href="#i-home"/></svg><span>Home</span><b class="count" id="alertCount" hidden></b></a>
+      <a href="#/radar" data-view="radar" title="Trend radar"><svg class="icon"><use href="#i-radar"/></svg><span>Trend radar</span></a>
+      <a href="#/watch" data-view="watch" title="Watchlist"><svg class="icon"><use href="#i-eye"/></svg><span>Watchlist</span></a>
       <div class="grp">Research</div>
       <a href="#/check" data-view="check" title="Check sellers"><svg class="icon"><use href="#i-search"/></svg><span>Check sellers</span></a>
       <a href="#/ideas" data-view="ideas" title="Product ideas"><svg class="icon"><use href="#i-bulb"/></svg><span>Product ideas</span></a>
@@ -59,6 +67,7 @@
       <a href="#/rank" data-view="rank" title="Rank a file"><svg class="icon"><use href="#i-file"/></svg><span>Rank a file</span></a>
       <div class="grp">Your data</div>
       <a href="#/library" data-view="library" title="Library"><svg class="icon"><use href="#i-clock"/></svg><span>Library</span></a>
+      <a href="#/health" data-view="health" title="Health"><svg class="icon"><use href="#i-pulse"/></svg><span>Health</span></a>
       <a href="#/settings" data-view="settings" title="Settings"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span></a>
     </nav>
     <div class="side-foot">
@@ -83,6 +92,35 @@
     </header>
 
     <main id="main">
+      <!-- Home -->
+      <section class="view" id="v-home"><div id="homeOut" class="stackv"></div></section>
+      <!-- Trend radar -->
+      <section class="view" id="v-radar">
+        <div class="panel row" style="justify-content:space-between">
+          <div class="row">
+            <div class="seg" id="rMk"><button type="button" data-v="US" aria-pressed="true">USA</button><button type="button" data-v="AU" aria-pressed="false">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button></div>
+            <label class="small"><input type="checkbox" id="rHide" checked> Hide risky and deal-driven</label>
+          </div>
+          <div class="row"><span class="small" id="rWhen"></span><button class="btn primary" id="rScan"><svg class="icon sm"><use href="#i-refresh"/></svg>Scan now</button></div>
+        </div>
+        <div class="progress" id="rProg"></div>
+        <div id="radarOut" class="stackv"></div>
+      </section>
+      <!-- Watchlist -->
+      <section class="view" id="v-watch">
+        <div class="panel row" style="justify-content:space-between">
+          <form class="row" id="wForm" autocomplete="off">
+            <input type="text" id="wKw" placeholder="Keyword to watch, e.g. tower fan" style="width:280px">
+            <div class="seg" id="wMk"><button type="button" data-v="US" aria-pressed="true">USA</button><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="true">UAE</button></div>
+            <button class="btn primary" type="submit"><svg class="icon sm"><use href="#i-eye"/></svg>Watch</button>
+          </form>
+          <div class="row"><span class="small" id="wSched"></span><button class="btn" id="wRun"><svg class="icon sm"><use href="#i-refresh"/></svg>Refresh all now</button></div>
+        </div>
+        <div id="watchOut"></div>
+      </section>
+      <!-- Health -->
+      <section class="view" id="v-health"><div id="healthOut" class="stackv"></div></section>
+
       <!-- Check sellers -->
       <section class="view" id="v-check">
         <div class="panel">
@@ -396,6 +434,22 @@
             </div>
             <div class="small">1 page = about 48–60 listings and is the fastest. Saved results are reused, so repeat checks are instant.</div>
           </div>
+          <div class="panel stackv" id="autoPanel">
+            <h2>Automatic refresh</h2>
+            <label class="small"><input type="checkbox" data-set="auto_refresh"> Refresh watched keywords, Amazon lists and Google Trends automatically</label>
+            <label class="small"><input type="checkbox" data-set="keep_running"> Keep refreshing after I close the window</label>
+            <label class="small"><input type="checkbox" data-set="start_with_windows"> Start with Windows (in the background)</label>
+            <label class="small"><input type="checkbox" data-set="pause_on_battery"> Pause on battery</label>
+            <label class="small"><input type="checkbox" data-set="trends_enabled"> Use Google Trends</label>
+            <div class="row">
+              <div class="field"><label for="setQs">No notifications from (hour)</label><input type="number" id="setQs" data-set="quiet_start" min="0" max="23"></div>
+              <div class="field"><label for="setQe">until (hour)</label><input type="number" id="setQe" data-set="quiet_end" min="0" max="23"></div>
+              <div class="field"><label for="setSev">Notify from</label><select id="setSev" data-set="toast_min_severity"><option value="1">every alert</option><option value="2">important</option><option value="3">urgent only</option></select></div>
+            </div>
+            <div class="field"><label for="setImp">Also import Helium 10 files from this folder</label><input type="text" id="setImp" data-set="import_folder" placeholder="C:\Users\you\Documents\Helium 10"></div>
+            <div class="small">Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; the marketplace just pauses and Home tells you.</div>
+            <div class="row"><button class="btn" id="btnQuit">Quit completely</button></div>
+          </div>
           <div class="panel stackv">
             <h2>Background browser</h2>
             <div class="row"><span id="bState" class="pill"></span>
@@ -417,5 +471,9 @@
 <script src="/ui/js/legacy.js"></script>
 <script src="/ui/js/views/keyword.js"></script>
 <script src="/ui/js/views/library.js"></script>
+<script src="/ui/js/views/home.js"></script>
+<script src="/ui/js/views/radar.js"></script>
+<script src="/ui/js/views/watch.js"></script>
+<script src="/ui/js/views/health.js"></script>
 </body>
 </html>

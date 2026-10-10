@@ -7,6 +7,7 @@ The checks run in their own browser profile (Chrome blocks automation of your ev
 kept minimised in the background. It shows itself only when Amazon asks for a captcha.
 """
 import asyncio
+import contextlib
 import contextvars
 import datetime as dt
 import os
@@ -227,6 +228,7 @@ class Checker:
         self.home = None
         self._shows = 0                              # captchas currently waiting for the user
         self.pinned = False                          # the user pressed "Show"
+        self.throttle = None                         # set by the app: pacing, budgets and cooldowns per source
         self.state = 'stopped'                       # stopped / starting / ready / error
         self.error = ''
         self.locations = {c: {'ok': None, 'text': ''} for c in MARKETS}
@@ -336,7 +338,25 @@ class Checker:
         self.state = 'stopped'
 
     # ---------- page helpers ----------
+    def slot(self, source):
+        """The throttle's slot for one request (or nothing when no throttle is set, e.g. in tests)."""
+        return self.throttle.slot(source) if self.throttle else contextlib.nullcontext()
+
     async def _goto(self, page, url, code):
+        """One paced page load. Blocks and captchas cool the marketplace down (see throttle.py)."""
+        source = 'amazon:' + code
+        async with self.slot(source):
+            try:
+                status = await self._goto_raw(page, url, code)
+            except BlockedError as e:
+                if self.throttle and e.status in ('captcha', 'blocked', 'geo_redirect', 'empty_suspect'):
+                    self.throttle.report(source, e.status, str(e)[:120])
+                raise
+        if self.throttle:
+            self.throttle.report(source, 'ok')
+        return status
+
+    async def _goto_raw(self, page, url, code):
         """Open a page, get past Amazon's interstitials, and raise BlockedError for anything that is not a real page."""
         name = MARKETS[code]['name']
         try:

@@ -51,6 +51,7 @@
             <button class="btn" data-open="${esc(d.search_url)}">Amazon${icon('external')}</button>
             <button class="btn" data-open="${esc(d.trends_url)}">Google Trends${icon('external')}</button>
             <button class="btn" id="kXray">${icon('scan')}Xray</button>
+            <button class="btn" id="kWatch" title="Re-check this keyword every day and fetch Google Trends weekly">${icon('eye')}Watch</button>
           </div>
         </div>
         <div class="progress" id="kProg">${now ? 'Last searched ' + ago(now.checked_at) : 'Not searched in ' + MK[d.market] + ' yet.'}${tr.as_of ? ' · Google Trends ' + ago(tr.as_of) : ''}</div>
@@ -90,6 +91,8 @@
 
     seg($('kMk'), mk => go('k', mk, d.keyword));
     $('kRefresh').addEventListener('click', () => refresh(d));
+    $('kWatch').addEventListener('click', () => api('/api/watch', {kind: 'keyword', target: d.keyword, markets: [d.market]})
+      .then(() => toast('Watching “' + d.keyword + '” in ' + MK[d.market] + '. It is re-checked every day.')).catch(e => toast(e.message)));
     $('kXray').addEventListener('click', () => { $('xkw').value = d.keyword; setSeg($('xMk'), d.market); go('xray'); });
     drawTrends(d);
     drawSeason(d);

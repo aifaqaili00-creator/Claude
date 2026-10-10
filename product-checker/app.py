@@ -19,14 +19,20 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import amazon_check as ac
+import analysis
 import chrome_profiles as cp
+import collectors
 import config
 import file_rank as fr
 import ideas
 import importer
 import reports
+import scheduler
+import singleton
 import storage
+import throttle
 import trends
+import winsys
 import xray
 from jobs import JobManager
 
@@ -122,10 +128,20 @@ class State:
         self.loop = asyncio.new_event_loop()
         if start_loop:                                            # one event loop thread owns the browser
             threading.Thread(target=self.loop.run_forever, daemon=True, name='browser').start()
+        self.mode = 'window'                                      # or 'background' (no window, keeps refreshing)
+        self.focused_at = 0
+        self.gate = throttle.Gate(self.loop)                      # your own jobs always go first
+        self.throttle = throttle.Throttle(throttle.Store(self.db), self.gate)
         self.checker = ac.Checker(log=self.say)
+        self.checker.throttle = self.throttle
         self.trends = trends.BrowserTrends(self.checker, self.say)
+        self.trends.throttle = self.throttle
         self.trends.breaker.load(self.db.read(storage.get_state, 'trends_breaker'))
-        self.jobs = JobManager(self.run, self.say)
+        self.jobs = JobManager(self.run, self.say, self.gate.user_start, self.gate.user_end)
+        self.collectors = collectors.Collectors(self)
+        self.scheduler = scheduler.Scheduler(self.db, self.collectors.handlers(), self.throttle,
+                                             conditions=self.pause_reason, on_run_done=self.after_run, say=self.say)
+        self.sync_tasks()
 
     def apply_locations(self):
         """One rule for which 'Deliver to' text counts as correct, used at start-up and after Settings changes."""
@@ -177,6 +193,32 @@ class State:
                                                      self.settings['locations'].get(s['market']))
         except Exception:                                           # noqa: BLE001
             log.exception('could not save the search')
+
+    # ---------- automatic refresh ----------
+    def pause_reason(self):
+        """Why background work should not run now (None = go ahead)."""
+        if not self.settings.get('auto_refresh', True):
+            return 'auto refresh is off'
+        if self.settings.get('pause_on_battery', True) and winsys.on_battery():
+            return 'on battery'
+        return None
+
+    def sync_tasks(self):
+        self.scheduler.sync_tasks(collectors.task_specs(self.settings, self.db.read(storage.watches)))
+
+    def window_focused(self):
+        return time.time() - self.focused_at < 30
+
+    async def after_run(self, run_id, results):
+        fresh = await asyncio.to_thread(analysis.run, self, results)
+        if fresh:
+            self.say('%d new alert%s on Home.' % (len(fresh), '' if len(fresh) == 1 else 's'))
+            await asyncio.to_thread(analysis.notify_new, self, fresh)
+
+    def apply_startup_setting(self):
+        want = bool(self.settings.get('start_with_windows'))
+        if want or winsys.run_at_login():
+            winsys.set_run_at_login(want, winsys.login_command(HERE))
 
     def import_folders(self):
         folders = [xray.downloads_dir()]
@@ -470,6 +512,9 @@ def api_state(h, q):
                     for c, m in ac.MARKETS.items()},
         'targets': fr.TARGETS,
         'jobs_running': S.jobs.running(),
+        'mode': S.mode,
+        'scheduler': S.scheduler.status(),
+        'alerts_unseen': (S.db.one('SELECT COUNT(*) AS n FROM alert WHERE seen_at IS NULL AND dismissed_at IS NULL') or {}).get('n', 0),
         'messages': [m for m in S.messages if m['t'] > since],
     })
 
@@ -664,6 +709,11 @@ def api_settings(h, q):
     for c in changed:
         S.checker.locations[c] = {'ok': None, 'text': ''}
     S.save_settings()
+    S.sync_tasks()
+    if 'start_with_windows' in d:
+        S.apply_startup_setting()
+    if d.get('auto_refresh'):
+        S.scheduler.poke()
     return h._send(200, {'ok': True, 'settings': S.settings})
 
 
@@ -719,7 +769,120 @@ def api_profiles(h, q):
 @route('POST', '/api/beat')
 def api_beat(h, q):
     S.last_beat = time.time()
+    if h._json().get('focused'):
+        S.focused_at = time.time()
     return h._send(200, {'ok': True})
+
+
+# ---------------- automatic refresh, watchlist, alerts ----------------
+@route('GET', '/api/home')
+def api_home(h, q):
+    return h._send(200, reports.home(S.db, S))
+
+
+@route('GET', '/api/radar')
+def api_radar(h, q):
+    market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
+    return h._send(200, {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db)})
+
+
+@route('GET', '/api/watchlist')
+def api_watchlist(h, q):
+    return h._send(200, reports.watchlist(S.db, S.settings))
+
+
+@route('GET', '/api/health')
+def api_health(h, q):
+    return h._send(200, reports.health(S.db, S))
+
+
+@route('GET', '/api/alerts')
+def api_alerts(h, q):
+    return h._send(200, S.db.read(storage.list_alerts, time.time() - 30 * 86400, False, 200))
+
+
+@route('POST', '/api/watch')
+def api_watch(h, q):
+    d = h._json()
+    kind = d.get('kind') if d.get('kind') in storage.WATCH_KINDS else 'keyword'
+    target = ' '.join(str(d.get('target') or '').split())[:120]
+    markets = [m for m in (d.get('markets') or [d.get('market')]) if m in ac.MARKETS]
+    if not target or not markets:
+        return h._send(400, {'error': 'What should be watched, and where?'})
+    ids = []
+    for m in markets:
+        if kind == 'keyword':
+            S.db.write(storage.upsert_keyword, target)
+        ids.append(S.db.write(storage.add_watch, kind, m, target, target))
+    S.sync_tasks()
+    S.scheduler.poke()
+    return h._send(200, {'ok': True, 'ids': ids})
+
+
+@route('POST', '/api/watch/update')
+def api_watch_update(h, q):
+    d = h._json()
+    try:
+        S.db.write(storage.update_watch, int(d.get('id') or 0), **{k: v for k, v in d.items() if k != 'id'})
+    except ValueError as e:
+        return h._send(400, {'error': str(e)})
+    S.sync_tasks()
+    return h._send(200, {'ok': True})
+
+
+@route('POST', '/api/watch/remove')
+def api_watch_remove(h, q):
+    S.db.write(storage.remove_watch, int(h._json().get('id') or 0))
+    S.sync_tasks()
+    return h._send(200, {'ok': True})
+
+
+@route('POST', '/api/alerts/mark')
+def api_alerts_mark(h, q):
+    d = h._json()
+    ids = [int(i) for i in d.get('ids') or [] if str(i).isdigit()][:500]
+    S.db.write(storage.mark_alerts, ids, 'dismissed_at' if d.get('dismiss') else 'seen_at')
+    return h._send(200, {'ok': True})
+
+
+@route('POST', '/api/scheduler')
+def api_scheduler(h, q):
+    d = h._json()
+    a = d.get('action')
+    if a == 'run_now':
+        S.scheduler.run_all_now()
+    elif a == 'pause':
+        S.scheduler.pause(max(0.25, min(72.0, float(d.get('hours') or 1))) * 3600)
+    elif a == 'resume':
+        S.scheduler.resume()
+    else:
+        return h._send(400, {'error': 'unknown action'})
+    return h._send(200, S.scheduler.status())
+
+
+@route('POST', '/api/source/clear')
+def api_source_clear(h, q):
+    src = str(h._json().get('source') or '')
+    if src == 'google':
+        S.trends.breaker.ok()
+    if src in throttle.SOURCES:
+        S.throttle.clear(src)
+    S.scheduler.poke()
+    return h._send(200, {'ok': True})
+
+
+@route('POST', '/api/radar/scan')
+def api_radar_scan(h, q):
+    """Read the market's Movers & Shakers and New Releases now (your own job, not background)."""
+    market = h._json().get('market') if h._json().get('market') in ac.MARKETS else 'US'
+
+    async def work(progress):
+        progress('Reading Movers & Shakers and New Releases on Amazon %s...' % ac.MARKETS[market]['name'])
+        out = await S.collectors.lists({'kind': 'lists', 'market': market, 'target': 'all'})
+        progress(out.get('note') or '')
+        await asyncio.to_thread(analysis.run, S, [])
+        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db)})
+    return h._send(200, {'job': S.new_job('radar', work)})
 
 
 @route('POST', '/api/quit')
@@ -740,6 +903,7 @@ def shutdown():
     except Exception:
         pass
     try:
+        S.scheduler.stop()
         S.db.close()
     except Exception:
         pass
@@ -752,18 +916,22 @@ def shutdown():
 
 
 def watchdog():
-    """Stop when the app window is closed (its process ends or it stops checking in)."""
+    """When the app window closes: stop, or keep refreshing in the background if "Keep running" is on."""
     exited = None
     while True:
         time.sleep(2)
         win = S.window
         if win is not None and exited is None and win.poll() is not None:
             exited = time.time()
-            # a quick exit means the window was handed to an app window that was already open: keep running
-            if exited - S.started > 8:
-                return shutdown()
-        if time.time() - S.last_beat > 180:                     # no window has checked in for 3 minutes
+        what = singleton.watchdog_decision(time.time(), exited, S.started, S.last_beat,
+                                           S.settings.get('keep_running'), S.mode)
+        if what == 'shutdown':
             return shutdown()
+        if what == 'background':
+            S.mode = 'background'
+            S.window = None
+            S.say('The window is closed. Product Checker keeps refreshing in the background.')
+            return
 
 
 def free_port():
@@ -787,12 +955,23 @@ def already_running():
 def main():
     global S, HTTPD
     setup_logging()
-    no_window = '--no-window' in sys.argv
+    background = '--background' in sys.argv
+    no_window = '--no-window' in sys.argv or background
     port = already_running()
-    if port and not no_window:                                   # bring the open app to the front instead
-        cp.open_app_window('http://127.0.0.1:%d/' % port, APP_DIR / 'app-window')
+    if port:                                                     # bring the open app to the front instead
+        if not no_window:
+            cp.open_app_window('http://127.0.0.1:%d/' % port, APP_DIR / 'app-window')
         return
+    instance = singleton.Instance()
+    if not instance.acquire():
+        print('Product Checker is already starting.', flush=True)
+        return
+    if singleton.clear_stale_profile_lock(ac.PROFILE_DIR):
+        log.info('cleared a stale browser profile lock')
     S = State()
+    S.instance = instance
+    S.mode = 'background' if background else 'window'
+    S.apply_startup_setting()
     port = int(os.environ.get('PC_PORT') or free_port())
     S.port = port
     HTTPD = ThreadingHTTPServer(('127.0.0.1', port), Handler)
@@ -801,8 +980,10 @@ def main():
     url = 'http://127.0.0.1:%d/' % port
     log.info('started on %s', url)
     print('Product Checker running at', url, flush=True)
-    S.run(S.checker.start())                                      # warm up the background browser
+    if not background:
+        S.run(S.checker.start())                                  # warm up the background browser
     threading.Thread(target=S.scan_imports, daemon=True, name='import-scan').start()
+    S.run(S.scheduler.run_forever())                              # automatic refresh
     if not no_window:
         S.window = cp.open_app_window(url, APP_DIR / 'app-window')
         threading.Thread(target=watchdog, daemon=True).start()

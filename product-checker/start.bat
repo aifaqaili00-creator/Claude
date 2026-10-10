@@ -14,8 +14,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObjec
 
 :run
 if /i "%~1"=="debug" goto debug
-".venv\Scripts\python.exe" -c "import pandas, openpyxl, playwright" 2>nul || ".venv\Scripts\python.exe" -m pip install -r requirements.txt --quiet
+".venv\Scripts\python.exe" -c "import pandas, numpy, openpyxl, playwright, tzdata" 2>nul || ".venv\Scripts\python.exe" -m pip install -r requirements.txt --quiet
+if /i "%~1"=="background" goto background
 start "" ".venv\Scripts\pythonw.exe" app.py
+exit /b 0
+
+:background
+rem Started by Windows at sign-in ("Start with Windows"): no window, keeps the market data fresh.
+start "" ".venv\Scripts\pythonw.exe" app.py --background
 exit /b 0
 
 :debug

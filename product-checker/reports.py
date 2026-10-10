@@ -279,3 +279,145 @@ def library(db):
                                                  'FROM import_file ORDER BY imported_at DESC LIMIT 100')]
         return {'keywords': kws, 'imports': imports, 'watch': storage.watches(conn), 'counts': storage.counts(conn)}
     return db.read(build)
+
+
+# ---------- Phase 2 screens ----------
+RADAR_DAYS = 14
+
+
+def radar(db, market, now=None, limit=60):
+    """Amazon surges for one market (Movers & Shakers / New Releases history), grouped into similar products."""
+    import file_rank as fr
+    from engine import surge
+    now = now or time.time()
+
+    def build(conn):
+        scans = storage.list_scans(conn, market, now - RADAR_DAYS * 86400)
+        if not scans:
+            return {'market': market, 'scans': 0, 'items': [], 'clusters': [], 'last_scan': None}
+        feats = surge.all_features(scans, days=7)
+        info = {}
+        for sc in scans:                                           # newest wins
+            for it in sc['items']:
+                info[it['asin']] = {**it, 'category': sc['category'], 'kind': sc['kind'], 'slug': sc['slug']}
+        rows = []
+        for a, f in feats.items():
+            if not f.get('appearances') or a not in info:
+                continue
+            it = info[a]
+            label = ('Deal-driven' if f.get('deal_driven') else
+                     'New on the lists' if (f.get('recent_hits') or 0) >= 2 and not f.get('seen_before_window') else
+                     'Rising' if (f.get('streak_days') or 0) >= 3 or f.get('rank_improving') else 'Moving')
+            flags = [name for name, rx in fr.CHECKS if rx.search(it.get('title') or '')]
+            rows.append({'asin': a, 'title': it.get('title'), 'image': it.get('image'), 'category': it['category'],
+                         'price': it.get('price'), 'reviews': it.get('reviews'), 'rating': it.get('rating'),
+                         'pct': it.get('pct'), 'rank_now': it.get('rank_now'), 'surge': f.get('surge'), 'label': label,
+                         'persistence': f.get('persistence'), 'streak_days': f.get('streak_days'), 'flags': flags,
+                         'deal': bool(f.get('deal_driven')), 'search': fr.search_words(it.get('title') or ''),
+                         'spark': [r for _, r in surge.rank_history(scans, a)][-14:],
+                         'url': '%s/dp/%s' % (ac.MARKETS[market]['site'], a)})
+        rows.sort(key=lambda r: -(r['surge'] or 0))
+        clusters = []
+        for c in surge.clusters([{'asin': r['asin'], 'title': r['title']} for r in rows if not r['deal']]):
+            if len(c['asins']) >= 2:
+                s = surge.cluster_surge([feats[a].get('surge') for a in c['asins']])
+                clusters.append({'key': c['key'], 'asins': c['asins'], 'surge': s, 'size': len(c['asins'])})
+        clusters.sort(key=lambda c: -(c['surge'] or 0))
+        valid = [s for s in scans if s['status'] in ('ok', 'partial')]
+        return {'market': market, 'scans': len(scans), 'valid_scans': len(valid), 'items': rows[:limit],
+                'clusters': clusters[:20], 'last_scan': scans[-1]['ts'], 'first_scan': scans[0]['ts']}
+    return db.read(build)
+
+
+def search_trends(db):
+    """Google Trends labels of watched keywords, grouped into lanes."""
+    lanes = {'Rising': ('Breakout', 'Emerging', 'Growing'), 'Seasonal': ('Seasonal',), 'Watch': ('Spike (watch)', 'Mixed'),
+             'Steady': ('Evergreen',), 'Fading': ('Declining', 'Fad')}
+    out = {k: [] for k in lanes}
+
+    def build(conn):
+        for r in conn.execute('SELECT term, geo, label, score, computed_at FROM trends_feature ORDER BY score DESC'):
+            base = (r[2] or '').split(',')[0].strip()
+            for lane, labels in lanes.items():
+                if base in labels:
+                    out[lane].append({'term': r[0], 'geo': r[1], 'label': r[2], 'score': r[3], 'at': r[4]})
+        return out
+    return db.read(build)
+
+
+def watchlist(db, settings, now=None):
+    now = now or time.time()
+
+    def build(conn):
+        rows = []
+        tasks = {(t['kind'], t['market'], t['target']): t for t in storage._rows(conn.execute('SELECT * FROM task'))}
+        for w in storage.watches(conn, enabled_only=False):
+            r = dict(w)
+            if w['kind'] == 'keyword':
+                snaps = storage.serp_history(conn, w['market'], w['target'], now - 90 * 86400)
+                valid = [s for s in snaps if s['status'] in storage.VALID]
+                last = valid[-1] if valid else None
+                week = [s for s in valid if s['ts'] <= now - 6 * 86400]
+                prev = week[-1] if week else None
+                tf = storage.trends_feature(conn, w['target'], w['market'])
+                t = tasks.get(('watch_kw', w['market'], w['target']))
+                r.update({
+                    'spark': [s['bought_mid_sum'] for s in valid][-20:],
+                    'units': est(last['bought_mid_sum'], last['bought_low_sum'], last['bought_high_sum']) if last and last['bought_mid_sum'] is not None else None,
+                    'fast': last['fast'] if last else None, 'local': last['local'] if last else None,
+                    'fast_change': (last['fast'] - prev['fast']) if last and prev and last['fast'] is not None and prev['fast'] is not None else None,
+                    'overseas_share': round(last['overseas'] / last['organic'], 3) if last and last['organic'] else None,
+                    'price_med': last['price_med'] if last else None, 'review_barrier': last['reviews_med_top10'] if last else None,
+                    'checked_at': last['ts'] if last else None, 'last_status': snaps[-1]['status'] if snaps else None,
+                    'trend': {'label': tf.get('label'), 'score': tf.get('score')} if tf else None,
+                    'next_run': t['next_run_at'] if t and t['enabled'] else None, 'currency': ac.MARKETS[w['market']]['currency'],
+                    'display': (conn.execute('SELECT display FROM keyword WHERE kw_norm=?', (w['target'],)).fetchone() or [w['display']])[0],
+                })
+            rows.append(r)
+        return rows
+    return db.read(build)
+
+
+def home(db, S, now=None):
+    now = now or time.time()
+
+    def build(conn):
+        alerts = storage.list_alerts(conn, now - 14 * 86400, limit=80)
+        week = [a for a in alerts if a['ts'] >= now - 7 * 86400]
+        watches = storage.watches(conn)
+        gaps = []
+        for w in watches:
+            if w['kind'] != 'keyword' or w['market'] not in ('AU', 'AE'):
+                continue
+            s = storage.serp_history(conn, w['market'], w['target'], now - 30 * 86400, valid_only=True)
+            if s and s[-1]['organic'] and (s[-1]['fast'] or 0) <= 4:
+                gaps.append({'market': w['market'], 'kw': w['target'], 'fast': s[-1]['fast'], 'units': s[-1]['bought_mid_sum']})
+        gaps.sort(key=lambda g: -(g['units'] or 0))
+        counts = storage.counts(conn)
+        imports = counts['import_file']
+        return {'alerts': alerts, 'new_7d': len(week), 'market_alerts_7d': sum(1 for a in week if a['rule'] in (
+                    'new_mover', 'persistent_riser', 'cluster_surge', 'confirmed_trend', 'trends_breakout', 'trend_label_change')),
+                'watch_n': len(watches), 'gaps': gaps[:5], 'counts': counts,
+                'checklist': {'checked': counts['serp_snapshot'] > 0, 'imported': imports > 0, 'watching': len(watches) > 0,
+                              'auto': bool(S.settings.get('auto_refresh')) if S else False,
+                              'startup': bool(S.settings.get('start_with_windows')) if S else False}}
+    out = db.read(build)
+    if S is not None:
+        out['scheduler'] = S.scheduler.status() if getattr(S, 'scheduler', None) else None
+        out['sources'] = {k: v for k, v in S.throttle.state(now).items() if v['cooldown_until']} if getattr(S, 'throttle', None) else {}
+        out['trends'] = S.trends.breaker.state()
+    return out
+
+
+def health(db, S, now=None):
+    now = now or time.time()
+
+    def build(conn):
+        runs = storage._rows(conn.execute('SELECT * FROM run ORDER BY id DESC LIMIT 20'))
+        tasks = storage._rows(conn.execute('SELECT * FROM task WHERE enabled=1 ORDER BY kind, market, target'))
+        return {'runs': runs, 'tasks': tasks, 'counts': storage.counts(conn)}
+    out = db.read(build)
+    out.update(db_mb=db.size_mb(), db_path=str(db.path),
+               sources=S.throttle.state(now) if S else {}, scheduler=S.scheduler.status() if S else None,
+               trends=S.trends.breaker.state() if S else None, browser={'state': S.checker.state, 'error': S.checker.error} if S else None)
+    return out

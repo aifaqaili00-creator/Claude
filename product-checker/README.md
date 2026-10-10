@@ -18,6 +18,13 @@ A small Windows app that runs on your own PC, in its own window.
    Every estimate shows its range and where it came from. A blocked search is shown as a gap, never as zero.
 8. **Library:** every keyword you have checked, your recent checks, and your Helium 10 imports.
 
+9. **Automatic refresh:** watch a keyword (Watchlist, or **Watch** on a report) and the app checks it again every day, fetches Google Trends weekly, and reads the Movers & Shakers and New Releases lists (every 12 hours for the USA, daily for Australia and the UAE).
+   - **Home** shows what changed: new trends, gaps opening in Australia or the UAE, demand jumps, captchas waiting.
+   - **Trend radar** shows the products climbing Amazon's lists, grouped into similar products, with your keywords' Google Trends labels.
+   - **Health** shows every source, its daily budget and any pause.
+   - Under **Settings → Automatic refresh**, turn on **Keep refreshing after I close the window** and **Start with Windows** to keep the data fresh all the time. Important news then arrives as a Windows notification (not at night, and not while the app is in front of you).
+   - Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; that marketplace pauses and Home offers **Solve now**.
+
 **Your history is kept.** Every check, Google Trends sample and Helium 10 export is stored in `%LOCALAPPDATA%\ProductChecker\market.db`, with automatic backups in its `backup` folder. Helium 10 exports (Xray, Black Box, Magnet, Cerebro) in your Downloads folder are imported when the app starts, so months you researched before give you history from day one.
 
 The tools are in the sidebar on the left. The theme switch is at the bottom of the sidebar. Each tool has its own address (for example `#/rank`), so the window reopens where you left it.
@@ -153,6 +160,9 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 | `importer.py` | Helium 10 exports (Xray, Black Box, Magnet, Cerebro) into the database, once per file |
 | `trends.py` | Google Trends through the background browser, one request at a time, paused when Google pushes back |
 | `reports.py` | the keyword report and Library data, built from the database plus `engine/` |
+| `throttle.py`, `scheduler.py`, `collectors.py` | polite pacing, daily budgets and cooldowns per source; the background schedule; what each scheduled task does |
+| `analysis.py`, `notify.py`, `toast.ps1` | alerts after each refresh, and the Windows notification |
+| `winsys.py`, `singleton.py` | Start with Windows, battery check, one copy of the app at a time |
 | `engine/` | analysis maths without any I/O: sales-badge ranges, Google Trends features and labels, list surges, alerts |
 | `ui/js/charts.js`, `ui/js/views/` | the charts (plain SVG) and the keyword report and Library screens |
 | `amazon_check.py` | background browser (Playwright) that searches Amazon and reads delivery dates |

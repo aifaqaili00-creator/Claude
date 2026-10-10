@@ -652,6 +652,30 @@ def list_history(conn, market, since_ts=0):
         'WHERE s.market=? AND s.ts>=? ORDER BY s.ts', (market, since_ts)))
 
 
+def list_scans(conn, market, since_ts=0):
+    """List scans grouped as engine.surge expects: [{'ts', 'day', 'market', 'kind', 'slug', 'category', 'n',
+    'status', 'items': [...]}], oldest first. 'n_median' is the median n of the same list in the window."""
+    scans = {}
+    for r in list_history(conn, market, since_ts):
+        sc = scans.setdefault(r['snapshot_id'], {'id': r['snapshot_id'], 'ts': r['ts'], 'day': r['day'], 'market': market,
+                                                 'kind': r['kind'], 'slug': r['slug'], 'category': r['category'],
+                                                 'n': r['n'], 'status': r['status'], 'items': []})
+        sc['items'].append({k: r[k] for k in ('asin', 'pos', 'pct', 'rank_now', 'rank_before', 'price', 'rating',
+                                              'reviews', 'title', 'image')} | {'deal': bool(r['deal'])})
+    for r in conn.execute('SELECT id, ts, day, kind, slug, category, n, status FROM list_snapshot '
+                          'WHERE market=? AND ts>=? AND n=0', (market, since_ts)):
+        scans.setdefault(r[0], {'id': r[0], 'ts': r[1], 'day': r[2], 'market': market, 'kind': r[3], 'slug': r[4],
+                                'category': r[5], 'n': 0, 'status': r[7], 'items': []})
+    out = sorted(scans.values(), key=lambda s: s['ts'])
+    ns = {}
+    for s in out:
+        ns.setdefault((s['kind'], s['slug']), []).append(s['n'] or 0)
+    for s in out:
+        v = sorted(ns[(s['kind'], s['slug'])])
+        s['n_median'] = v[len(v) // 2]
+    return out
+
+
 # ---------- search suggestions ----------
 def save_suggest(conn, market, seed, keywords, n_calls=0, n_failed=0, status='ok', run_id=None, ts=None):
     t = _now(ts)

@@ -1,7 +1,7 @@
 'use strict';
 /* App shell: hash router (#/view/param...), theme, and the status poll every view shares. */
 const VIEWS = {};
-const DEFAULT_VIEW = 'check';
+const DEFAULT_VIEW = 'home';
 let ST = {settings: {}, markets: {}, locations: {}, profiles: []};
 let lastMsg = 0;
 let currentView = null;
@@ -97,6 +97,8 @@ async function poll() {
     const fresh = s.messages || [];
     fresh.forEach(m => { lastMsg = Math.max(lastMsg, m.t); });
     renderStatus();
+    const n = s.alerts_unseen || 0;
+    $('alertCount').hidden = !n; $('alertCount').textContent = n > 99 ? '99+' : n;
     stateListeners.forEach(fn => { try { fn(s, fresh); } catch (e) { console.error(e); } });
   } catch (e) {
     $('status').innerHTML = '<span class="pill bad"><i></i>' + esc(e.status === 0 ? 'App stopped. Start it again with start.bat' : e.message) + '</span>';
@@ -116,4 +118,8 @@ window.addEventListener('DOMContentLoaded', () => {
   route();
   poll();
   setInterval(poll, 2000);
+  /* tell the app when you are looking at it, so it does not send you Windows notifications meanwhile */
+  const beat = () => { if (document.hasFocus()) api('/api/beat', {focused: true}).catch(() => {}); };
+  window.addEventListener('focus', beat);
+  setInterval(beat, 15000);
 });

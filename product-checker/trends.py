@@ -10,6 +10,7 @@ The numbers are an index (0-100, relative to the busiest week in the window), so
 not the number of searches.
 """
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -179,6 +180,7 @@ class BrowserTrends:
         self.gap = gap
         self.base = base or BASE
         self.breaker = Breaker()
+        self.throttle = None                                    # set by the app: Google's daily budget lives there
         self.page = None
         self._lock = asyncio.Lock()
         self._last = 0.0
@@ -207,10 +209,11 @@ class BrowserTrends:
         if self.breaker.is_open():
             raise TrendsError('paused', 'Google Trends is paused until %s (%s).' % (
                 time.strftime('%H:%M', time.localtime(self.breaker.until)), self.breaker.reason))
-        async with self._lock:                                   # one request at a time, with a polite gap
-            wait = self._last + random.uniform(*self.gap) - time.time()
-            if wait > 0:
-                await asyncio.sleep(wait)
+        async with self._lock, (self.throttle.slot('google') if self.throttle else contextlib.nullcontext()):
+            if not self.throttle:                                # one request at a time, with a polite gap
+                wait = self._last + random.uniform(*self.gap) - time.time()
+                if wait > 0:
+                    await asyncio.sleep(wait)
             try:
                 page = await self._tab()
                 r = await page.evaluate(FETCH_JS, url)
