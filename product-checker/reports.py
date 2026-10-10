@@ -246,7 +246,7 @@ def keyword_report(db, market, kw, settings, now=None):
             'search_url': ac.search_url(market, kw), 'trends_url': 'https://trends.google.com/trends/explore?date=today%%205-y&geo=%s&q=%s' % (market, kw_norm.replace(' ', '%20')),
             'now': {k: now_s.get(k) for k in ('checked_at', 'total', 'sponsored', 'fast', 'local', 'local_other', 'overseas',
                                               'overseas_intl', 'origin_unknown', 'level', 'verdict', 'location', 'location_ok',
-                                              'fast_days', 'local_days')} if now_s else None,
+                                              'fast_days', 'local_days', 'per_seller')} if now_s else None,
             'monthly': rows, 'backcast': bc, 'forecast': fc,
             'demand': {'amazon': demand_pts, 'h10': [{'month': m, **v} for m, v in sorted(h10.items())],
                        'volume': vols},
@@ -279,6 +279,36 @@ def library(db):
         imports = [dict(r) for r in conn.execute('SELECT kind, market, kw_norm, file, as_of, month, n_rows, imported_at '
                                                  'FROM import_file ORDER BY imported_at DESC LIMIT 100')]
         return {'keywords': kws, 'imports': imports, 'watch': storage.watches(conn), 'counts': storage.counts(conn)}
+    return db.read(build)
+
+
+def opportunity_map(db, market, now=None, days=90):
+    """Every keyword checked in the last `days` in one marketplace: buyers a month (badge estimate) against local
+    sellers on page 1, from its latest good search. Blocked and wrong-location searches are left out."""
+    now = now or time.time()
+
+    def build(conn):
+        q = ('SELECT s.kw_norm, k.display, s.ts, s.organic, s.local, s.overseas, s.fast, s.badged, s.bought_low_sum, '
+             's.bought_mid_sum, s.bought_high_sum, s.price_med FROM serp_snapshot s JOIN keyword k ON k.kw_norm=s.kw_norm '
+             'WHERE s.market=? AND s.ts>=? AND s.status IN (%s) AND COALESCE(s.location_ok, 1)=1 '
+             'AND s.ts=(SELECT MAX(t.ts) FROM serp_snapshot t WHERE t.market=s.market AND t.kw_norm=s.kw_norm '
+             'AND t.status IN (%s) AND COALESCE(t.location_ok, 1)=1)' % ((','.join('?' * len(storage.VALID)),) * 2))
+        rows = storage._rows(conn.execute(q, (market, now - days * 86400) + storage.VALID + storage.VALID))
+        points, no_badge = [], []
+        for r in rows:
+            base = {'kw': r['kw_norm'], 'display': r['display'] or r['kw_norm'], 'ts': r['ts'], 'local': r['local'] or 0,
+                    'overseas': r['overseas'] or 0, 'sellers': r['organic'] or 0, 'fast': r['fast'] or 0,
+                    'price_med': r['price_med']}
+            if not r['bought_mid_sum']:
+                no_badge.append(base)
+                continue
+            d = r['bought_mid_sum']
+            points.append({**base, 'demand': round(d, 1), 'lo': r['bought_low_sum'], 'hi': r['bought_high_sum'],
+                           'per_local_seller': round(d / base['local'], 1) if base['local'] else None,
+                           'per_seller': round(d / base['sellers'], 1) if base['sellers'] else None})
+        points.sort(key=lambda p: -(p['demand'] / (p['local'] + 1)))
+        return {'market': market, 'points': points, 'no_badge': no_badge, 'days': days,
+                'local_line': 4.5, 'demand_line': _median([p['demand'] for p in points])}
     return db.read(build)
 
 

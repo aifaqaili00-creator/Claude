@@ -131,3 +131,22 @@ def test_money_section_and_opportunities(db):
     assert ops and ops[0]['kw'] == 'moving bags'
     us = reports.money(db, 'US', 'moving bags', SETTINGS)
     assert set(us['arbitrage']) == {'AU', 'AE'} and us['arbitrage']['AE'] is None
+
+
+def test_opportunity_map_uses_the_latest_good_search(db):
+    fill(db)
+    now = ts(2026, 10, 10)
+    m = reports.opportunity_map(db, 'AU', now=now)
+    json.dumps(m, allow_nan=False)
+    assert len(m['points']) == 1                                            # one keyword, latest good search only
+    p = m['points'][0]
+    assert p['kw'] == 'moving bags' and p['demand'] > 0 and p['ts'] == ts(2026, 10, 8)      # the captcha after it is skipped
+    assert p['per_local_seller'] == round(p['demand'] / p['local'], 1)
+    assert reports.opportunity_map(db, 'AE', now=now)['points'] == []
+    assert reports.opportunity_map(db, 'AU', now=now + 200 * DAY)['points'] == []          # too old
+
+
+def test_check_summary_carries_demand_vs_sellers():
+    s = summary()
+    ps = s['per_seller']
+    assert ps['sellers'] == s['total'] and ps['local'] == s['local'] and ps['demand']['badged'] == 3

@@ -51,6 +51,7 @@
             ${i.spark.length > 1 ? Charts.spark(i.spark.map(r => -r), {label: 'sales rank, higher is better'}) : ''}</div>
           ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
         </div>
+        ${dvsHtml(checks.map(mk => [mk, local[i.asin + ':' + mk]]))}
         <div class="acts">
           ${checks.map(mk => localPill(local[i.asin + ':' + mk], mk)).join('')}
           <button class="btn slim" data-rcheck="${esc(i.asin)}">Check ${checks.map(m => MK_SHORT[m]).join(' & ')}</button>

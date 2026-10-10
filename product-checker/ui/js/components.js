@@ -138,3 +138,17 @@ function wireSourcing(root, find) {
     } catch (err) { out.innerHTML = failPill(err.message); }
   });
 }
+
+/* ---------- opportunity map: buyers a month against local sellers, for every checked product ---------- */
+async function drawOppMap(el, mk) {
+  try {
+    const d = await api('/api/opportunity_map?market=' + encodeURIComponent(mk));
+    Charts.oppMap(el, {title: 'Opportunity map · Amazon ' + (MK[mk] || mk), height: 360,
+      sub: 'Top-left = many buyers and few local sellers. Buyers are on a log scale.',
+      points: d.points, xLine: d.local_line, yLine: d.demand_line,
+      onOpen: p => { location.hash = '#/k/' + mk + '/' + encodeURIComponent(p.kw); },
+      empty: 'No checked products with sales badges in ' + (MK[mk] || mk) + ' yet. Run Check sellers or “Check AU & UAE” on some ideas.',
+      foot: ['Buyers: “bought in past month” badges (estimate)', 'Latest good check of each product, last ' + d.days + ' days']
+        .concat(d.no_badge.length ? [d.no_badge.length + ' checked without sales badges, not shown'] : [])});
+  } catch (e) { el.innerHTML = failPill(e.message); }
+}

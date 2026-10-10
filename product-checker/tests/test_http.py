@@ -193,3 +193,9 @@ def test_state_has_exchange_rates_and_your_ranges(server):
     d = json.loads(raw)
     assert st == 200 and d['settings']['price_min'] == 10 and d['fx']['ranges']['US'][0] > 10
     call(server, 'POST', '/api/settings', {'price_currency': 'USD', 'price_min': 20})
+
+
+def test_opportunity_map_route(server):
+    st, _, raw = call(server, 'GET', '/api/opportunity_map?market=AE')
+    d = json.loads(raw)
+    assert st == 200 and d['market'] == 'AE' and isinstance(d['points'], list) and d['local_line'] == 4.5

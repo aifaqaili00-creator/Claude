@@ -48,6 +48,18 @@ The tools are in the sidebar on the left. The theme switch is at the bottom of t
 
 **To update:** download the ZIP again and unzip it over the old folder, or run `git pull`. Your settings and history are kept, because they live in `%LOCALAPPDATA%\ProductChecker`.
 
+## Demand vs sellers
+
+Every check now shows how the buyers are shared out among the sellers:
+
+- **Sales per seller:** buyers a month on page 1 divided by the number of sellers there, for example "≈ 39 sales per seller". **Per local seller** divides by the local sellers only; "none yet" means nobody delivers locally.
+- **Sales taken by overseas sellers:** the share of sales going to listings that ship from abroad. A high share means buyers are waiting for slow deliveries, which is a chance for local stock.
+- **Sales per seller chart:** one bar per listing, longest first. **Green** = local seller, **orange** = ships from overseas, **grey** = unknown. The thin line on each bar is the range behind the estimate. Hatched bars are the top "100K+" badge, where the real number is unknown. Listings without a badge are counted below the chart, not drawn as zero.
+- **Opportunity map** (Library, and Product ideas after **Check AU & UAE**): every product you checked is a dot. **Up** = more buyers a month (log scale), **right** = more local sellers. The **top-left corner**, with many buyers and few local sellers, is where the opportunities are. Click a dot to open its report.
+- **Idea and radar cards** show, after a check, a **Buyers** bar and a **Sellers** bar for each country (local green, overseas orange) and "≈ N buyers per local seller".
+
+All of these come from Amazon's "bought in past month" badges, which are ranges and are missing on many listings, so they are estimates and usually too low. Use them to compare products, not as exact sales.
+
 ## Local or not local?
 
 Each country card shows how many listings come from **local sellers** and how many are **not local**. The app reads the delivery text under each product:

@@ -515,6 +515,138 @@ const Charts = (() => {
   }
 
   /* ---------- sparkline (inline, for tables and cards) ---------- */
+  /* ---------- sales per seller: one horizontal bar per listing, coloured by where it ships from ---------- */
+  const ORIGIN = {local: {label: 'Local seller', color: 'var(--s-local)'}, overseas: {label: 'Ships from overseas', color: 'var(--s-overseas)'},
+                  unknown: {label: 'Origin unknown', color: 'var(--s-other)'}};
+  function sellerBars(el, o) {
+    const id = ++uid, f = frame(el, o), max = o.max || 12, cur = o.currency || '';
+    const all = (o.listings || []).filter(x => x.units && finite(x.units.v));
+    const noBadge = (o.listings || []).length - all.length;
+    const shown = all.slice(0, max), rest = all.length - shown.length;
+    const key = x => ORIGIN[x.origin] ? x.origin : 'unknown';
+    const used = [...new Set(shown.map(key))];
+    legendItems(f.legend, ['local', 'overseas', 'unknown'].filter(k => used.includes(k)).map(k => ({label: ORIGIN[k].label, color: ORIGIN[k].color})));
+    const fmtU = u => '≈ ' + compact(u.v) + ' (' + compact(u.lo) + '–' + compact(u.hi) + (u.basis === 'assumed' ? '+' : '') + ')';
+    fillTable(f.table, ['Listing', 'Sales / month', 'Seller', 'Price', 'Delivery'],
+      (o.listings || []).map(x => [x.title || x.asin, x.units ? fmtU(x.units) : 'no badge', ORIGIN[key(x)].label,
+                                   x.price != null ? cur + ' ' + num(x.price, 2) : null, x.days != null ? x.days + ' days' : null]));
+    if (!shown.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No listing shows a “bought in past month” badge, so sales per seller are unknown.'); return; }
+    const tip = tooltip(f.body);
+    tip.hidden = true;
+    const note = htmlEl('div', 'small muted chart-note', el);
+    note.textContent = [rest ? `+${rest} more listing${rest > 1 ? 's' : ''} selling less` : '',
+                        noBadge ? `${noBadge} listing${noBadge > 1 ? 's' : ''} show no badge (sales unknown, not zero)` : ''].filter(Boolean).join(' · ');
+    el.insertBefore(note, f.foot);
+    observe(f.body, W => {
+      f.body.querySelectorAll('svg').forEach(s => s.remove());
+      const row = 20, gap = 2, m = {l: 8, r: 64, t: 4, b: 22}, w = W - m.l - m.r;
+      const H = m.t + shown.length * (row + gap) + m.b;
+      const hiV = Math.max(...shown.map(x => x.units.hi || x.units.v), 1);
+      const xt = ticks(0, hiV, Math.max(2, Math.floor(w / 90))), x1 = xt[xt.length - 1];
+      const X = v => m.l + v / x1 * w;
+      const svg = svgEl('svg', {width: W, height: H, class: 'chart-svg', role: 'img', 'aria-label': o.title || 'Sales per seller'});
+      f.body.insertBefore(svg, f.body.firstChild);
+      const hatch = patterns(svg, id);
+      const grid = svgEl('g', {class: 'grid'}, svg);
+      for (const v of xt) {
+        svgEl('line', {x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, class: v === 0 ? 'base' : ''}, grid);
+        svgEl('text', {x: X(v), y: H - 6, 'text-anchor': 'middle', class: 'tick'}, grid).textContent = compact(v);
+      }
+      shown.forEach((x, i) => {
+        const y = m.t + i * (row + gap), bh = row - 6, by = y + 3, c = ORIGIN[key(x)].color, u = x.units;
+        const len = Math.max(2, X(u.v) - m.l), r = Math.min(4, bh / 2, len);
+        const d = `M${m.l} ${by} H${m.l + len - r} Q${m.l + len} ${by} ${m.l + len} ${by + r} V${by + bh - r} Q${m.l + len} ${by + bh} ${m.l + len - r} ${by + bh} H${m.l} Z`;
+        const g = svgEl('g', {class: 'colgrp', tabindex: 0}, svg);
+        svgEl('rect', {x: 0, y, width: W, height: row, fill: 'transparent'}, g);
+        if (u.basis === 'assumed') {                 // open top bucket: an assumption, hatched
+          svgEl('path', {d, class: 'col', style: `fill: ${c}; opacity: .3`}, g);
+          svgEl('path', {d, class: 'col', style: `fill: ${hatch(c)}`}, g);
+        } else svgEl('path', {d, class: 'col', style: `fill: ${c}`}, g);
+        if (finite(u.lo) && finite(u.hi) && u.hi > u.lo) {
+          const cy = by + bh / 2;
+          svgEl('line', {x1: X(u.lo), x2: X(u.hi), y1: cy, y2: cy, class: 'whisker'}, g);
+          svgEl('line', {x1: X(u.hi), x2: X(u.hi), y1: cy - 3, y2: cy + 3, class: 'whisker'}, g);
+        }
+        svgEl('text', {x: Math.max(X(u.hi || u.v), m.l + len) + 6, y: by + bh - 2, class: 'vlabel'}, g).textContent = compact(u.v);
+        const show = () => showTip(tip, f.body, X(u.v), x.title || x.asin, [
+          {color: c, label: 'sales / month (badge estimate)', value: fmtU(u)},
+          {color: c, label: ORIGIN[key(x)].label + (x.days != null ? ' · arrives in ' + x.days + ' days' : ''), value: x.price != null ? cur + ' ' + num(x.price, 2) : ''}]);
+        g.addEventListener('pointerenter', show); g.addEventListener('focus', show);
+        g.addEventListener('pointerleave', () => { tip.hidden = true; }); g.addEventListener('blur', () => { tip.hidden = true; });
+      });
+    });
+  }
+
+  /* ---------- opportunity map: buyers a month (log) against local sellers, one dot per keyword ---------- */
+  function oppMap(el, o) {
+    const f = frame(el, o), H = o.height || 340, pts = (o.points || []).filter(p => finite(p.demand) && p.demand > 0);
+    const xLine = o.xLine ?? 4.5, yLine = o.yLine;
+    fillTable(f.table, ['Keyword', 'Buyers / month', 'Local sellers', 'Overseas sellers', 'Buyers per local seller', 'Checked'],
+      pts.map(p => [p.display, '≈ ' + compact(p.demand), p.local, p.overseas, p.per_local_seller != null ? '≈ ' + compact(p.per_local_seller) : 'no local seller yet',
+                    p.ts ? new Date(p.ts * 1000).toLocaleDateString() : null]));
+    if (!pts.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No checked products with sales badges yet.'); return; }
+    const tip = tooltip(f.body);
+    tip.hidden = true;
+    observe(f.body, W => {
+      f.body.querySelectorAll('svg').forEach(s => s.remove());
+      const m = {l: 48, r: 16, t: 14, b: 34}, w = W - m.l - m.r, h = H - m.t - m.b;
+      const xMax = Math.max(10, ...pts.map(p => p.local)) + 2;
+      const dMin = Math.min(...pts.map(p => p.demand)), dMax = Math.max(...pts.map(p => p.demand));   // padded, so no dot sits on an edge
+      const lo = Math.pow(10, Math.floor(Math.log10(dMin / 2))), hi = Math.pow(10, Math.ceil(Math.log10(dMax * 2)));
+      const L = v => Math.log10(v), X = v => m.l + v / xMax * w, Y = v => m.t + h - (L(v) - L(lo)) / (L(hi) - L(lo) || 1) * h;
+      const svg = svgEl('svg', {width: W, height: H, class: 'chart-svg', role: 'img', 'aria-label': o.title || 'Opportunity map'});
+      f.body.insertBefore(svg, f.body.firstChild);
+      const grid = svgEl('g', {class: 'grid'}, svg);
+      for (let v = lo; v <= hi * 1.0001; v *= 10) {
+        svgEl('line', {x1: m.l, x2: m.l + w, y1: Y(v), y2: Y(v), class: v === lo ? 'base' : ''}, grid);
+        svgEl('text', {x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', class: 'tick'}, grid).textContent = compact(v);
+      }
+      for (const v of ticks(0, xMax, Math.max(2, Math.floor(w / 80)))) {
+        if (v > xMax) continue;
+        svgEl('text', {x: X(v), y: m.t + h + 16, 'text-anchor': 'middle', class: 'tick'}, grid).textContent = num(v);
+      }
+      svgEl('text', {x: m.l + w, y: H - 4, 'text-anchor': 'end', class: 'tick'}, grid).textContent = 'local sellers on page 1 →';
+      svgEl('text', {x: m.l, y: m.t - 3, class: 'tick'}, grid).textContent = '↑ buyers a month';
+      const q = svgEl('g', {class: 'quad'}, svg);
+      const xl = X(Math.min(xLine, xMax)), yl = pts.length >= 3 && finite(yLine) && yLine > lo && yLine < hi ? Y(yLine) : null;
+      svgEl('line', {x1: xl, x2: xl, y1: m.t, y2: m.t + h, class: 'quad-line'}, q);
+      if (yl != null) svgEl('line', {x1: m.l, x2: m.l + w, y1: yl, y2: yl, class: 'quad-line'}, q);
+      const cap = (x, y, anchor, t, cls) => { const e = svgEl('text', {x, y, 'text-anchor': anchor, class: 'quad-cap ' + (cls || '')}, q); e.textContent = t; };
+      cap(m.l + 6, m.t + 14, 'start', 'Opportunity: many buyers, few local sellers', 'good');
+      cap(m.l + w - 4, m.t + 14, 'end', 'Crowded');
+      if (yl != null) { cap(m.l + 6, m.t + h - 6, 'start', 'Small market'); cap(m.l + w - 4, m.t + h - 6, 'end', 'Avoid: few buyers, many sellers'); }
+      const best = new Set(pts.filter(p => p.local < xLine && (yl == null || p.demand >= yLine)).slice(0, 6).map(p => p.kw));
+      if (pts.length <= 3) pts.forEach(p => best.add(p.kw));              // a few dots: name them all
+      const dots = svgEl('g', {}, svg), same = new Map(), placed = [];
+      for (const p of pts) {
+        const k = p.local + ':' + Math.round(L(p.demand) * 50), n = same.get(k) || 0;   // nudge dots that land on one spot
+        same.set(k, n + 1);
+        const cx = X(p.local) + n * 7, cy = Y(p.demand);
+        const g = svgEl('g', {class: 'dotgrp', tabindex: 0, role: 'link'}, dots);
+        svgEl('circle', {cx, cy, r: 12, fill: 'transparent'}, g);
+        svgEl('circle', {cx, cy, r: 5, class: 'dot'}, g);
+        if (best.has(p.kw)) {                        // left of the dot near the right edge; stacked, never overlapping
+          const t = p.display.length > 28 ? p.display.slice(0, 27) + '…' : p.display, right = cx > m.l + w * 0.7;
+          const lx = right ? cx - 9 : cx + 9, tw = t.length * 6.5;
+          let ly = cy + 4;
+          while (placed.some(b => Math.abs(b.y - ly) < 13 && Math.abs((right ? lx - tw / 2 : lx + tw / 2) - b.c) < (tw + b.w) / 2)) ly += 13;
+          placed.push({y: ly, c: right ? lx - tw / 2 : lx + tw / 2, w: tw});
+          svgEl('text', {x: lx, y: ly, 'text-anchor': right ? 'end' : 'start', class: 'vlabel'}, g).textContent = t;
+        }
+        const show = () => showTip(tip, f.body, cx, p.display, [
+          {color: 'var(--s-demand)', label: 'buyers a month (badge estimate)', value: '≈ ' + compact(p.demand)},
+          {color: 'var(--s-local)', label: 'local sellers', value: String(p.local)},
+          {color: 'var(--s-overseas)', label: 'ship from overseas', value: String(p.overseas)},
+          {color: 'var(--s-demand)', label: 'buyers per local seller', value: p.per_local_seller != null ? '≈ ' + compact(p.per_local_seller) : 'no local seller yet'}]);
+        g.addEventListener('pointerenter', show); g.addEventListener('focus', show);
+        g.addEventListener('pointerleave', () => { tip.hidden = true; }); g.addEventListener('blur', () => { tip.hidden = true; });
+        const open = () => { if (o.onOpen) o.onOpen(p); };
+        g.addEventListener('click', open);
+        g.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+      }
+    });
+  }
+
   function spark(values, o = {}) {
     const v = (values || []).map(x => finite(x) ? x : null);
     const pts = v.map((y, i) => [i, y]).filter(p => p[1] != null);
@@ -530,5 +662,5 @@ const Charts = (() => {
       `<circle cx="${X(li)}" cy="${Y(ly)}" r="2.6" style="fill:${o.color || 'var(--s-demand)'}"/></svg>`;
   }
 
-  return {timeseries, columns, shares, seasonStrip, histogram, spark, monthT, monthKey, monthLabel, MONTHS};
+  return {timeseries, columns, shares, seasonStrip, histogram, spark, sellerBars, oppMap, monthT, monthKey, monthLabel, MONTHS};
 })();

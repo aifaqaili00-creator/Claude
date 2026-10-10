@@ -6,9 +6,11 @@
   view('library', {title: 'Library', sub: SUB, onShow: p => show(p[0] || tab)});
   view('history', {title: 'Library', sub: SUB, section: 'library', onShow: () => show('checks')});
   seg($('libTabs'), v => { history.replaceState(null, '', '#/library/' + v); show(v); });
+  seg($('mapMk'), v => drawOppMap($('mapChart'), v));
   $('libFilter').addEventListener('input', () => renderKeywords());
 
   async function show(t) {
+    drawOppMap($('mapChart'), segVal($('mapMk')));
     tab = ['keywords', 'checks', 'imports'].includes(t) ? t : 'keywords';
     setSeg($('libTabs'), tab);
     $('libKeywords').hidden = tab !== 'keywords';

@@ -303,3 +303,24 @@ h2.section { margin: 10px 0 -4px; font-size: 15px; color: var(--ink-2); }
 .icard input.pbnum[data-cogs] { width: 104px; }
 .seg.slim button { padding: 4px 10px; font-size: 13px; }
 .icard .profit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* demand vs sellers */
+.chart-svg .dot { fill: var(--s-demand); stroke: var(--surface); stroke-width: 2; }
+.chart-svg .dotgrp { cursor: pointer; outline: none; }
+.chart-svg .dotgrp:hover .dot, .chart-svg .dotgrp:focus .dot { stroke: var(--ink); }
+.chart-svg .quad-line { stroke: var(--axis); stroke-width: 1; stroke-dasharray: 4 4; }
+.chart-svg .quad-cap { fill: var(--muted); font: 11.5px var(--sans); }
+.chart-svg .quad-cap.good { fill: var(--good-text); font-weight: 600; }
+.chart-note { margin: 4px 0 2px; }
+.perseller { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.perseller > div { background: var(--sunk); border-radius: 10px; padding: 8px 10px; }
+.perseller .v { font-size: 20px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.perseller .of { font-size: 12px; color: var(--ink-2); }
+.dvs { display: grid; grid-template-columns: auto auto 1fr auto; gap: 3px 6px; align-items: center; font-size: 12px; width: 100%; }
+.dvs .mk { font-weight: 650; color: var(--ink); grid-row: span 2; align-self: start; }
+.dvs .lbl { color: var(--ink-2); }
+.dvs .track { height: 8px; background: var(--sunk); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.dvs .track span { display: block; height: 100%; border-radius: 4px; }
+.dvs .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.dvs .per { grid-column: 2 / -1; color: var(--ink-2); margin-bottom: 4px; }
+.icard .dvs { grid-column: 1 / -1; }

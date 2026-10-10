@@ -326,6 +326,10 @@ class State:
                     'fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median', 'bought_top', 'bought_total',
                     'bought_listings', 'search_url', 'keyword', 'location_ok', 'local', 'overseas', 'overseas_intl',
                     'market', 'fast_price_min', 'fast_price_max', 'status')}
+                ps = hit.get('per_seller') or {}
+                out[it['key']]['demand'] = ps.get('demand')                 # for the demand vs sellers bars on cards
+                out[it['key']]['per_local_seller'] = ps.get('per_local_seller')
+                out[it['key']]['overseas_share_of_sales'] = ps.get('overseas_share_of_sales')
                 progress('"%s": %d fast, %d local, %d overseas of %d' % (kw, hit['fast'], hit['local'], hit['overseas'], hit['total']))
         await asyncio.gather(*(one(i) for i in items))
         n_fail = sum(1 for v in out.values() if 'error' in v)
@@ -853,6 +857,12 @@ def radar_filters(market):
     """Your price range (in the marketplace's money) and the phone / laptop filter, from settings."""
     return {'price_range': fxrates.ranges(S.settings)[market] if S.settings.get('price_filter', True) else None,
             'exclude_tech': bool(S.settings.get('exclude_tech', True))}
+
+
+@route('GET', '/api/opportunity_map')
+def api_opportunity_map(h, q):
+    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    return h._send(200, reports.opportunity_map(S.db, market))
 
 
 @route('GET', '/api/watchlist')

@@ -58,6 +58,11 @@ function renderCheck(res) {
   const times = res.results.filter(r => r.checked_at).map(r => r.checked_at);
   $('checkWhen').textContent = times.length ? 'Checked ' + ago(Math.min(...times)) + (res.results.some(r => r.cached) ? ' (saved result)' : '') : '';
   $('cards').innerHTML = res.results.map(card).join('');
+  res.results.forEach(r => {                       // sales per seller, drawn once the cards are in the page
+    const box = $('cards').querySelector(`[data-sb="${CSS.escape(r.market || '')}"]`);
+    if (box && r.per_seller) Charts.sellerBars(box, {title: 'Sales per seller', sub: 'Estimated sales a month of each listing on page 1',
+      listings: r.per_seller.listings, currency: r.currency, foot: ['Source: “bought in past month” badges (estimate)']});
+  });
   $('lmSeg').innerHTML = '<button type="button" data-v="all" aria-pressed="true">All</button>' +
     res.results.filter(r => !r.error).map(r => `<button type="button" data-v="${r.market}" aria-pressed="false">${MK_SHORT[r.market]}</button>`).join('');
   renderList();
@@ -69,6 +74,16 @@ function originParts(r) {
     {label: 'Local', n: local, color: 'var(--s-local)', note: localFast ? '(' + localFast + ' within ' + r.fast_days + ' days)' : ''},
     {label: 'Overseas', n: abroad, color: 'var(--s-overseas)', note: r.overseas_intl ? '(' + r.overseas_intl + ' say “international”)' : ''},
     {label: 'No date shown', n: r.origin_unknown ?? r.unknown ?? 0, color: 'var(--s-other)'}];
+}
+/* Demand vs sellers in three numbers: sales a month per seller, per local seller, and who gets the sales. */
+function perSellerTiles(p) {
+  if (!p || p.demand.v == null) return '';
+  const rng = x => x ? `<span class="of">${compact(x.lo)}–${compact(x.hi)}</span>` : '';
+  return `<div class="perseller" title="Estimated from “bought in past month” badges on page 1. Listings without a badge count as sellers, so these are on the low side.">
+    <div><div class="of">Buyers a month ÷ ${p.sellers} sellers</div><div class="v">≈ ${compact(p.per_seller.v)}</div><div class="of">sales per seller ${rng(p.per_seller)}</div></div>
+    <div><div class="of">Per local seller (${p.local})</div><div class="v">${p.per_local_seller ? '≈ ' + compact(p.per_local_seller.v) : 'none yet'}</div><div class="of">${p.per_local_seller ? 'sales a month each' : 'no local competition'}</div></div>
+    ${p.overseas_share_of_sales != null ? `<div><div class="of">Sales taken by overseas sellers</div><div class="v">${Math.round(p.overseas_share_of_sales * 100)}%</div><div class="of">${p.top3_share != null ? 'top 3 take ' + Math.round(p.top3_share * 100) + '%' : ''}</div></div>` : ''}
+  </div>`;
 }
 function card(r) {
   if (r.error) return `<div class="panel mcard"><div class="mtop"><div><div class="eyebrow">Amazon ${esc(MK_SHORT[r.market] || r.market)}</div><h2>${esc(r.name)}</h2></div></div>
@@ -88,6 +103,8 @@ function card(r) {
       : `<div class="verdict ${r.level}">${icon(LEVEL_ICON[r.level] || 'dot')}<span>${esc(r.verdict)}</span></div>`}
     ${r.location_ok === false ? `<div class="small">${icon('warn')} Amazon showed “${esc(r.location || '?')}” instead of ${esc(r.location_wanted)}, so delivery times may be off. This search is not used in charts.</div>` : ''}
     ${r.layout_warning ? `<div class="small">${icon('warn')} The page looked different from usual; some numbers may be missing.</div>` : ''}
+    ${perSellerTiles(r.per_seller)}
+    ${r.per_seller && r.per_seller.demand.v != null ? `<div data-sb="${esc(r.market)}"></div>` : ''}
     <dl class="facts">
       <div><dt>Listings</dt><dd class="tnum">${r.total} organic + ${r.sponsored} ads${r.results_total ? ` · Amazon says ${r.results_over ? 'over ' : ''}${num(r.results_total)} results` : ''}</dd></div>
       <div><dt>Fast sellers</dt><dd>${r.fast ? r.fast + ' · median ' + num(r.fast_reviews_median) + ' reviews' + (r.fast_price_min != null ? ' · ' + money(r.fast_price_min, cur) + '–' + num(r.fast_price_max, 2) : '') : '<span class="muted">none</span>'}</dd></div>
@@ -214,6 +231,25 @@ function localPill(L, mk) {
   const gap = L.total && L.local <= 4;
   return `<span class="pill ${gap ? 'good' : LEVEL[L.level] || 'weak'}" title="${esc(L.verdict)} Searched: ${esc(L.keyword)}">${gap ? icon('ok') : '<i></i>'}${name}: ${L.local} local · ${L.overseas} abroad${gap ? ' · gap' : ''}</span>`;
 }
+/* Demand vs sellers for one card: per checked market, a buyers bar and a sellers bar (each with its number),
+   scaled to the largest value on the card, and buyers per local seller. pairs = [[market, result], ...] */
+function dvsHtml(pairs) {
+  const done = pairs.filter(([, L]) => L && L !== 'busy' && !L.error && L.total != null);
+  if (!done.length) return '';
+  const dem = L => L.demand && L.demand.v != null ? L.demand.v : null;
+  const maxD = Math.max(1, ...done.map(([, L]) => dem(L) || 0)), maxS = Math.max(1, ...done.map(([, L]) => (L.local || 0) + (L.overseas || 0)));
+  const pct = (v, m) => Math.max(v ? 3 : 0, Math.round(v / m * 100));
+  return `<div class="dvs" title="Buyers = “bought in past month” badges on page 1 (an estimate, usually an undercount). Sellers = listings on page 1.">` +
+    done.map(([mk, L]) => {
+      const d = dem(L), loc = L.local || 0, ovs = L.overseas || 0, pl = L.per_local_seller;
+      return `<span class="mk">${esc(MK_SHORT[mk] || mk)}</span>
+        <span class="lbl">Buyers</span><span class="track">${d != null ? `<span style="width:${pct(d, maxD)}%;background:var(--s-demand)"></span>` : ''}</span>
+        <span class="val">${d != null ? '≈ ' + compact(d) + '/mo' : '<span class="muted">no badges</span>'}</span>
+        <span class="lbl">Sellers</span><span class="track" style="display:flex;gap:2px"><span style="width:${pct(loc, maxS)}%;background:var(--s-local)"></span><span style="width:${pct(ovs, maxS)}%;background:var(--s-overseas)"></span></span>
+        <span class="val">${loc} local · ${ovs} abroad</span>
+        <span class="per">${d == null ? '' : pl ? `≈ ${compact(pl.v)} buyers per local seller` : '<b>No local seller yet</b> for ≈ ' + compact(d) + ' buyers a month'}${L.overseas_share_of_sales != null ? ` · overseas sellers take ${Math.round(L.overseas_share_of_sales * 100)}% of sales` : ''}</span>`;
+    }).join('') + '</div>';
+}
 $('btnIdeas').addEventListener('click', () => runIdeas(false));
 $('iCats').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); });
 $('iHide').addEventListener('change', () => { if (iData) runIdeas(false); });
@@ -267,6 +303,7 @@ function renderIdeas() {
         <div class="small">${i.price != null ? money(i.price, cur) : 'no price'} · ${i.rating ? '★ ' + i.rating : 'no rating'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.rank_before ? ` · rank ${num(i.rank_before)} → ${num(i.rank_now)}` : ''}</div>
         ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
       </div>
+      ${dvsHtml(checks.map(mk => [mk, iLocal[i.asin + ':' + mk]]))}
       <div class="acts">
         <input type="text" class="kwin" value="${esc(ideaSearch(i))}" data-kw="${esc(i.asin)}" title="Words used to search the other Amazon sites" aria-label="Search words">
         ${checks.map(mk => localPill(iLocal[i.asin + ':' + mk], mk)).join('')}
@@ -291,6 +328,7 @@ $('iGrid').addEventListener('click', e => {
   if (t) openUrl(trends(ideaKw(t.dataset.trend), iData.market));
   if (x) { $('xkw').value = ideaKw(x.dataset.ixray); setSeg($('xMk'), iData.market); go('xray'); }
 });
+seg($('iMapMk'), v => drawOppMap($('iMapChart'), v));
 $('btnIdeasCheck').addEventListener('click', () => ideaCheck(sortedIdeas().slice(0, 12).map(i => i.asin)));
 async function ideaCheck(asins) {
   const checks = ideaChecks(iData.market);
@@ -302,7 +340,10 @@ async function ideaCheck(asins) {
   try {
     const {job} = await api('/api/check_batch', {items});
     Object.assign(iLocal, await waitJob(job, line => { $('iCheckProg').innerHTML = busy(line); }));
-    $('iCheckProg').innerHTML = '<span class="small">A green <b>gap</b> means 4 or fewer local sellers there.</span>';
+    $('iCheckProg').innerHTML = '<span class="small">A green <b>gap</b> means 4 or fewer local sellers there. The map under the ideas compares every product you checked.</span>';
+    $('iMap').hidden = false;
+    setSeg($('iMapMk'), checks[0]);
+    drawOppMap($('iMapChart'), checks[0]);
   } catch (e) { $('iCheckProg').innerHTML = failPill(e.message); }
   items.forEach(i => { if (iLocal[i.key] === 'busy') iLocal[i.key] = {error: 'no result'}; });
   renderIdeas();

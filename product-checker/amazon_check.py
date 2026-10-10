@@ -636,7 +636,9 @@ def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_D
         text = '%d listings deliver fast. Some local competition.%s' % (len(fast), abroad_txt)
     else:
         text = '%d listings deliver fast. Crowded with local stock.%s' % (len(fast), abroad_txt)
+    from engine import sellers
     return {
+        'per_seller': sellers.per_seller(rows, code),
         'market': code, 'name': m['name'], 'currency': m['currency'], 'keyword': keyword,
         'location': location, 'location_ok': any(k in (location or '').lower() for k in m['expect']),
         'location_wanted': m['location'], 'fast_days': fast_days, 'local_days': local_days,

@@ -81,6 +81,7 @@
       </div>
       <div class="panel" id="kMix"></div>
       <h2 class="section">Competition now</h2>
+      <div class="panel stackv" id="kPer"></div>
       <div class="grid2">
         <div class="panel" id="kPrice"></div>
         <div class="panel" id="kRev"></div>
@@ -257,7 +258,13 @@
   }
 
   function drawCompetition(d) {
-    const c = d.competition;
+    const c = d.competition, ps = d.now && d.now.per_seller;
+    $('kPer').hidden = !ps;
+    if (ps) {
+      $('kPer').innerHTML = `<h3>Demand vs sellers</h3>${perSellerTiles(ps) || '<div class="small muted">No listing shows a “bought in past month” badge, so sales per seller are unknown.</div>'}<div id="kPerBars"></div>`;
+      if (ps.demand.v != null) Charts.sellerBars($('kPerBars'), {title: 'Sales per seller', sub: 'Estimated sales a month of each listing on page 1',
+        listings: ps.listings, currency: d.currency, foot: ['Source: “bought in past month” badges (estimate)', 'Latest check']});
+    }
     Charts.histogram($('kPrice'), {title: 'Prices on page 1', sub: d.currency, values: c ? c.prices : [], format: v => num(v, 0), xTitle: 'Price',
       empty: 'No listings yet.', foot: ['Latest check']});
     Charts.histogram($('kRev'), {title: 'Reviews on page 1', sub: 'Fewer reviews = easier to compete', values: c ? c.reviews : [], log: true,

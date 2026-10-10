@@ -222,6 +222,11 @@
           </div>
           <div class="progress" id="iCheckProg"></div>
           <div class="igrid" id="iGrid"></div>
+          <div class="panel stackv" id="iMap" hidden>
+            <div class="row" style="justify-content:space-between"><div class="seg" id="iMapMk"><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button><button type="button" data-v="US" aria-pressed="false">USA</button></div>
+              <span class="small muted">The products you checked: up = more buyers, right = more local sellers.</span></div>
+            <div id="iMapChart"></div>
+          </div>
         </div>
 
         <div class="panel empty" id="iEmpty">
@@ -372,6 +377,11 @@
 
       <!-- Library -->
       <section class="view" id="v-library">
+        <div class="panel stackv" id="libMap">
+          <div class="row" style="justify-content:space-between"><div class="seg" id="mapMk"><button type="button" data-v="US" aria-pressed="false">USA</button><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button></div>
+            <span class="small muted">Every product you checked in the last 90 days. Click a dot to open its report.</span></div>
+          <div id="mapChart"></div>
+        </div>
         <div class="head">
           <div class="seg" id="libTabs">
             <button type="button" data-v="keywords" aria-pressed="true">Keywords</button>
