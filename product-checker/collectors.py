@@ -10,6 +10,7 @@ import time
 import amazon_check as ac
 import config
 import ideas
+import product
 import scheduler as sc
 import storage
 
@@ -36,6 +37,9 @@ def task_specs(settings, watches):
         elif w['kind'] == 'seed':
             specs.append({'kind': 'suggest', 'market': w['market'], 'target': w['target'],
                           'every_s': sc.EVERY['suggest'], 'priority': 4})
+    if any(w.get('enabled', 1) and w['kind'] in ('keyword', 'asin') for w in watches):
+        for m in sorted({w['market'] for w in watches if w['kind'] in ('keyword', 'asin')}):
+            specs.append({'kind': 'products', 'market': m, 'target': 'tracked', 'every_s': sc.EVERY['products'], 'priority': 5})
     specs.append({'kind': 'import_scan', 'market': '', 'target': 'downloads', 'every_s': sc.EVERY['import_scan'], 'priority': 6})
     specs.append({'kind': 'maintenance', 'market': '', 'target': 'db', 'every_s': sc.EVERY['maintenance'], 'priority': 9})
     return specs
@@ -47,7 +51,7 @@ class Collectors:
         self.cats = {}                                  # market -> categories read from Amazon
 
     def handlers(self):
-        return {'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
+        return {'products': self.products, 'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
                 'import_scan': self.import_scan, 'maintenance': self.maintenance}
 
     async def _categories(self, market):
@@ -80,6 +84,23 @@ class Collectors:
                 ok += status == 'ok'
                 partial += status != 'ok'
         return {'status': 'ok' if ok else 'partial', 'note': '%d lists read, %d short' % (ok + partial, partial)}
+
+    async def products(self, task, max_age_s=20 * 3600):
+        """Product pages of tracked listings (BSR, badge, offers), oldest reading first, until today's budget ends."""
+        market = task['market']
+        asins = self.S.db.read(storage.tracked_asins, market)
+        last = {r['asin']: r['ts'] for r in self.S.db.all(
+            'SELECT asin, MAX(ts) AS ts FROM product_snapshot WHERE market=? GROUP BY asin', (market,))}
+        now = time.time()
+        todo = sorted((a for a in asins if now - last.get(a, 0) > max_age_s), key=lambda a: last.get(a, 0))
+        n_ok = 0
+        for asin in todo:
+            p = await product.read_product(self.S.checker, asin, market)        # QuotaExceeded ends the run
+            await self.S.db.awrite(storage.save_product, market, asin, p)
+            n_ok += p['status'] == 'ok'
+        if todo:
+            await self.S.refit_curve(market)
+        return {'status': 'ok' if n_ok or not todo else 'partial', 'note': '%d of %d product pages read' % (n_ok, len(todo))}
 
     async def watch_kw(self, task):
         """Search a watched keyword again and keep the snapshot."""
@@ -117,6 +138,8 @@ class Collectors:
 
     async def maintenance(self, task):
         out = await self.S.db.awrite(storage.retention)
+        for m in config.MARKETS:
+            await self.S.refit_curve(m)
         await asyncio.to_thread(self.S.db.routine_backups)
         ok = await asyncio.to_thread(self.S.db.quick_check)
         if not ok:

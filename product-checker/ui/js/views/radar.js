@@ -49,6 +49,7 @@
           ${checks.map(mk => localPill(local[i.asin + ':' + mk], mk)).join('')}
           <button class="btn slim" data-rcheck="${esc(i.asin)}">Check ${checks.map(m => MK_SHORT[m]).join(' & ')}</button>
           <button class="btn slim" data-rrep="${esc(i.search)}">${icon('chart')}Report</button>
+          <a class="btn slim" href="#/p/${esc(data.market)}/${esc(i.asin)}">Product</a>
           <button class="btn slim" data-rwatch="${esc(i.search)}">${icon('eye')}Watch</button>
         </div></div>`).join('')}</div>` : d.scans ? '<div class="panel empty">Nothing left after hiding risky and deal-driven products.</div>' : ''}
       <h2 class="section">Search interest of your watched keywords (Google Trends)</h2>

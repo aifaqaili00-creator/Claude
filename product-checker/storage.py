@@ -676,6 +676,97 @@ def list_scans(conn, market, since_ts=0):
     return out
 
 
+# ---------- product pages ----------
+def save_product(conn, market, asin, p, ts=None, run_id=None):
+    """One product page reading; also refreshes the listing's fixed facts and adds a calibration point."""
+    import product as prod
+    t = _now(ts)
+    status = p.get('status') or prod.page_status(p)
+    cur = conn.execute(
+        'INSERT INTO product_snapshot(run_id, market, asin, ts, day, status, root_rank, root_node, sub_ranks_json, badge_low, '
+        'price, offers, rating, reviews, buybox_seller, ships_from, sold_by_amazon, n_variations, delivery_days, origin) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (run_id, market, asin, t, config.market_day(t, market), status, p.get('root_rank'), p.get('root_node'),
+         json.dumps(p.get('sub_ranks') or []), p.get('badge_low'), _num(p.get('price')), p.get('offers'),
+         _num(p.get('rating')), p.get('reviews'), p.get('buybox_seller'), p.get('ships_from'), p.get('sold_by_amazon'),
+         p.get('n_variations'), p.get('delivery_days'), p.get('origin')))
+    if status in VALID:
+        upsert_asins(conn, market, [{'asin': asin, 'title': p.get('title'), 'image': p.get('image')}], t)
+        dims = p.get('pkg_cm') or [None, None, None]
+        conn.execute('UPDATE asin SET root_node=COALESCE(?, root_node), root_name=COALESCE(?, root_name), '
+                     'dfa_day=COALESCE(?, dfa_day), n_variations=?, pkg_l_cm=COALESCE(?, pkg_l_cm), pkg_w_cm=COALESCE(?, pkg_w_cm), '
+                     'pkg_h_cm=COALESCE(?, pkg_h_cm), pkg_kg=COALESCE(?, pkg_kg), static_fetched_at=? WHERE market=? AND asin=?',
+                     (p.get('root_node'), p.get('root_name'), p.get('dfa_day'), p.get('n_variations'), dims[0], dims[1],
+                      dims[2], p.get('pkg_kg'), t, market, asin))
+        cp = prod.calib_point(market, asin, p, t)
+        if cp:
+            conn.execute('INSERT INTO calib_point(market, node, ts, ln_bsr, low, high, kind, asin, ref_id) VALUES (?,?,?,?,?,?,?,?,?)',
+                         (cp['market'], cp['node'], cp['ts'], cp['ln_bsr'], cp['low'], cp['high'], cp['kind'], asin, cur.lastrowid))
+    return cur.lastrowid
+
+
+def product_history(conn, market, asin, since_ts=0):
+    rows = _rows(conn.execute('SELECT * FROM product_snapshot WHERE market=? AND asin=? AND ts>=? ORDER BY ts',
+                              (market, asin, since_ts)))
+    for r in rows:
+        r['sub_ranks'] = json.loads(r.pop('sub_ranks_json') or '[]')
+    return rows
+
+
+def asin_info(conn, market, asin):
+    r = conn.execute('SELECT * FROM asin WHERE market=? AND asin=?', (market, asin)).fetchone()
+    return dict(r) if r else None
+
+
+def calib_obs(conn, market, now=None):
+    """Calibration points as engine.curve observations."""
+    now = _now(now)
+    out = []
+    for r in conn.execute('SELECT * FROM calib_point WHERE market=?', (market,)):
+        kind = r['kind']
+        o = {'market': market, 'node': r['node'] or None, 'ln_bsr': r['ln_bsr'], 'asin': r['asin'],
+             'age_days': max(0.0, (now - (r['ts'] or now)) / 86400)}
+        if kind in ('h10_parent', 'h10_child'):
+            o.update(kind='h10', value=r['low'])
+        elif kind == 'own':
+            o.update(kind='own', value=r['low'])
+        else:
+            o.update(kind='badge', low=r['low'], high=r['high'])
+        out.append(o)
+    return out
+
+
+def save_curve(conn, market, data, ts=None):
+    conn.execute('INSERT OR REPLACE INTO curve(market, node, fitted_at, data_json) VALUES (?,?,?,?)',
+                 (market, '_all', _now(ts), json.dumps(data)))
+
+
+def get_curve(conn, market):
+    r = conn.execute("SELECT fitted_at, data_json FROM curve WHERE market=? AND node='_all'", (market,)).fetchone()
+    if not r:
+        return None
+    d = json.loads(r[1])
+    d['fitted_at'] = r[0]
+    return d
+
+
+def tracked_asins(conn, market, top_per_keyword=5):
+    """ASINs worth reading product pages for: watched ASINs, plus the top organic listings of watched keywords."""
+    out = [r[0] for r in conn.execute("SELECT target FROM watch WHERE kind='asin' AND market=? AND enabled=1", (market,))]
+    for (kw,) in conn.execute("SELECT target FROM watch WHERE kind='keyword' AND market=? AND enabled=1", (market,)).fetchall():
+        snap = conn.execute("SELECT id FROM serp_snapshot WHERE market=? AND kw_norm=? AND status IN ('ok','partial') "
+                            "ORDER BY ts DESC LIMIT 1", (market, kw)).fetchone()
+        if snap:
+            out += [r[0] for r in conn.execute('SELECT asin FROM serp_item WHERE snapshot_id=? AND sponsored=0 ORDER BY pos '
+                                               'LIMIT ?', (snap[0], top_per_keyword))]
+    seen, uniq = set(), []
+    for a in out:
+        if a and a not in seen:
+            seen.add(a)
+            uniq.append(a)
+    return uniq
+
+
 # ---------- search suggestions ----------
 def save_suggest(conn, market, seed, keywords, n_calls=0, n_failed=0, status='ok', run_id=None, ts=None):
     t = _now(ts)

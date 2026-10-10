@@ -62,6 +62,7 @@
         ${tile('Local sellers', now ? now.local : '–', now ? `${now.fast} fast · ${now.overseas} overseas of ${now.total}` : '')}
         ${tile('Search trend', tr.label ? esc(tr.label) : tr.status === 'low_volume' ? 'Low volume' : '–', tr.score != null ? 'score ' + Math.round(tr.score) + ' of 100' : tr.status === 'none' ? 'not fetched yet' : '')}
         ${tile('Review barrier', comp && comp.review_barrier != null ? num(comp.review_barrier) : '–', 'median reviews, top 10')}
+        ${d.demand.volume && d.demand.volume.length ? tile('Searches / month', compact(d.demand.volume[d.demand.volume.length - 1].volume), 'Helium 10 ' + esc(d.demand.volume[d.demand.volume.length - 1].source) + ', ' + esc(d.demand.volume[d.demand.volume.length - 1].month)) : ''}
         ${tile('Price', comp && comp.prices.length ? esc(cur) + ' ' + num(median(comp.prices), 0) : '–', comp && comp.prices.length ? 'median of ' + comp.prices.length + ' listings' : '')}
       </div>
       ${tr.why && tr.why.length ? `<div class="panel"><h3 style="margin-bottom:8px">Why “${esc(tr.label)}”</h3><ul class="reasons">${tr.why.map(w => `<li class="${/Declining|Fad/.test(tr.label) ? 'bad' : /Spike|Mixed|Seasonal/.test(tr.label) ? 'warn' : 'good'}">${esc(w)}</li>`).join('')}</ul></div>` : ''}
@@ -188,7 +189,7 @@
     const cur = d.currency;
     $('kTop').innerHTML = `<div class="head" style="margin-bottom:8px"><h3>Top listings now</h3>${c.top3_share != null ? `<span class="small">Top 3 badged listings take ${Math.round(c.top3_share * 100)}% of badge sales</span>` : ''}</div>
       <div class="tablewrap"><table><thead><tr><th class="r">#</th><th>Product</th><th>Ships from</th><th class="r">Price</th><th class="r">Reviews</th><th class="r">Bought/mo</th></tr></thead><tbody>
-      ${c.top.map((r, i) => `<tr><td class="r">${i + 1}</td><td class="title"><a data-open="${esc(r.url)}">${esc(r.title)}</a><div class="sub">${esc(r.asin)}</div></td>
+      ${c.top.map((r, i) => `<tr><td class="r">${i + 1}</td><td class="title"><a data-open="${esc(r.url)}">${esc(r.title)}</a><div class="sub">${esc(r.asin)} · <a href="#/p/${d.market}/${esc(r.asin)}">product report</a></div></td>
         <td>${r.origin === 'local' ? '<span class="pill line"><span class="swatch" style="background:var(--s-local)"></span>local</span>' : r.origin === 'overseas' ? '<span class="pill line"><span class="swatch" style="background:var(--s-overseas)"></span>overseas</span>' : '<span class="pill weak">unknown</span>'}<div class="sub">${esc(r.why || '')}</div></td>
         <td class="r">${money(r.price, '')}</td><td class="r">${num(r.reviews)}</td><td class="r">${r.units ? fmtU(r.units.v) + '<div class="sub">' + rangeText(r.units) + '</div>' : ''}</td></tr>`).join('')}
       </tbody></table></div><p class="small" style="margin-top:6px">Prices in ${esc(cur)}. Bought/mo is the middle of the badge range.</p>`;

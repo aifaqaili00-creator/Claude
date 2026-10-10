@@ -42,7 +42,7 @@ const Charts = (() => {
   const monthT = key => { const [y, m] = String(key).split('-').map(Number); return Date.UTC(y, (m || 1) - 1, 1); };
   function monthLabel(t, withYear) {
     const d = new Date(t);
-    return MONTHS[d.getUTCMonth()] + (withYear ? ' ' + String(d.getUTCFullYear()).slice(2) : '');
+    return MONTHS[d.getUTCMonth()] + (withYear ? ' \u2019' + String(d.getUTCFullYear()).slice(2) : '');
   }
   const dayLabel = t => { const d = new Date(t); return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()]; };
   const fmtDefault = v => v == null ? '–' : compact(v);

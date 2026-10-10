@@ -421,3 +421,75 @@ def health(db, S, now=None):
                sources=S.throttle.state(now) if S else {}, scheduler=S.scheduler.status() if S else None,
                trends=S.trends.breaker.state() if S else None, browser={'state': S.checker.state, 'error': S.checker.error} if S else None)
     return out
+
+
+# ---------- Phase 3: product report and calibration ----------
+def product_report(db, market, asin, settings, now=None):
+    """One listing: BSR history, estimated monthly units and revenue (from the market's curve), Helium 10 rows."""
+    from engine import curve as curvemod
+    from engine import sales
+    now = now or time.time()
+
+    def build(conn):
+        info = storage.asin_info(conn, market, asin) or {}
+        hist = storage.product_history(conn, market, asin)
+        valid = [h for h in hist if h['status'] in storage.VALID]
+        cv = storage.get_curve(conn, market)
+        node = info.get('root_node')
+        samples = [(h['ts'], h['root_rank']) for h in valid if h['root_rank']]
+        if node:                                                   # list ranks are the same root ranking
+            for r in conn.execute('SELECT s.ts, i.rank_now FROM list_item i JOIN list_snapshot s ON s.id=i.snapshot_id '
+                                  'WHERE s.market=? AND s.slug=? AND i.asin=? AND i.rank_now IS NOT NULL', (market, node, asin)):
+                samples.append((r[0], r[1]))
+        badges = [{'badge': h['badge_low'], 'bsr': h['root_rank']} for h in valid if h['badge_low'] and h['root_rank']]
+        month_fn = lambda t: config.month_key(t, market)            # noqa: E731
+        units, offset = {}, None
+        if cv and samples:
+            offset = sales.asin_offset_info(cv, node, badges)
+            units = sales.units_from_bsr(samples, cv, node, month_fn, offset)
+        prices = {}
+        for h in valid:
+            if h['price']:
+                prices[config.month_key(h['ts'], market)] = h['price']
+        rev = sales.revenue(units, prices) if units and prices else {}
+        h10 = [dict(r) for r in conn.execute(
+            'SELECT f.month, f.as_of, f.kind, r.sales_asin, r.sales_parent, r.revenue, r.bsr, r.price FROM h10_row r '
+            'JOIN import_file f ON f.id=r.import_id WHERE f.market=? AND r.asin=? ORDER BY f.as_of', (market, asin))]
+        last = valid[-1] if valid else None
+        now_units = curvemod.predict(cv, node, last['root_rank']) if cv and last and last['root_rank'] else None
+        other = {}
+        for m in config.MARKETS:
+            if m == market:
+                continue
+            r = conn.execute('SELECT ts, root_rank, price, offers, origin FROM product_snapshot WHERE market=? AND asin=? '
+                             "AND status IN ('ok','partial') ORDER BY ts DESC LIMIT 1", (m, asin)).fetchone()
+            other[m] = dict(r) if r else None
+        return {
+            'market': market, 'asin': asin, 'currency': ac.MARKETS[market]['currency'],
+            'url': '%s/dp/%s' % (ac.MARKETS[market]['site'], asin), 'info': info,
+            'history': [{k: h[k] for k in ('ts', 'status', 'root_rank', 'badge_low', 'price', 'offers', 'rating', 'reviews',
+                                           'buybox_seller', 'ships_from', 'sold_by_amazon', 'origin', 'delivery_days')}
+                        for h in hist][-400:],
+            'now': last, 'units_now': now_units,
+            'monthly': [{'month': m, 'units': {k: v.get(k) for k in ('v', 'lo', 'hi', 'basis', 'conf')},
+                         'coverage': v.get('coverage'), 'partial': v.get('partial'),
+                         'revenue': {k: rev[m].get(k) for k in ('v', 'lo', 'hi', 'basis', 'conf')} if m in rev else None}
+                        for m, v in sorted(units.items())],
+            'offset': offset, 'h10': h10,
+            'curve': {k: cv.get(k) for k in ('status', 'n_obs', 'beta', 'sigma', 'fitted_at', 'diag')} if cv else None,
+            'other_markets': other,
+        }
+    return db.read(build)
+
+
+def calibration(db):
+    """Per market: how well the BSR -> units curve is pinned down, in plain words."""
+    def build(conn):
+        out = {}
+        for m in config.MARKETS:
+            cv = storage.get_curve(conn, m)
+            kinds = {r[0]: r[1] for r in conn.execute('SELECT kind, COUNT(*) FROM calib_point WHERE market=? GROUP BY kind', (m,))}
+            out[m] = {'points': kinds, 'curve': {k: cv.get(k) for k in ('status', 'n_obs', 'beta', 'sigma', 'delta_h', 'fitted_at',
+                                                                       'diag', 'n_by_kind', 'converged')} if cv else None}
+        return out
+    return db.read(build)

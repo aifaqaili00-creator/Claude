@@ -30,7 +30,21 @@
       <div class="panel"><h3 style="margin-bottom:8px">Recent refreshes</h3><div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Trigger</th><th>Result</th><th class="r">OK</th><th class="r">Failed</th><th class="r">Blocked</th></tr></thead><tbody>
         ${h.runs.map(r => `<tr><td>${ago(r.started_at)}</td><td>${esc(r.kind)}</td><td>${esc(r.trigger)}</td><td>${esc(r.status)}</td><td class="r">${r.n_ok || 0}</td><td class="r">${r.n_fail || 0}</td><td class="r">${r.n_blocked || 0}</td></tr>`).join('')}
       </tbody></table></div></div>
+      <div class="panel" id="calibOut"><h3>Sales curves</h3><div class="small">Loading…</div></div>
       <p class="small">Database: ${esc(h.db_path)} (backups in its backup folder).</p>`;
+    calibration();
+  }
+  async function calibration() {
+    let c;
+    try { c = await api('/api/calibration'); } catch (e) { return; }
+    const box = $('calibOut'); if (!box) return;
+    box.innerHTML = `<h3 style="margin-bottom:8px">Sales curves (sales rank → units per month)</h3><div class="tablewrap"><table><thead><tr><th>Market</th><th>Status</th><th class="r">Readings</th><th class="r">Slope</th><th>How good</th><th>Fitted</th></tr></thead><tbody>
+      ${Object.entries(c).map(([m, x]) => { const cv = x.curve, dg = cv && cv.diag || {}; const n = Object.values(x.points || {}).reduce((a, b) => a + b, 0);
+        return `<tr><td><b>${esc(MK[m])}</b></td><td>${cv ? (cv.status === 'calibrated' ? '<span class="pill good">' + icon('ok') + 'calibrated</span>' : '<span class="pill warn">' + icon('warn') + 'default values</span>') : '<span class="muted small">no readings yet</span>'}</td>
+          <td class="r">${n}</td><td class="r">${cv && cv.beta != null ? cv.beta.toFixed(2) : '–'}</td>
+          <td class="small">${dg.hit != null ? `Right badge bucket ${Math.round(dg.hit * 100)}% of the time, within one bucket ${Math.round((dg.within1 || 0) * 100)}%, 80% range holds ${Math.round((dg.cov80 || 0) * 100)}%` : 'needs more readings (product pages with a badge, or Helium 10 exports)'}</td>
+          <td>${cv && cv.fitted_at ? ago(cv.fitted_at) : '–'}</td></tr>`; }).join('')}
+      </tbody></table></div>`;
   }
   $('healthOut').addEventListener('click', async e => {
     const b = e.target.closest('[data-clear]'); if (!b) return;

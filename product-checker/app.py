@@ -26,6 +26,7 @@ import config
 import file_rank as fr
 import ideas
 import importer
+import product
 import reports
 import scheduler
 import singleton
@@ -214,6 +215,26 @@ class State:
         if fresh:
             self.say('%d new alert%s on Home.' % (len(fresh), '' if len(fresh) == 1 else 's'))
             await asyncio.to_thread(analysis.notify_new, self, fresh)
+
+    async def refit_curve(self, market):
+        """Fit the market's BSR -> units curve in a separate process, so the browser loop never stalls."""
+        from engine import curve
+        obs = await asyncio.to_thread(self.db.read, storage.calib_obs, market)
+        if not obs:
+            return None
+        try:
+            fit = await self.loop.run_in_executor(self.procs(), curve.fit_market, obs, market)
+        except Exception:                                               # noqa: BLE001 - a broken pool: fit here instead
+            log.exception('curve fit in a separate process failed')
+            fit = await asyncio.to_thread(curve.fit_market, obs, market)
+        await self.db.awrite(storage.save_curve, market, fit)
+        return fit
+
+    def procs(self):
+        if not getattr(self, '_procs', None):
+            from concurrent.futures import ProcessPoolExecutor
+            self._procs = ProcessPoolExecutor(max_workers=1)
+        return self._procs
 
     def apply_startup_setting(self):
         want = bool(self.settings.get('start_with_windows'))
@@ -871,6 +892,38 @@ def api_source_clear(h, q):
     return h._send(200, {'ok': True})
 
 
+@route('GET', '/api/report/product')
+def api_report_product(h, q):
+    market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
+    asin = str(q.get('asin') or '').strip().upper()[:12]
+    if not asin.isalnum():
+        return h._send(400, {'error': 'Which product (ASIN)?'})
+    return h._send(200, reports.product_report(S.db, market, asin, S.settings))
+
+
+@route('POST', '/api/report/product/refresh')
+def api_report_product_refresh(h, q):
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    asin = str(d.get('asin') or '').strip().upper()[:12]
+    if not asin.isalnum():
+        return h._send(400, {'error': 'Which product (ASIN)?'})
+
+    async def work(progress):
+        progress('Reading the product page on Amazon %s...' % ac.MARKETS[market]['name'])
+        p = await product.read_product(S.checker, asin, market)
+        await S.db.awrite(storage.save_product, market, asin, p)
+        progress('Updating the sales curve...')
+        await S.refit_curve(market)
+        return await asyncio.to_thread(reports.product_report, S.db, market, asin, S.settings)
+    return h._send(200, {'job': S.new_job('product', work)})
+
+
+@route('GET', '/api/calibration')
+def api_calibration(h, q):
+    return h._send(200, reports.calibration(S.db))
+
+
 @route('POST', '/api/radar/scan')
 def api_radar_scan(h, q):
     """Read the market's Movers & Shakers and New Releases now (your own job, not background)."""
@@ -904,6 +957,8 @@ def shutdown():
         pass
     try:
         S.scheduler.stop()
+        if getattr(S, '_procs', None):
+            S._procs.shutdown(wait=False, cancel_futures=True)
         S.db.close()
     except Exception:
         pass
