@@ -158,6 +158,9 @@ class State:
         with self.lock:
             self.messages.append({'t': time.time(), 'msg': msg})
             self.messages = self.messages[-60:]
+        jobs = getattr(self, 'jobs', None)
+        if jobs is not None and not ac.BACKGROUND.get():
+            jobs.broadcast(msg)                 # e.g. "solve the captcha in the browser window" shows in the progress line
 
     def run(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
@@ -329,13 +332,21 @@ class State:
         return out
 
     async def find_ideas(self, code, slugs, kinds, hide, refresh, progress):
-        if refresh or code not in self.idea_cats:
+        menu = self.idea_cats.get(code)
+        if refresh or not menu or time.time() - menu['at'] > 24 * 3600:
             progress('Reading the %s category list...' % ac.MARKETS[code]['name'])
-            self.idea_cats[code] = await ideas.categories(self.checker, code)
-        cats = self.idea_cats[code]
-        chosen = [c for c in cats if c['slug'] in slugs] if slugs else [c for c in cats if not c['risky']][:8]
+            got = await ideas.categories(self.checker, code)            # a captcha or block raises its own message
+            if got:                                                      # an empty answer is never kept
+                menu = self.idea_cats[code] = {'at': time.time(), 'cats': got}
+        cats = menu['cats'] if menu else []
+        safe = [c for c in cats if not c['risky']]
+        chosen = [c for c in cats if c['slug'] in slugs] if slugs else (
+            safe if any(c.get('default') for c in safe) else safe[:8])
         if not chosen:
             raise RuntimeError('No categories found on Amazon %s. Try again in a minute.' % ac.MARKETS[code]['name'])
+        if any(c.get('default') for c in chosen):
+            progress("Amazon's category menu could not be read, so the built-in %s categories are used"
+                     % ac.MARKETS[code]['name'])
         key = (code, tuple(sorted(c['slug'] for c in chosen)), tuple(sorted(kinds)))
         hit = self.idea_cache.get(key)
         if hit and not refresh and time.time() - hit['at'] < self.settings['cache_hours'] * 3600:
@@ -343,7 +354,16 @@ class State:
             raw = hit
         else:
             raw = await ideas.scan(self.checker, code, chosen, kinds, None, progress)
+            if not raw['items']:                                         # nothing read: say why, keep nothing
+                raise RuntimeError('Could not read any Movers & Shakers or New Releases list on Amazon %s%s. '
+                                   'Try again later, or pick other categories.' % (
+                                       ac.MARKETS[code]['name'],
+                                       " (its category menu could not be read either; a copy of the page is in the "
+                                       "app folder's debug folder)" if any(c.get('default') for c in chosen) else ''))
             raw['at'] = time.time()
+            found = {i['slug'] for i in raw['items']}                    # built-in slugs Amazon lacks: drop them
+            if menu and any(c.get('default') and c['slug'] not in found for c in chosen):
+                menu['cats'] = [c for c in menu['cats'] if not c.get('default') or c['slug'] in found] or menu['cats']
             self.idea_cache[key] = raw
         # "hide risky" is applied when reading, so switching it never re-scrapes
         scored = await asyncio.to_thread(ideas.score_ideas, raw['items'], code, hide)
@@ -382,8 +402,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self):
-        n = int(self.headers.get('Content-Length') or 0)
-        return self.rfile.read(n) if n else b''
+        """The request body, read once (a second read would wait on the socket until it times out)."""
+        if getattr(self, '_body_cache', None) is None:
+            n = int(self.headers.get('Content-Length') or 0)
+            self._body_cache = self.rfile.read(n) if n else b''
+        return self._body_cache
 
     def _json(self):
         try:
@@ -405,6 +428,7 @@ class Handler(BaseHTTPRequestHandler):
         return secrets.compare_digest(self.headers.get('X-PC-Token') or '', S.token)
 
     def _dispatch(self, table):
+        self._body_cache = None                         # one handler can serve several requests on a kept-alive socket
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         if not self._host_ok():
@@ -969,14 +993,16 @@ def api_calibration(h, q):
 @route('POST', '/api/radar/scan')
 def api_radar_scan(h, q):
     """Read the market's Movers & Shakers and New Releases now (your own job, not background)."""
-    market = h._json().get('market') if h._json().get('market') in ac.MARKETS else 'US'
+    market = h._json().get('market')
+    market = market if market in ac.MARKETS else 'US'
 
     async def work(progress):
         progress('Reading Movers & Shakers and New Releases on Amazon %s...' % ac.MARKETS[market]['name'])
-        out = await S.collectors.lists({'kind': 'lists', 'market': market, 'target': 'all'})
-        progress(out.get('note') or '')
+        out = await S.collectors.lists({'kind': 'lists', 'market': market, 'target': 'all'}, progress)
+        progress((out.get('note') or '') + ' · grouping similar products…')
         await asyncio.to_thread(analysis.run, S, [])
-        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db)})
+        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market), 'trends': reports.search_trends(S.db),
+                                                'scan_note': out.get('note') or ''})
     return h._send(200, {'job': S.new_job('radar', work)})
 
 

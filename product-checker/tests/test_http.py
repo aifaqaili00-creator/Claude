@@ -161,3 +161,24 @@ def test_failed_job_reports_its_error():
     jm = jobs.JobManager(run, say=said.append)
     j = jm.get(jm.start('check', lambda p: work(p)))
     assert j['status'] == 'error' and 'captcha' in j['error'] and said and 'Check failed' in said[0]
+
+
+def test_radar_scan_reads_the_body_once_and_answers_at_once(server, monkeypatch):
+    """The market used to be read from the body twice: the second read waited for the socket to time out, then the
+    scan failed with market None ("Starting…" for minutes)."""
+    import asyncio
+    import time as _t
+    got = []
+    monkeypatch.setattr(server, 'new_job', lambda kind, fn: got.append(fn) or 'job1')
+    t0 = _t.time()
+    st, _, raw = call(server, 'POST', '/api/radar/scan', {'market': 'AU'})
+    assert st == 200 and json.loads(raw)['job'] == 'job1' and _t.time() - t0 < 2
+    lines = []
+
+    async def lists(task, progress=None):
+        lines.append(task['market'])
+        raise RuntimeError('stop here')
+    monkeypatch.setattr(server.collectors, 'lists', lists)
+    with pytest.raises(RuntimeError, match='stop here'):
+        asyncio.run(got[0](lines.append))
+    assert 'Amazon Australia' in lines[0] and lines[1] == 'AU'

@@ -9,6 +9,7 @@
 import asyncio
 import contextlib
 import contextvars
+import logging
 import os
 import random
 import threading
@@ -37,6 +38,7 @@ LADDERS = {
     'wrong_location': [3600, 7200, 14400, 43200],
     'throttled': [3600, 7200, 14400, 86400],
 }
+log = logging.getLogger('pc')
 DEFAULT_SOURCE = {'concurrency': 1, 'gap': (1.0, 2.0), 'daily': None}
 GAP_SCALE = float(os.environ.get('PC_GAP_SCALE', '1'))         # tests only: shrink the gaps
 TASK = contextvars.ContextVar('pc_task', default='user')      # which quota a request counts against
@@ -91,16 +93,43 @@ class MemoryStore:
 
 
 class Store:
-    """The same interface over market.db (tables source_state and budget)."""
+    """The same interface over market.db (tables source_state and budget).
+
+    Writes go to the database writer without waiting, so the browser loop never stalls behind a long write
+    (a big Helium 10 import, say). What this process wrote is kept in memory too, so reads see it at once.
+    """
 
     def __init__(self, db):
         self.db = db
+        self._mem = {}                                  # source -> fields written by this process
+        self._last = None                               # the newest pending write
+
+    def _submit(self, fn):
+        fut = self.db.submit(fn)
+
+        def done(f):
+            if f.exception() is not None:
+                log.warning('throttle state not saved: %s', f.exception())
+        fut.add_done_callback(done)
+        self._last = fut
+        return fut
+
+    def flush(self, timeout=30):
+        """Wait until every write made so far is in the database."""
+        fut = self._last
+        if fut is not None:
+            try:
+                fut.result(timeout=timeout)
+            except Exception:                           # noqa: BLE001 - already logged
+                pass
 
     def get(self, source):
         r = self.db.one('SELECT * FROM source_state WHERE source=?', (source,))
-        return {**STATE_DEFAULTS, **{k: v for k, v in (r or {}).items() if v is not None and k != 'source'}}
+        return {**STATE_DEFAULTS, **{k: v for k, v in (r or {}).items() if v is not None and k != 'source'},
+                **{k: (STATE_DEFAULTS.get(k) if v is None else v) for k, v in self._mem.get(source, {}).items()}}
 
     def put(self, source, **fields):
+        self._mem.setdefault(source, {}).update(fields)
         cols = list(fields)
 
         def fn(conn):
@@ -108,18 +137,19 @@ class Store:
             if cols:
                 conn.execute('UPDATE source_state SET %s WHERE source=?' % ', '.join('%s=?' % c for c in cols),
                              [fields[c] for c in cols] + [source])
-        self.db.write(fn)
+        self._submit(fn)
 
     def used(self, day, source, task):
         r = self.db.one('SELECT used FROM budget WHERE day=? AND source=? AND task=?', (day, source, task))
         return r['used'] if r else 0
 
     def add(self, day, source, task, used=0, skipped=0):
-        self.db.write(lambda c: c.execute(
+        self._submit(lambda c: c.execute(
             'INSERT INTO budget(day, source, task, used, skipped) VALUES (?,?,?,?,?) ON CONFLICT(day, source, task) '
             'DO UPDATE SET used=used+excluded.used, skipped=skipped+excluded.skipped', (day, source, task, used, skipped)))
 
     def day_rows(self, day):
+        self.flush()
         return self.db.all('SELECT * FROM budget WHERE day=?', (day,))
 
 
@@ -215,13 +245,19 @@ class Throttle:
         """Raise Cooldown or QuotaExceeded now, without waiting or counting anything."""
         st = self.store.get(source)
         now = self.clock()
-        if (st.get('cooldown_until') or 0) > now:
+        if (st.get('cooldown_until') or 0) > now and not self._user_may_pass(source, task, st):
             raise Cooldown(source, st['cooldown_until'], st.get('reason') or '')
         if task != 'user':
             left = self.remaining(source, task)
             if left is not None and left <= 0:
                 self.store.add(utc_day(now), source, task, skipped=1)
                 raise QuotaExceeded(source, task)
+
+    @staticmethod
+    def _user_may_pass(source, task, st):
+        """An Amazon captcha pause only holds back the automatic refresh: when you start a check yourself, the
+        browser window opens and you can solve it."""
+        return task == 'user' and source.startswith('amazon:') and (st.get('reason') or '').startswith('captcha')
 
     @contextlib.asynccontextmanager
     async def slot(self, source, task=None):
@@ -248,8 +284,8 @@ class Throttle:
         if outcome == 'ok':
             self._last_ok[source] = int(now)                 # kept in memory: no database write per page
             st = self.store.get(source)
-            if st.get('fail_streak'):
-                self.store.put(source, fail_streak=0, last_ok=int(now), reason=None)
+            if st.get('fail_streak') or (st.get('cooldown_until') or 0) > now:    # it works again: end the pause
+                self.store.put(source, fail_streak=0, last_ok=int(now), reason=None, cooldown_until=0)
             return 0
         ladder = LADDERS.get(outcome)
         if not ladder:

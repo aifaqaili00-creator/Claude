@@ -13,7 +13,7 @@
     try {
       const {job} = await api('/api/radar/scan', {market: segVal($('rMk'))});
       data = await waitJob(job, l => { $('rProg').innerHTML = busy(l); });
-      $('rProg').textContent = '';
+      $('rProg').innerHTML = data.scan_note ? `<span class="small muted">${esc(data.scan_note)}</span>` : '';
       render();
     } catch (e) { $('rProg').innerHTML = failPill(e.message); }
     $('rScan').disabled = false;

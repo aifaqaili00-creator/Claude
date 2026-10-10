@@ -69,11 +69,11 @@ def test_cooldown_ladder_and_reset():
         until = t.report('amazon:AU', 'captcha')
         assert until == int(clock() + expected[min(i, 3)])
     with pytest.raises(th.Cooldown):
-        t.check('amazon:AU', 'user')
-    t.report('amazon:AU', 'ok')
+        t.check('amazon:AU', 'lists')
+    t.check('amazon:AU', 'user')                     # you can solve a captcha yourself, so your own checks go ahead
+    t.report('amazon:AU', 'ok')                      # and a page that loads ends the pause
     assert t.store.get('amazon:AU')['fail_streak'] == 0
-    clock.t += 30000
-    t.check('amazon:AU', 'user')                     # cooldown over
+    t.check('amazon:AU', 'lists')
     assert t.report('amazon:AU', 'captcha') == int(clock() + expected[0])
     assert t.report('amazon:AU', 'something odd') == 0
 
@@ -90,6 +90,33 @@ def test_cooldown_blocks_user_and_background():
             asyncio.run(go(task))
     t.clear('google')
     asyncio.run(go('trends'))
+
+
+def test_blocked_amazon_still_holds_back_your_own_checks():
+    t, clock = make()
+    t.report('amazon:AE', 'blocked', 'dog page')
+    with pytest.raises(th.Cooldown):
+        t.check('amazon:AE', 'user')
+
+
+def test_store_writes_do_not_wait_for_the_database(tmp_path):
+    db = storage.DB(tmp_path / 'm.db').open()
+    try:
+        store = th.Store(db)
+        db.write = lambda *a, **k: (_ for _ in ()).throw(AssertionError('blocking write from the browser loop'))
+        t, clock = make(store)
+        t.report('amazon:AU', 'captcha')
+        assert store.get('amazon:AU')['fail_streak'] == 1           # seen at once, before the write lands
+
+        async def go():
+            async with t.slot('amazon:US', 'lists'):
+                pass
+        asyncio.run(go())
+        store.flush()
+        assert db.one('SELECT used FROM budget WHERE source=?', ('amazon:US',))['used'] == 1
+        assert db.one('SELECT fail_streak FROM source_state WHERE source=?', ('amazon:AU',))['fail_streak'] == 1
+    finally:
+        db.close()
 
 
 def test_quota_and_skips_and_new_day():
@@ -128,6 +155,7 @@ def test_state_survives_a_restart(tmp_path):
             async with t.slot('amazon:US', 'lists'):
                 pass
         asyncio.run(go())
+        t.store.flush()                               # writes are queued, not awaited
         t2, _ = make(th.Store(db), clock=clock)
         with pytest.raises(th.Cooldown) as e:
             t2.check('amazon:AE')

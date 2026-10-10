@@ -154,6 +154,7 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 - **The app uses none of your Black Box searches.** It reads Amazon's public search pages and the Helium 10 files you export yourself. Xray runs only when you click it in your own Chrome.
 - **To see errors:** run `start.bat debug`, which shows a console window. The log file is `%LOCALAPPDATA%\ProductChecker\app.log`.
 - **If the background browser misbehaves:** press **Restart** under Settings → Background browser.
+- **"No categories found" or a slow Australia / UAE scan:** watch the progress line. If it says Amazon wants a captcha, solve it in the browser window that opens; the scan then carries on. If Amazon's category menu can't be read, the app uses built-in categories and keeps a copy of the page in `%LOCALAPPDATA%\ProductChecker\debug\` (for example `categories_AU.html`). Send that file if it keeps happening. In **Product ideas** you can also pick other categories.
 
 ## For developers
 

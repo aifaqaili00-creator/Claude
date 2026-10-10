@@ -9,7 +9,7 @@ import asyncio
 import math
 import os
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import amazon_check as ac
 import file_rank as fr
@@ -70,11 +70,55 @@ EXTRACT_LIST_JS = r"""
 }
 """
 
+# Department links on a Movers & Shakers / Best Sellers / New Releases page (the menu is drawn by script, so we wait for it).
+NAV_SEL = 'a[href*="movers-and-shakers/"], a[href*="new-releases/"], a[href*="bestsellers/"]'
 CATEGORIES_JS = r"""
-(base) => [...document.querySelectorAll('a[href*="' + base + '/"]')]
+(sel) => [...document.querySelectorAll(sel)]
   .map(a => ({href: a.getAttribute('href') || '', name: (a.innerText || a.textContent || '').trim()}))
   .filter(x => x.name && x.name.length < 60)
 """
+NAV_WAIT_JS = '(sel) => document.querySelectorAll(sel).length >= 3'
+LIST_PATH = re.compile(r'/(?:movers-and-shakers|new-releases|bestsellers)/([a-z0-9][a-z0-9-]*)(?=[/?#]|$)', re.I)
+SEE_MORE = re.compile(r'^(see|view|show)\b|^any department', re.I)
+# Used only when Amazon's menu can't be read. A slug that turns out not to exist is dropped after its first read.
+DEFAULTS = {
+    'US': DEFAULT_US,
+    'AU': [('home', 'Home'), ('kitchen', 'Kitchen & Dining'), ('sporting-goods', 'Sports, Fitness & Outdoors'),
+           ('pet-supplies', 'Pet Supplies'), ('office-products', 'Stationery & Office Products'), ('garden', 'Garden'),
+           ('lawn-garden', 'Garden'), ('home-improvement', 'Home Improvement'), ('hi', 'Home Improvement')],
+    'AE': [('home', 'Home'), ('kitchen', 'Kitchen'), ('sporting', 'Sports'), ('sports', 'Sports'),
+           ('pet-supplies', 'Pet Supplies'), ('office-products', 'Office Products'), ('garden', 'Garden'),
+           ('home-improvement', 'Home Improvement')],
+}
+
+
+class ListMissing(Exception):
+    """Amazon has no list for this category slug (it sent the browser somewhere else)."""
+
+
+def parse_categories(links):
+    """[{href, name}] from the page -> [{slug, name, risky}], one per department, in page order."""
+    out, by_slug = [], {}
+    for l in links:
+        m = LIST_PATH.search(l.get('href') or '')
+        if not m:
+            continue
+        slug = m.group(1).lower()
+        if slug.isdigit() or slug.startswith('ref'):
+            continue
+        name = re.sub(r'\s+', ' ', l.get('name') or '').strip()
+        good = bool(name) and not SEE_MORE.search(name)
+        if slug in by_slug:
+            if good and by_slug[slug]['_weak']:
+                by_slug[slug].update(name=name, _weak=False)
+            continue
+        c = {'slug': slug, 'name': name if good else slug.replace('-', ' ').title(), '_weak': not good}
+        by_slug[slug] = c
+        out.append(c)
+    for c in out:
+        c.pop('_weak')
+        c['risky'] = bool(RISKY_CATEGORY.search(c['name']))
+    return out
 
 
 def _int(s):
@@ -82,25 +126,46 @@ def _int(s):
     return int(m.group(0).replace(',', '')) if m else None
 
 
-async def categories(checker, code):
-    """Top-level categories of the Movers & Shakers page: [{slug, name, risky}]."""
-    await checker.start()
+async def _dump(page, code, what):
+    """Keep a copy of a page we could not read, so it can be looked at later (the app folder's debug\\)."""
+    try:
+        d = ac.APP_DIR / 'debug'
+        d.mkdir(parents=True, exist_ok=True)
+        html = d / ('%s_%s.html' % (what, code))
+        html.write_text(await page.content(), encoding='utf-8')
+        await page.screenshot(path=str(d / ('%s_%s.png' % (what, code))))
+        return str(html)
+    except Exception:                                   # noqa: BLE001 - only a debugging aid
+        return None
+
+
+async def _read_categories(checker, code, path):
     site = ac.MARKETS[code]['site']
     page = await checker.ctx.new_page()
     try:
-        await checker._goto(page, site + LISTS['movers'], code)
-        links = await page.evaluate(CATEGORIES_JS, LISTS['movers'])
+        await checker._goto(page, site + path, code)        # a captcha or block raises with a clear message
+        try:
+            await page.wait_for_function(NAV_WAIT_JS, arg=NAV_SEL, timeout=10000)
+        except Exception:                               # noqa: BLE001 - read whatever is there
+            pass
+        out = parse_categories(await page.evaluate(CATEGORIES_JS, NAV_SEL))
+        if not out:
+            where = await _dump(page, code, 'categories')
+            checker.log('%s: could not read the category menu%s.' % (
+                ac.MARKETS[code]['name'], (' (page saved to %s)' % where) if where else ''))
+        return out
     finally:
         await page.close()
-    out, seen = [], set()
-    for l in links:
-        m = re.search(re.escape(LISTS['movers']) + r'/([a-z0-9-]+)/?(?:ref|\?|$)', l['href'])
-        if not m or m.group(1) in seen:
-            continue
-        seen.add(m.group(1))
-        out.append({'slug': m.group(1), 'name': l['name'], 'risky': bool(RISKY_CATEGORY.search(l['name']))})
-    if not out and code == 'US':
-        out = [{'slug': s, 'name': n, 'risky': False} for s, n in DEFAULT_US]
+
+
+async def categories(checker, code):
+    """Top-level departments: [{slug, name, risky, default?}]. Never empty for a known marketplace."""
+    await checker.start()
+    out = await _read_categories(checker, code, LISTS['movers'])
+    if not out:
+        out = await _read_categories(checker, code, '/gp/bestsellers')
+    if not out:
+        out = [{'slug': s, 'name': n, 'risky': False, 'default': True} for s, n in DEFAULTS.get(code, [])]
     return out
 
 
@@ -108,20 +173,25 @@ COUNT_JS = "() => document.querySelectorAll('[id=\"gridItemRoot\"], .zg-grid-gen
 
 
 async def read_list(checker, code, kind, slug, name):
-    """One Movers & Shakers or New Releases page (up to 50 products)."""
+    """One Movers & Shakers or New Releases page (up to 50 products). Raises ListMissing for an unknown slug."""
     site = ac.MARKETS[code]['site']
     page = await checker.ctx.new_page()
     try:
-        await checker._goto(page, '%s%s/%s' % (site, LISTS[kind], slug), code)
-        last = -1
-        for _ in range(8):                                   # the second half of the list loads on scroll
+        http = await checker._goto(page, '%s%s/%s' % (site, LISTS[kind], slug), code)
+        if http == 404 or not re.search(r'/%s(?:[/?#]|$)' % re.escape(slug), urlparse(page.url).path):
+            raise ListMissing('%s has no %s list for "%s"' % (ac.MARKETS[code]['name'], kind, name))
+        last, still = -1, 0
+        for _ in range(6):                                   # the second half of the list loads on scroll
             n = await page.evaluate(COUNT_JS)
-            if n >= 50 or (n == last and n > 0):
+            if n >= 50:
+                break
+            still = still + 1 if n == last else 0
+            if still >= 2:                                   # two tries without more cards: that is all of it
                 break
             last = n
             await page.mouse.wheel(0, 4000)
             try:
-                await page.wait_for_function('n => (%s)() > n' % COUNT_JS, arg=n, timeout=1500)
+                await page.wait_for_function('n => (%s)() > n' % COUNT_JS, arg=n, timeout=1000)
             except Exception:
                 pass
         raw = await page.evaluate(EXTRACT_LIST_JS)

@@ -13,9 +13,15 @@ import ideas
 import product
 import scheduler as sc
 import storage
+import throttle
 
 log = logging.getLogger('pc')
 LIST_CATEGORIES = 8                     # categories per market when you have not chosen any
+CATEGORY_TTL = 24 * 3600                # Amazon's category menu is read again once a day
+
+
+def _dur(s):
+    return '%d s' % s if s < 90 else '%d min' % round(s / 60)
 
 
 def task_specs(settings, watches):
@@ -56,34 +62,92 @@ class Collectors:
 
     async def _categories(self, market):
         chosen = self.S.settings.get('categories', {}).get(market) or []
-        if market not in self.cats:
-            try:
-                self.cats[market] = await ideas.categories(self.S.checker, market)
-            except ac.BlockedError:
-                raise
-            except Exception:                           # noqa: BLE001
-                self.cats[market] = []
-        cats = self.cats[market]
+        hit = self.cats.get(market)
+        if not hit or not hit['cats'] or time.time() - hit['at'] > CATEGORY_TTL:
+            cats = await ideas.categories(self.S.checker, market)        # a block raises; never empty otherwise
+            if cats:                                                      # an empty answer is never kept
+                hit = self.cats[market] = {'at': time.time(), 'cats': cats}
+        cats = hit['cats'] if hit else []
         if chosen:
             return [c for c in cats if c['slug'] in chosen] or [{'slug': s, 'name': s, 'risky': False} for s in chosen]
-        return [c for c in cats if not c['risky']][:LIST_CATEGORIES]
+        safe = [c for c in cats if not c['risky']]
+        return safe if any(c.get('default') for c in safe) else safe[:LIST_CATEGORIES]
 
-    async def lists(self, task):
-        """Movers & Shakers and New Releases for the market's categories. Each list is saved as soon as it is read."""
+    def _forget(self, market, slug):
+        """A built-in category slug that Amazon does not have: stop asking for it."""
+        hit = self.cats.get(market)
+        if hit:
+            hit['cats'] = [c for c in hit['cats'] if not (c['slug'] == slug and c.get('default'))]
+
+    async def lists(self, task, progress=None):
+        """Movers & Shakers and New Releases for the market's categories. Each list is saved as soon as it is read.
+
+        progress is given for a scan you started yourself: two lists are read at a time and each step is reported.
+        The automatic refresh reads one at a time. A captcha or block stops the run; any other problem skips one list.
+        """
         market = task['market']
+        name = ac.MARKETS[market]['name']
+        say = progress or (lambda m: None)
+        say('%s: opening the browser…' % name)
         await self.S.checker.start()
+        say('%s: reading the category list…' % name)
         cats = await self._categories(market)
         if not cats:
-            return {'status': 'empty', 'note': 'no categories found'}
-        ok = partial = 0
-        for cat in cats:
-            for kind in ('movers', 'new'):
-                items = await ideas.read_list(self.S.checker, market, kind, cat['slug'], cat['name'])
-                status = 'ok' if len(items) >= 30 else 'partial' if items else 'empty_suspect'
-                await self.S.db.awrite(storage.save_list, market, kind, cat['slug'], cat['name'], items, status)
-                ok += status == 'ok'
-                partial += status != 'ok'
-        return {'status': 'ok' if ok else 'partial', 'note': '%d lists read, %d short' % (ok + partial, partial)}
+            raise RuntimeError('No categories found on Amazon %s. Try again in a few minutes.' % name)
+        defaults = any(c.get('default') for c in cats)
+        jobs = [(c, k) for c in cats for k in ('movers', 'new')]
+        state = {'ok': 0, 'short': 0, 'empty': 0, 'missing': 0, 'failed': 0, 'done': 0, 'items': 0}
+        t0 = time.time()
+        sem = asyncio.Semaphore(2 if progress else 1)
+        stop = []
+
+        async def one(cat, kind):
+            async with sem:
+                if stop:
+                    return
+                label = 'Movers & Shakers' if kind == 'movers' else 'New Releases'
+                try:
+                    items = await ideas.read_list(self.S.checker, market, kind, cat['slug'], cat['name'])
+                except ideas.ListMissing:
+                    state['missing'] += 1
+                    self._forget(market, cat['slug'])
+                    items = None
+                except (ac.BlockedError, throttle.ThrottleError) as e:  # captcha, block, pause or budget: stop
+                    stop.append(e)
+                    return
+                except Exception as e:                               # noqa: BLE001 - one bad list never ends the scan
+                    log.warning('list %s %s/%s failed: %s', market, cat['slug'], kind, e)
+                    state['failed'] += 1
+                    items = None
+                if items is not None:
+                    status = 'ok' if len(items) >= 30 else 'partial' if items else 'empty_suspect'
+                    await self.S.db.awrite(storage.save_list, market, kind, cat['slug'], cat['name'], items, status)
+                    state['ok' if status == 'ok' else 'short' if items else 'empty'] += 1
+                    state['items'] += len(items)
+                state['done'] += 1
+                left = (time.time() - t0) / state['done'] * (len(jobs) - state['done'])
+                say('%s: list %d of %d · %s · %s%s' % (name, state['done'], len(jobs), cat['name'], label,
+                                                     ' (about %s left)' % _dur(left) if state['done'] < len(jobs) else ''))
+        await asyncio.gather(*(one(c, k) for c, k in jobs))
+        read = state['ok'] + state['short']
+        if stop and not read:
+            raise stop[0]
+        if not read and progress:                       # your own scan read nothing: say why instead of an empty radar
+            raise RuntimeError('Could not read any Movers & Shakers or New Releases list on Amazon %s%s. Try again later.' % (
+                name, " (its category menu could not be read either; a copy of the page is in the app folder's debug "
+                      "folder)" if defaults else ''))
+        note = '%d list%s read' % (read, '' if read == 1 else 's')
+        if state['short']:
+            note += ' (%d with fewer than 30 products)' % state['short']
+        if state['empty']:
+            note += ', %d empty' % state['empty']
+        if state['failed']:
+            note += ', %d failed' % state['failed']
+        if defaults:
+            note += ' (Amazon\'s category menu could not be read, so built-in %s categories were used)' % name
+        if stop:
+            note += '; stopped early: %s' % str(stop[0]).splitlines()[0][:120]
+        return {'status': 'ok' if state['ok'] else 'partial' if read else 'empty', 'note': note}
 
     async def products(self, task, max_age_s=20 * 3600):
         """Product pages of tracked listings (BSR, badge, offers), oldest reading first, until today's budget ends."""

@@ -76,6 +76,19 @@ BLOCK_TEXT = {
     'offline': 'No internet connection while opening %s.',
 }
 
+
+def _same_page(got, want):
+    """True if the browser is still on the page we asked for (ignoring ref= tails and query strings)."""
+    def key(u):
+        p = urlparse(u or '')
+        path = re.sub(r'/ref=[^/]*$', '', p.path).rstrip('/')
+        return (p.hostname or '').lower(), path
+    g, w = key(got), key(want)
+    if g[0] != w[0]:
+        return False
+    return g[1] == w[1] or g[1].startswith(w[1] + '/') or (w[1] and g[1].endswith(w[1]))   # /dp/X -> /Name/dp/X
+
+
 # Runs inside the page: Amazon's error and robot pages.
 BLOCK_JS = r"""
 () => {
@@ -369,6 +382,14 @@ class Checker:
                 raise BlockedError('offline', BLOCK_TEXT['offline'] % name)
             raise
         await self._get_past_blocks(page, code)
+        if not _same_page(page.url, url):              # "Continue shopping" can land on the home page instead
+            try:
+                resp = await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            except Exception as e:                      # noqa: BLE001
+                if 'timeout' in type(e).__name__.lower() or 'Timeout' in str(e)[:120]:
+                    raise BlockedError('timeout', BLOCK_TEXT['timeout'] % name)
+                raise
+            await self._get_past_blocks(page, code)
         kind = await self._block_kind(page, code, resp.status if resp else None)
         if kind:
             raise BlockedError(kind, BLOCK_TEXT[kind] % name)
@@ -397,8 +418,11 @@ class Checker:
             btn = page.locator('button:has-text("Continue shopping"), input[value*="Continue shopping" i]')
             if clicks < 3 and await btn.count():
                 clicks += 1
-                await btn.first.click()
-                await page.wait_for_load_state('domcontentloaded')
+                try:                                     # wait for the next page, not the one we are on
+                    async with page.expect_navigation(wait_until='domcontentloaded', timeout=15000):
+                        await btn.first.click()
+                except Exception:                        # noqa: BLE001 - no navigation: look again
+                    pass
                 continue
             captcha = await page.locator('form[action*="validateCaptcha"], #captchacharacters').count()
             if not captcha:

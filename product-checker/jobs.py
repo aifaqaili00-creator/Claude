@@ -27,7 +27,7 @@ class JobManager:
         """fn(progress) -> coroutine. Returns the job id."""
         self.prune()
         jid = uuid.uuid4().hex[:10]
-        job = {'id': jid, 'kind': kind, 'status': 'running', 'log': [], 'result': None, 'error': '',
+        job = {'id': jid, 'kind': kind, 'status': 'running', 'log': ['Waiting for the browser…'], 'result': None, 'error': '',
                'started': time.time(), 'finished': None}
         with self.lock:
             self.jobs[jid] = job
@@ -56,6 +56,15 @@ class JobManager:
             self.on_user_end()
             raise
         return jid
+
+    def broadcast(self, msg):
+        """Add a general message (a captcha to solve, a location being set) to every running job's log."""
+        with self.lock:
+            running = [j for j in self.jobs.values() if j['status'] == 'running']
+        for j in running:
+            j['log'].append(str(msg))
+            if len(j['log']) > MAX_LOG:
+                del j['log'][:len(j['log']) - MAX_LOG]
 
     def get(self, jid):
         return self.jobs.get(jid)
