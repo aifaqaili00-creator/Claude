@@ -1,0 +1,219 @@
+# Product Checker – Amazon AU / UAE / US
+
+A small Windows app that runs on your own PC, in its own window.
+
+1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**. **Price across markets** puts the typical page-1 price of each country side by side, converted to your currency, so you see at once where the product sells higher.
+   Each country's card starts with its flag and **one sentence** on the situation, for example "Weak in Australia: about 3,400 sales a month on page 1, 8 fast local sellers, mostly Chinese FBA sellers and about A$27 of the A$55 price left for the product and shipping." Below it, **Who sells it** sums up the sellers once a report has read them; **See who really sells it** (or **Open report**) opens the report, which reads them.
+   Switch to **A list** to check up to 20 products in one go (one per line). A table shows, for every product and country, the local and overseas sellers, buyers a month and the typical price, with the most buyers per local seller first; each row has **Report** and **Watch**, and **Save to Excel** keeps the table.
+2. **Product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet.
+   **Niche keywords** shows what shoppers type for a niche and how each keyword does in every country.
+3. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
+4. **Rank a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
+5. **History:** past checks open again instantly, without a new search.
+6. **Settings:** theme (light, dark, or the same as Windows), your currency, your Chrome profile, delivery locations and how checks run.
+   - **Currency:** choose **your currency** (US$, A$, AED or €). Prices from the other marketplaces then also show “≈” in it, for example `AED 116 ≈ US$ 32`, and tables that mix marketplaces sort by the converted price. Choose separately the currency **your supplier quotes in**, used by **Profit?** and the profit calculator. Settings shows today's rates between all four currencies.
+   - **Currency** in the top bar opens a converter between US$, A$, AED and € from any screen; click a result to copy it.
+   - **Save to Excel** after a check adds each country's currency and typical price, and every price converted to your currency.
+
+7. **Keyword report** (press **Open report** after a check, or open a keyword in the Library). It reads like a story, with a faint flag of the country behind its header and a plain "what this means" line above every chart:
+   - **Summary**: one sentence on the situation, the score with a green / amber / red bar for each part (demand, momentum, competition, local gap, margin) and the key numbers;
+   - **Who sells it**: the top 10 listings on page 1 (not the ads), who sells each one, the seller's country (from the business address on their Amazon seller page), the brand, and how it ships: **Amazon itself**, **FBA** (stock in Amazon's warehouse) or **FBM** (the seller sends each order). Bars show the biggest sellers' share of the sales and where the sellers are based, with flags, plus what it means: for example "Sellers based in China have 7 of the top 10 listings: expect price competition" or "4 of the top listings launched in the last year: newcomers can win here". The app reads the listings' product pages and their sellers' pages by itself when you open the report (about a minute the first time), then keeps them: product pages for two weeks, sellers for a month. **Read again** reads them now. A Helium 10 Xray export fills in a seller's country, brand or shipping when Amazon does not show them;
+   - **Money**: profit per sale, the first order and the launch plan (see 11);
+   - **Demand**: search interest over 5 years (Google Trends) and the seasonal pattern, and **units sold and revenue per month**: Helium 10 numbers when you have an Xray export for that month, otherwise an estimate from Amazon's "bought in past month" badges, plus a backcast from the Google Trends shape. **More detail** shows page-1 sales and local and overseas sellers at each check;
+   - **Competition**: sales per seller, prices, reviews and the top listings;
+   - **Customer complaints**: the 5 most useful 1–3★ reviews of the top 5 listings on page 1, worst ratings and reviews from that country first, then the most helpful; at most 2 from one listing. They are read together with the listings; **Read again** in the panel reads them now. Amazon shows its critical reviews pages only to signed-in shoppers, so otherwise they come from the reviews on each product page (only a few each). Each one links to the listing and to all its critical reviews (in your Chrome);
+   - **Other markets** side by side, and where the numbers come from.
+   **PDF** in the header saves the report in your Downloads folder, for example `dog bed - Amazon Australia - 2026-10-12.pdf`: tick the parts you want (Summary, Who sells it, Money, Demand, Competition, Customer complaints, Other markets, where the numbers come from). It starts with a cover (flag, keyword, date and the one-sentence summary) and has page numbers; **Open the PDF** and **Show in folder** are there when it is ready. The PDF is drawn by a hidden Chrome or Edge, so nothing pops up.
+   Every estimate shows its range and where it came from. A blocked search is shown as a gap, never as zero.
+8. **Library:** every keyword you have checked, your recent checks, and your Helium 10 imports.
+
+9. **Automatic refresh:** watch a keyword (Watchlist, or **Watch** on a report) and the app checks it again every day, fetches Google Trends weekly, and reads the Movers & Shakers and New Releases lists (every 12 hours for the USA, daily for Australia and the UAE).
+   - **Home** shows what changed: new trends, gaps opening in Australia or the UAE, demand jumps, captchas waiting.
+   - **Trend radar** shows the products climbing Amazon's lists, grouped into similar products, with your keywords' Google Trends labels. It uses the same price range and phone / laptop filter as Product ideas, and each card has **Find on Alibaba** and **Profit?**.
+   - **Health** shows every source, its daily budget and any pause.
+   - Under **Settings → Automatic refresh**, turn on **Keep refreshing after I close the window** and **Start with Windows** to keep the data fresh all the time. Important news then arrives as a Windows notification (not at night, and not while the app is in front of you).
+   - Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; that marketplace pauses and Home offers **Solve now**.
+
+10. **Product report** (open it from a keyword report's top listings, a radar card, or `#/p/<market>/<ASIN>`): the Best Sellers Rank over time, and **units sold and revenue per month for that one product**, estimated from its rank through a sales curve the app fits for each marketplace. Listings that show both a rank and a "bought in past month" badge teach the curve, as do your Helium 10 exports; **Track daily** reads the page every day. Until a marketplace has 30 readings the curve leans on default values, and the report says so. **Health** shows how well each curve fits. It also shows that product's **top negative reviews**, read the same way as in the keyword report.
+
+11. **Money and decisions** (in every keyword report):
+    - **Opportunity score** (0–100, Strong / Worth a look / Weak / Skip), built from demand, momentum, competition, the local gap and margin, with a reason for each part. Risky product types lower it.
+    - **Profit per sale**: Amazon's referral, FBA, storage and placement fees for that marketplace, GST/VAT (set whether you are registered under Settings), freight by sea or air, duty, ads and returns. Type the product cost in US$, A$, AED or €. It also gives return on stock, break-even ad spend, the highest product cost for a 20% margin (in your supplier's currency), and a price grid that marks fee steps. What you type stays there when the report refreshes.
+    - **Size and weight** are filled in for you from the product pages of the top listings, which the report reads when you open it (see Who sells it): the package size and weight Amazon's FBA fee uses. The calculator takes the median of up to 5 (or the Helium 10 weight if no page shows one). **Read size from Amazon** (or **Read more listings**) reads them now. Your own numbers always win; **Use Amazon's size** puts Amazon's back. To use your supplier's size instead, paste the text from their page (e.g. `Single package size: 30X20X10 cm, Single gross weight: 0.5 kg`, inches and pounds work too) into the box under the form. The FBA fee line shows which size tier it lands in.
+    - **First order**: type how many units you would order. You see the money it needs (product, freight and duty), after how many sales the money is back, the profit on the whole order, and roughly how many months it lasts at the page-1 average.
+    - The report header also opens the same search on **Alibaba** (suppliers) and on the country's other big shop: **Noon** (UAE), **eBay** (Australia) or **Walmart** (USA).
+    - **Launch plan**: from the seasonal pattern, the dates to order, ship and be in stock before demand rises, by sea and by air. Home reminds you two weeks before an order-by date.
+    - For US keywords, **Bring it from the USA?** scores how well the product would travel to Australia and the UAE, and shows each country's typical price against the USA's (for example "+20% against the USA").
+    - Fee tables are dated 2026-10-09 and include links to check them; the Australian and UAE tables are estimates. US duty changed several times in 2026, so check it before ordering.
+
+**Your history is kept.** Every check, Google Trends sample and Helium 10 export is stored in `%LOCALAPPDATA%\ProductChecker\market.db`, with automatic backups in its `backup` folder. Helium 10 exports (Xray, Black Box, Magnet, Cerebro) in your Downloads folder are imported when the app starts, so months you researched before give you history from day one.
+
+The tools are in the sidebar on the left. The theme switch is at the bottom of the sidebar. Each tool has its own address (for example `#/rank`), so the window reopens where you left it.
+
+## Install
+
+1. You need **Python 3.10 or newer** (https://www.python.org/downloads/, with **"Add python.exe to PATH"** ticked) and **Chrome** or **Edge**.
+2. Get the code using one of these:
+   - On GitHub: **Code → Download ZIP**, then unzip it, for example into `C:\Users\danis\Downloads\Product_Checker\`.
+   - With git: `git clone <this repository's URL>`.
+3. Double-click **`start.bat`**. The first start installs what the app needs (1–2 minutes) and puts a **Product Checker** shortcut on your desktop.
+
+**To update:** download the ZIP again and unzip it over the old folder, or run `git pull`. Your settings and history are kept, because they live in `%LOCALAPPDATA%\ProductChecker`.
+
+## Demand vs sellers
+
+Every check now shows how the buyers are shared out among the sellers:
+
+- **Sales per seller:** buyers a month on page 1 divided by the number of sellers there, for example "≈ 39 sales per seller". **Per local seller** divides by the local sellers only; "none yet" means nobody delivers locally.
+- **Sales taken by overseas sellers:** the share of sales going to listings that ship from abroad. A high share means buyers are waiting for slow deliveries, which is a chance for local stock.
+- **Sales per seller chart:** one bar per listing, longest first. **Green** = local seller, **orange** = ships from overseas, **grey** = unknown. The thin line on each bar is the range behind the estimate. Hatched bars are the top "100K+" badge, where the real number is unknown. Listings without a badge are counted below the chart, not drawn as zero.
+- **Opportunity map** (Library, and Product ideas after **Check AU & UAE**): every product you checked is a dot. **Up** = more buyers a month (log scale), **right** = more local sellers. The **top-left corner**, with many buyers and few local sellers, is where the opportunities are. Hover a dot for its buyers, sellers and typical price (≈ in your currency); click it to open its report.
+- **Idea and radar cards** show, after a check, a **Buyers** bar and a **Sellers** bar for each country (local green, overseas orange) and "≈ N buyers per local seller".
+
+All of these come from Amazon's "bought in past month" badges, which are ranges and are missing on many listings, so they are estimates and usually too low. Use them to compare products, not as exact sales.
+
+## Local or not local?
+
+Each country card shows how many listings come from **local sellers** and how many are **not local**. The app reads the delivery text under each product:
+
+| Amazon shows | Counted as |
+|---|---|
+| "Today 5 pm – 10 pm", "Tomorrow", or a date within 3 days | **Local, fast**: stock is in an Amazon warehouse in that country |
+| a date 4–9 days away, with no "international" | **Local, slower**: a local seller shipping it themselves |
+| "FREE delivery on your first order", or Prime, with no date | **Local**: that offer only applies to items Amazon ships locally |
+| "FREE **International** delivery … eligible international items", or "Ships from abroad" / "Global Store" | **Not local: international** |
+| 10 days or more without that label, e.g. "10 – 13 Nov" | **Not local: ships from abroad** |
+| no delivery date at all | **Unknown** |
+
+The listings table shows **Ships from** and the reason for each row, and you can filter it by **Fast**, **Local** or **Not local**. You can change the 3-day and 9-day limits in Settings. Saved results and History are recounted straight away when you do.
+
+A market is most interesting when it has **real demand, few fast local listings, and many listings shipping from overseas**. Buyers there are waiting 1–3 weeks, so stock in an Amazon warehouse would win the fast-delivery customers.
+
+## New product ideas
+
+**Find product ideas** reads two public Amazon lists in each chosen category:
+
+| List | What it shows | Label in the app |
+|---|---|---|
+| **Movers & Shakers** | the products whose sales rank jumped most in the last 24 hours. This is the earliest public sign of a boom, like tower fans a few summers ago. | **Booming** (rank up 300%+), **Rising** (50%+) |
+| **Hot New Releases** | the best-selling products that are new on Amazon | **New #rank** |
+
+The app starts with the safe categories (Home & Kitchen, Kitchen & Dining, Garden, Pets, Sports, Office, Tools, Crafts). Categories with extra rules or big brands, such as Electronics, Toys, Beauty, Health and Appliances, have a dashed outline; click one to include it. **Hide risky products** hides electrical, kids, chemical and medical products. Untick it to see everything, for example tower fans, which count as electrical.
+
+**Your price range:** by default only products that **sell on Amazon for 20–50 US$** are shown. Change the numbers, or switch the currency to **A$**, **AED** or **€**, right above the categories (or in Settings); switching converts the numbers, so the range keeps meaning the same prices. The range is converted for each marketplace automatically: about A$31–78 in Australia and AED 73–184 in the UAE, with the European Central Bank's daily rates (the dirham is fixed to the dollar). Untick **Amazon price** to see every price. The line under the title says how many products the range hid. Changing the range never re-reads Amazon.
+
+**No phones / laptops** (on by default) leaves out phones, tablets, laptops, computers and their accessories: cases, chargers, cables, screen protectors, stands, keyboards, computer mice and earbuds. A mouse trap or a paper notebook stays.
+
+A scan you start yourself reads up to 16 categories (the automatic refresh reads 8, to stay gentle with Amazon).
+
+**How ideas are scored:**
+- **Higher:** a bigger rank jump, being high on New Releases, appearing on both lists, few reviews, a price in the target range, and several similar products moving at once (shown as "+N similar").
+- **Lower:** warning flags.
+
+**For each idea:**
+- **Check AU & UAE:** searches Amazon Australia and UAE for the idea and shows **local vs abroad** sellers. A green **gap** means 4 or fewer local sellers. **Check top 12 in AU & UAE** does the first 12 in one go.
+- **Trends:** Google Trends for the last 5 years in your Chrome. Use it to see whether the rise is real and lasting or just a one-off spike.
+- **Xray:** jumps to the Xray tab with the keyword filled in.
+- **Click the title:** opens the product in your Chrome profile.
+- **Find on Alibaba:** opens an Alibaba search for the product in your Chrome, so you can compare supplier prices.
+- **Profit?:** type the supplier price per piece (in the currency your supplier quotes in: Settings → Currency) and press **Profit?**. You get a rough profit per sale and margin in A$, AED or US$ (and ≈ in your currency), after Amazon's fees, sea freight, duty, GST/VAT, 12% ads and returns. It assumes a small standard-size item; hover over the result to see the breakdown, and check the real size and weight before ordering.
+
+The words used to search the other countries are shown in a box on each card, and you can edit them.
+
+**Search a niche:** type a niche, e.g. `tower fan`, `dog bed` or `kitchen organiser`, and press **Find niche keywords**. The app asks Amazon's search box for its suggestions (what shoppers actually type) for about 20 variations of your niche, and lists the keywords that come back most often. Tick the keywords you want and the countries, then press **Check selected keywords**. Each keyword then shows local vs abroad sellers, demand ("bought in past month") and fast sellers per country.
+
+A strong idea is **booming or new in the USA, with real demand, but few local sellers in Australia or the UAE yet**.
+
+## Xray analysis (Helium 10)
+
+Xray is part of the Helium 10 Chrome extension, so it runs in **your own Chrome profile**, where you're logged in to Helium 10. The app can't click the extension for you, because Chrome doesn't let automation tools use extensions. So it works in three steps:
+
+1. In the **Xray analysis** tab, type the keyword, choose the Amazon site and press **Open search in Chrome**. The search opens in your profile, and the app starts watching your Downloads folder.
+2. Click the **Helium 10** extension, then **Xray**. When the numbers have loaded, click **Export** and save it as **CSV**.
+3. The app finds the new file within a couple of seconds and analyses it. You can also use **Or choose an Xray file…**.
+
+**What you get:**
+
+| | |
+|---|---|
+| **Verdict** | Promising / Possible / Hard, with up to 10 points: demand, review barrier, how spread out the revenue is, newcomers succeeding, Amazon as a seller, and margin after fees |
+| **Why** | each point explained in plain words, e.g. "4 listings under a year old already sell 100+ a month" |
+| **Numbers** | revenue per month, top 10 median sales, price range, review barrier (top 10 median reviews), top 3 share and biggest brand, new winners, beatable listings, and what is left per sale after the FBA fee and 15% referral fee |
+| **Charts** | who fulfils the orders (FBA / FBM / Amazon) and where the sellers are based |
+| **Listings** | every organic listing by revenue, with **beatable** (enough sales, few enough reviews) and **new** (under 1 year) tags |
+| **Check local sellers** | runs the delivery check for the same keyword, to see how many listings deliver fast |
+| **Save to Excel** | a Summary sheet with the reasons, plus a Listings sheet |
+
+In the **Check a product** tab, **Analyse with Xray** takes the same keyword straight to this tab.
+
+## Your Chrome profile (e.g. "Sohaib")
+
+The app finds your Chrome and Edge profiles and picks **Sohaib** automatically. You can change this under **Settings → Your Chrome profile**. **Open Helium 10**, product links and "Open search in Chrome" all open in that profile, with your logins and the Helium 10 extension.
+
+The automatic Amazon checks run in a **separate background browser**, kept minimised. Chrome doesn't allow automation tools to control your everyday profile (blocked since Chrome 136), and the checks don't need your logins. The background browser shows itself only when Amazon asks you to type the characters from a picture. You can also open it with **Show checker browser**.
+
+## Delivery locations
+
+The checks use postcode **2000** (Sydney), **Dubai** and ZIP **10001** (New York). You can change these in Settings. They're set automatically on the first check, and the pills at the top turn green when Amazon confirms them. Amazon remembers them in the app's own browser, so this happens once.
+
+- **One at a time:** the app sets the countries one after another, in a tab brought to the front, because Amazon's location popups only work in the active tab. Several checks at once simply wait their turn.
+- **UAE:** Amazon.ae now asks for a city in a box with suggestions. The app types "Dubai" and picks it from the list.
+- **If Amazon's popup still won't take it:** the checker window opens on that page with the popup open, and the progress line says, for example, "UAE: please choose Dubai in the browser window that just opened and press Apply. The app waits up to 2 minutes." Pick the place and press Apply; the app carries on by itself. This only happens for checks you start, never during the automatic refresh.
+- **To redo all three:** Settings → **Set locations now**.
+
+## Speed
+
+- **All countries at once:** the three Amazon sites are searched at the same time.
+- **Lighter pages:** pictures and fonts are skipped in the background browser.
+- **Saved results:** a check is reused for 6 hours (Settings), so repeat checks and History are instant. Tick **Search again** to force a fresh search.
+- **Batch checks:** checks from a file run 3 products at a time.
+
+## How products are ranked
+
+| | Australia | UAE | USA |
+|---|---|---|---|
+| Price | A$25–70 | AED 60–260 | US$20–60 |
+| Sales per month, at least | 100 | 50 | 300 |
+| Reviews, at most | 230 | 115 | 300 |
+
+- **Flags:** electrical, kids/toys, consumable or chemical, medical, fits another brand, seasonal, bulky, heavy, Amazon sells it, too cheap or too expensive.
+- **Good pick:** meets the targets with no flags.
+- **Check first:** meets the targets but has a flag to read.
+- **Score:** sales ÷ √(reviews + 20). New listings, ratings of 4.2 or lower and growing sales get a bonus; falling sales lower the score.
+
+To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
+
+## If something goes wrong
+
+- **The app uses none of your Black Box searches.** It reads Amazon's public search pages and the Helium 10 files you export yourself. Xray runs only when you click it in your own Chrome.
+- **To see errors:** run `start.bat debug`, which shows a console window. The log file is `%LOCALAPPDATA%\ProductChecker\app.log`.
+- **If the background browser misbehaves:** press **Restart** under Settings → Background browser.
+- **"No categories found" or a slow Australia / UAE scan:** watch the progress line. If it says Amazon wants a captcha, solve it in the browser window that opens; the scan then carries on. If Amazon's category menu can't be read, the app uses built-in categories and keeps a copy of the page in `%LOCALAPPDATA%\ProductChecker\debug\` (for example `categories_AU.html`). Send that file if it keeps happening. In **Product ideas** you can also pick other categories.
+
+## For developers
+
+| File | What it does |
+|---|---|
+| `app.py` | local web server and app window; API routes, history and jobs. Only this app's own page can call the API (per-run token plus Host/Origin checks) |
+| `config.py` | settings schema with validation, keyword normalising, each marketplace's local date |
+| `jobs.py` | background jobs started from the window (checks, scans), pruned after 30 minutes |
+| `ui/index.html` | the page shell: sidebar, top bar and the views |
+| `ui/css/tokens.css`, `ui/css/app.css` | colours for the light and dark themes (tested for contrast), layout and components |
+| `ui/js/` | `api.js` (every request carries the token), `app.js` (routes, theme, status), `components.js`, `format.js`, `legacy.js` (the tools) |
+| `storage.py` | `market.db` (SQLite): every search, list scan, Trends sample and import; one writer thread, backups, retention |
+| `importer.py` | Helium 10 exports (Xray, Black Box, Magnet, Cerebro) into the database, once per file |
+| `trends.py` | Google Trends through the background browser, one request at a time, paused when Google pushes back |
+| `product.py` | Amazon product pages (rank, badge, price, offers, seller, brand, how it ships, size and weight, reviews), critical reviews pages and seller pages (business address) |
+| `reports.py` | the keyword report and Library data, built from the database plus `engine/`; who sells a keyword's top listings and the one-sentence summary |
+| `throttle.py`, `scheduler.py`, `collectors.py` | polite pacing, daily budgets and cooldowns per source; the background schedule; what each scheduled task does |
+| `analysis.py`, `notify.py`, `toast.ps1` | alerts after each refresh, and the Windows notification |
+| `winsys.py`, `singleton.py` | Start with Windows, battery check, one copy of the app at a time |
+| `engine/` | analysis maths without any I/O: sales-badge ranges, Google Trends features and labels, list surges, alerts, who sells (`sellers.py`) and the one-sentence summary (`verdict.py`) |
+| `ui/js/charts.js`, `ui/js/views/` | the charts (plain SVG) and the keyword report and Library screens |
+| `amazon_check.py` | background browser (Playwright) that searches Amazon and reads delivery dates |
+| `xray.py` | Xray export analysis and the Downloads watcher |
+| `ideas.py` | Movers & Shakers / New Releases scan, idea scoring, and niche keywords from Amazon's search suggestions |
+| `file_rank.py` | reads Helium 10 exports, flags and ranks products |
+| `chrome_profiles.py` | finds Chrome/Edge profiles and opens links in one |
+
+To run the tests: `python -m pip install pytest`, then `python -m pytest -q`.
