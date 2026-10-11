@@ -72,7 +72,7 @@ function renderStatus() {
   $('checkerPill').className = 'pill ' + bs[0];
   $('checkerPill').title = b.error || (b.visible ? 'The checker browser is visible' : 'Runs minimised in the background');
   $('checkerPill').innerHTML = '<i></i><span>' + esc(bs[1]) + '</span>';
-  let h = '';
+  let h = ST.jobs_running ? `<span class="pill accent" title="Checks and scans you started are still running. You can use the rest of the app meanwhile."><span class="spin" style="width:11px;height:11px"></span>Working${ST.jobs_running > 1 ? ' (' + ST.jobs_running + ')' : ''}</span>` : '';
   for (const c of Object.keys(MK)) {
     const l = (ST.locations || {})[c] || {}, m = (ST.markets || {})[c] || {};
     const cls = l.ok === true ? 'good' : l.ok === false ? 'warn' : 'weak';

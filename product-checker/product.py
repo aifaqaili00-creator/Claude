@@ -2,11 +2,13 @@
 
 The page script only collects raw text; parse_product() turns it into numbers, so the parsing is tested
 without a browser. A product page pairs a BSR with a badge: that pair is one calibration point for the
-BSR -> monthly units curve (engine/curve.py).
+BSR -> monthly units curve (engine/curve.py). The reviews a page shows are kept too (the critical ones).
 """
 import datetime as dt
+import hashlib
 import math
 import re
+from urllib.parse import urlparse
 
 import amazon_check as ac
 import config
@@ -46,6 +48,35 @@ PRODUCT_JS = r"""
   };
 }
 """
+
+# Runs inside a product page or a reviews page: the reviews it shows, and whether a shopper is signed in.
+REVIEWS_JS = r"""
+() => {
+  const txt = e => e ? (e.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  const acct = txt(document.querySelector('#nav-link-accountList-nav-line-1'));
+  const items = [...document.querySelectorAll('[data-hook="review"]')].slice(0, 40).map(el => {
+    const alt = el.querySelector('[data-hook$="review-star-rating"] .a-icon-alt, i[class*="a-star-"] .a-icon-alt');
+    const star = el.querySelector('i[class*="a-star-"]');
+    const title = el.querySelector('[data-hook="review-title"]');
+    const body = el.querySelector('[data-hook="review-collapsed"]') || el.querySelector('[data-hook="review-body"] .cr-original-review-content')
+      || el.querySelector('[data-hook="review-body"]');
+    return {id: el.id || '', stars: txt(alt) || ((star && star.className.match(/a-star-(?:mini-|medium-)?(\d)\b/)) || [])[1] || '',
+            title: title ? txt(title.querySelector('span:not(.a-icon-alt):not(.a-letter-space):last-child')) || txt(title) : '',
+            body: txt(body).slice(0, 3000), date: txt(el.querySelector('[data-hook="review-date"]')),
+            helpful: txt(el.querySelector('[data-hook="helpful-vote-statement"]')),
+            verified: !!el.querySelector('[data-hook^="avp-badge"]'), local: !el.closest('#cm-cr-global-review-list')};
+  });
+  return {items, signed_in: acct ? !/sign in/i.test(acct) : null};
+}
+"""
+COUNTRY = {'AU': 'australia', 'AE': 'united arab emirates', 'US': 'united states'}     # "Reviewed in Australia on ..."
+STARS = re.compile(r'(\d(?:[.,]\d)?)\s*out of\s*5', re.I)
+REVIEW_JUNK = re.compile(r'the media could not be loaded\.?|read (?:more|less)\s*$', re.I)
+
+
+class SignInNeeded(Exception):
+    """Amazon shows its reviews pages only to shoppers who are signed in."""
+
 
 RANK = re.compile(r'#?\s*([\d][\d,.]*)\s+in\s+([^#(\n]+?)(?=\s*\(|\s*#|$)', re.I)
 DFA_KEYS = ('date first available', 'date first listed on amazon')
@@ -120,6 +151,50 @@ def parse_weight(text):
         return None
 
 
+def parse_size_text(text):
+    """Size and weight pasted from a supplier page (or anywhere): 'Single package size: 30X20X10 cm, Single gross
+    weight: 0.500 kg' or '30*20*10cm 500g' -> ([30, 20, 10] cm, longest first; 0.5 kg). A gross weight wins over a net one."""
+    t = (text or '').lower().replace('*', 'x').replace('×', 'x')
+    dims, _ = parse_dims(t)
+    rest = re.sub(r'[\d.]+\s*x\s*[\d.]+\s*x\s*[\d.]+\s*[a-z"]*', ' ', t)
+    gross = re.search(r'(?:gross|\bg\.\s?w\.?)[^\d]{0,25}([\d.,]+\s*[a-z]+)', rest)
+    return dims, (parse_weight(gross.group(1)) if gross else None) or parse_weight(rest)
+
+
+def _helpful(text):
+    """'12 people found this helpful' -> 12, 'One person found this helpful' -> 1."""
+    t = (text or '').strip().lower()
+    if t.startswith('one '):
+        return 1
+    m = re.search(r'\d[\d,.]*', t)
+    return int(re.sub(r'[,.]', '', m.group(0))) if m else 0
+
+
+def parse_reviews(items, code):
+    """Reviews as a page shows them -> [{id, stars, title, body, day, country, local, helpful, verified}].
+    `local` = reviewed in this marketplace. Reviews without a star rating are skipped."""
+    out, seen = [], set()
+    for r in items or []:
+        s = str(r.get('stars') or '')
+        m = STARS.search(s)
+        stars = float(m.group(1).replace(',', '.')) if m else float(s) if s.isdigit() else None
+        if not stars:
+            continue
+        when = re.search(r'reviewed in (.+?) on (.+)$', r.get('date') or '', re.I)
+        country = when.group(1).strip() if when else ''
+        title = re.sub(r'^\s*\d(?:[.,]\d)?\s*out of\s*5\s*stars\s*', '', r.get('title') or '', flags=re.I).strip()
+        body = ' '.join(REVIEW_JUNK.sub(' ', r.get('body') or '').split())[:1500]
+        rid = re.search(r'R[0-9A-Z]{8,}', r.get('id') or '')
+        rid = rid.group(0) if rid else 'h' + hashlib.sha1((title + '|' + body).encode()).hexdigest()[:15]
+        if rid in seen or not (title or body):
+            continue
+        seen.add(rid)
+        out.append({'id': rid, 'stars': stars, 'title': title[:300], 'body': body, 'day': parse_date(when.group(2)) if when else None,
+                    'country': country[:60], 'local': COUNTRY[code] in country.lower() if country else bool(r.get('local', True)),
+                    'helpful': _helpful(r.get('helpful')), 'verified': bool(r.get('verified'))})
+    return out
+
+
 def parse_product(raw, code, today=None):
     """Raw page text -> one product snapshot (numbers only; missing things are None)."""
     from engine import badge
@@ -147,6 +222,8 @@ def parse_product(raw, code, today=None):
         'delivery_days': days, 'origin': cls['origin'],
         'dfa_day': parse_date(_row(rows, DFA_KEYS)),
         'pkg_cm': dims, 'pkg_kg': weight,
+        'review_items': parse_reviews(raw['review_items'], code) if 'review_items' in raw else None,
+        'signed_in': raw.get('signed_in'),
     }
 
 
@@ -157,8 +234,9 @@ def page_status(p):
     return 'ok' if p['root_rank'] else 'partial'
 
 
-async def read_product(checker, asin, code):
-    """Open /dp/ASIN in the background browser and read it."""
+async def read_product(checker, asin, code, reviews=False):
+    """Open /dp/ASIN in the background browser and read it. With `reviews`, wait for the reviews section too (it can
+    load late), so the reviews it shows are kept."""
     await checker.start()
     page = await checker.ctx.new_page()
     try:
@@ -168,12 +246,46 @@ async def read_product(checker, asin, code):
             await page.wait_for_selector('#productTitle', timeout=6000)
         except Exception:
             pass
+        if reviews:
+            try:
+                await page.evaluate("() => { const r = document.querySelector('#reviewsMedley, #customerReviews'); "
+                                    "if (r) r.scrollIntoView(); else window.scrollTo(0, document.body.scrollHeight); }")
+                await page.wait_for_selector('[data-hook="review"]', timeout=4000)
+            except Exception:
+                pass
         raw = await page.evaluate(PRODUCT_JS)
+        rv = await page.evaluate(REVIEWS_JS)
+        raw['review_items'], raw['signed_in'] = rv['items'], rv['signed_in']
     finally:
         await page.close()
     p = parse_product(raw, code)
     p['status'] = page_status(p)
     return p
+
+
+def critical_url(code, asin):
+    """The listing's 1-3 star reviews on Amazon, most helpful first."""
+    return '%s/product-reviews/%s/?filterByStar=critical&sortBy=helpful&reviewerType=all_reviews%s' % (
+        ac.MARKETS[code]['site'], asin, '&language=en_AE' if code == 'AE' else '')
+
+
+async def read_critical_reviews(checker, asin, code):
+    """The most helpful 1-3 star reviews from the listing's reviews page (10 of them). Raises SignInNeeded when
+    Amazon sends the browser to its sign-in page instead."""
+    await checker.start()
+    page = await checker.ctx.new_page()
+    try:
+        await checker._goto(page, critical_url(code, asin), code)
+        if ac.SIGNIN.search(urlparse(page.url).path):
+            raise SignInNeeded('Amazon %s shows reviews pages only to shoppers who are signed in' % ac.MARKETS[code]['name'])
+        try:
+            await page.wait_for_selector('[data-hook="review"]', timeout=5000)
+        except Exception:
+            pass
+        rv = await page.evaluate(REVIEWS_JS)
+    finally:
+        await page.close()
+    return parse_reviews(rv['items'], code)
 
 
 def calib_point(market, asin, p, ts):

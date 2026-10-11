@@ -8,6 +8,7 @@ import time
 
 import amazon_check as ac
 import config
+import product
 import storage
 
 H10_ERROR = 0.25
@@ -15,6 +16,7 @@ ASSUMED_LANDED_SHARE = 0.25   # product + freight as a share of the price, until
 BACKCAST_MONTHS = 24
 FORECAST_MONTHS = 6
 MIN_TRENDS_QUALITY = 0.5
+REVIEW_MAX_AGE = 14 * 86400   # a listing's reviews are read again after two weeks
 
 
 def est(v, lo=None, hi=None, basis='estimated', conf='medium', **extra):
@@ -574,6 +576,88 @@ def niche_inputs(conn, market, kw, settings, cogs_usd=None):
                                                                 if not p['sponsored'])}
 
 
+def size_suggestion(conn, market, kw, top=5):
+    """The typical package size and weight for a keyword: the median of its best page-1 listings whose Amazon product
+    page gave a size (a Helium 10 export can give the weight). 'missing' = top listings without a size, best first."""
+    out = {'dims_cm': None, 'kg': None, 'n': 0, 'asins': [], 'missing': [], 'searched': False}
+    s = storage.latest_serp(conn, market, kw)
+    if not s:
+        return out
+    out['searched'] = True
+    dims, kgs = [], []
+    for a in list(dict.fromkeys(r['asin'] for r in s['rows'] if not r.get('sponsored') and r.get('asin')))[:top]:
+        info = storage.asin_info(conn, market, a) or {}
+        d, kg = [info.get('pkg_l_cm'), info.get('pkg_w_cm'), info.get('pkg_h_cm')], info.get('pkg_kg')
+        if not kg:
+            h = conn.execute('SELECT r.weight_kg FROM h10_row r JOIN import_file f ON f.id=r.import_id WHERE f.market=? '
+                             'AND r.asin=? AND r.weight_kg > 0 ORDER BY f.as_of DESC LIMIT 1', (market, a)).fetchone()
+            kg = h[0] if h else None
+        if kg:
+            kgs.append(kg)
+        if all(d):
+            dims.append(d)
+            out['asins'].append(a)
+        else:
+            out['missing'].append(a)
+    if dims:                                            # each listing is stored longest side first
+        out['dims_cm'] = [round(_median([x[i] for x in dims]), 1) for i in range(3)]
+    out['kg'] = round(_median(kgs), 3) if kgs else None
+    out['n'] = len(dims)
+    return out
+
+
+def pick_reviews(rows, n=5, per_listing=2):
+    """The top negative reviews: 1-2 stars before 3 stars, this marketplace before other countries, then the most
+    helpful and the newest. At most `per_listing` from one listing while other listings still have some."""
+    ranked = sorted(rows, key=lambda r: (r['stars'] > 2, not r['local'], -(r['helpful'] or 0),
+                                         -int((r['day'] or '0').replace('-', ''))))
+    out, per = [], {}
+    for r in ranked:
+        if len(out) < n and per.get(r['asin'], 0) < per_listing:
+            out.append(r)
+            per[r['asin']] = per.get(r['asin'], 0) + 1
+    out += [r for r in ranked if r not in out][:n - len(out)]
+    return sorted(out, key=ranked.index)
+
+
+def reviews_for(db, market, kw=None, asin=None, top=5, now=None):
+    """The top negative reviews of a keyword's best page-1 listings (or of one listing), with the listing each one is
+    about. `todo` = those listings whose reviews were not read in the last two weeks, best first."""
+    now = now or time.time()
+    site = ac.MARKETS[market]['site']
+
+    def build(conn):
+        out = {'market': market, 'items': [], 'asins': [], 'todo': [], 'searched': True, 'read_at': None, 'read': 0, 'critical': 0}
+        names = {}
+        if asin:
+            asins = [asin]
+        else:
+            s = storage.latest_serp(conn, market, config.norm_kw(kw or ''))
+            if not s:
+                out['searched'] = False
+                return out
+            organic = [r for r in s['rows'] if not r.get('sponsored') and r.get('asin')]
+            names = {r['asin']: r.get('title') for r in organic}
+            asins = list(dict.fromkeys(r['asin'] for r in organic))[:top]
+        rows, reads = storage.reviews_of(conn, market, asins)
+        for a in asins:
+            rd = reads.get(a) or {}
+            last = max(rd.get('page_at') or 0, rd.get('critical_at') or 0)
+            if last < now - REVIEW_MAX_AGE:
+                out['todo'].append(a)
+            out['read_at'] = max(out['read_at'] or 0, last) or None
+            out['read'] += 1 if last else 0                        # listings read, and how many from their reviews page
+            out['critical'] += 1 if rd.get('critical_at') else 0
+        out['asins'] = asins
+        for r in pick_reviews(rows):
+            name = names.get(r['asin']) or (storage.asin_info(conn, market, r['asin']) or {}).get('title') or r['asin']
+            out['items'].append({k: r[k] for k in ('asin', 'stars', 'title', 'body', 'day', 'country', 'helpful')} |
+                                {'local': bool(r['local']), 'verified': bool(r['verified']), 'listing': name,
+                                 'url': '%s/dp/%s' % (site, r['asin']), 'all_url': product.critical_url(market, r['asin'])})
+        return out
+    return db.read(build)
+
+
 def money(db, market, kw, settings, now=None):
     """Opportunity, saturation, unit economics at the median price, launch plan, and US -> AU/UAE arbitrage."""
     from engine import planner, scores
@@ -588,7 +672,7 @@ def money(db, market, kw, settings, now=None):
         plan = planner.plan(season.get('si'), season.get('strength'), season.get('reliable'), season.get('peak_month'),
                             config.market_today(market).isoformat(), market=market) if season.get('si') else \
             {'status': 'unknown', 'note': 'Seasonality unknown: fetch Google Trends for this keyword first'}
-        out = {'market': market, 'cogs_usd': cogs, 'plan': plan, 'arbitrage': {}}
+        out = {'market': market, 'cogs_usd': cogs, 'plan': plan, 'arbitrage': {}, 'size': size_suggestion(conn, market, kw_norm)}
         if n:
             m = dict(n['metrics'])
             m.pop('target', None)

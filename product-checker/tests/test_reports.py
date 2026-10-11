@@ -78,6 +78,50 @@ def test_empty_report(db):
     assert r['monthly'] == [] and r['now'] is None and r['trends']['status'] == 'none'
 
 
+def test_markets_carry_the_typical_price(db):
+    fill(db)
+    r = reports.keyword_report(db, 'AU', 'moving bags', SETTINGS)
+    assert r['markets']['AU']['price_med'] == 20.0 and r['markets']['US']['price_med'] is None    # median of page 1, no ads
+
+
+def test_size_suggestion_from_the_top_listings(db):
+    assert reports.size_suggestion(db.read(lambda c: c), 'AU', 'moving bags')['searched'] is False
+    fill(db)
+    for asin, dims, kg in (('A1', [30.0, 20.0, 10.0], 0.5), ('A3', [40.0, 30.0, 10.0], 1.5)):
+        db.write(storage.save_product, 'AU', asin, {'title': 'x', 'root_rank': 10, 'status': 'ok', 'pkg_cm': dims, 'pkg_kg': kg})
+    db.write(storage.save_import, 'xray', 'AU', 'moving bags', 'w.csv', 'sha-w', [{'asin': 'A2', 'title': 't', 'weight_kg': 0.9}],
+             ts(2026, 9, 20))
+    sz = db.read(reports.size_suggestion, 'AU', 'Moving Bags')
+    assert sz['dims_cm'] == [35.0, 25.0, 10.0] and sz['kg'] == 0.9 and sz['n'] == 2      # A2's weight is from Helium 10
+    assert sz['asins'] == ['A1', 'A3'] and sz['missing'] == ['A2', 'A4', 'A5']           # the ad (A6) is never used
+    assert reports.money(db, 'AU', 'moving bags', SETTINGS)['size'] == sz
+
+
+def test_top_negative_reviews_of_the_best_listings(db):
+    assert reports.reviews_for(db, 'AU', 'moving bags')['searched'] is False
+    fill(db)
+    now = ts(2026, 10, 9)
+
+    def rv(i, stars, helpful, local=True):
+        return {'id': 'R%010d' % i, 'stars': stars, 'title': 'Problem %d' % i, 'body': 'b', 'day': '2026-09-01',
+                'country': 'Australia' if local else 'the United States', 'local': local, 'helpful': helpful, 'verified': True}
+    db.write(storage.save_reviews, 'AU', 'A1', [rv(1, 1, 50), rv(2, 2, 40), rv(3, 1, 30), rv(4, 1, 20), rv(9, 5, 999)],
+             'critical', now - DAY)
+    db.write(storage.save_reviews, 'AU', 'A2', [rv(5, 3, 500), rv(6, 2, 1, local=False)], 'page', now - 20 * DAY)
+    db.write(storage.save_product, 'AU', 'A3', {'title': 'x', 'root_rank': 10, 'status': 'ok', 'reviews': 80,
+                                                'review_items': [rv(7, 1, 5)]}, now)
+    db.write(storage.save_product, 'AU', 'A4', {'title': 'x', 'root_rank': 10, 'status': 'ok', 'reviews': 80, 'review_items': []}, now)
+    r = reports.reviews_for(db, 'AU', 'Moving Bags', now=now)
+    json.dumps(r, allow_nan=False)
+    assert [i['title'] for i in r['items']] == ['Problem 1', 'Problem 2', 'Problem 7', 'Problem 6', 'Problem 5']   # 2 a listing
+    assert r['todo'] == ['A2', 'A4', 'A5'] and r['read'] == 3 and r['critical'] == 1 and r['read_at'] == now   # A2 is old, A4 showed none
+    first = r['items'][0]
+    assert first['listing'] == 'Title A1' and first['url'].endswith('/dp/A1') and 'filterByStar=critical' in first['all_url']
+    assert first['local'] is True and first['verified'] is True
+    one = reports.reviews_for(db, 'AU', asin='A1', now=now)
+    assert [i['title'] for i in one['items']] == ['Problem 1', 'Problem 2', 'Problem 3', 'Problem 4'] and one['todo'] == []
+
+
 def test_backcast_and_forecast_follow_the_trend_shape(db):
     fill(db)
     import fakeweb

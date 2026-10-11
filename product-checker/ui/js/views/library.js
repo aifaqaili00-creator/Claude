@@ -3,14 +3,15 @@
 (() => {
   let tab = 'keywords', lib = null;
   const SUB = 'Every keyword you checked, your recent checks and your Helium 10 history';
-  view('library', {title: 'Library', sub: SUB, onShow: p => show(p[0] || tab)});
-  view('history', {title: 'Library', sub: SUB, section: 'library', onShow: () => show('checks')});
+  view('library', {title: 'Library', sub: SUB, onShow: p => { drawMap(); show(p[0] || tab); }});
+  view('history', {title: 'Library', sub: SUB, section: 'library', onShow: () => { drawMap(); show('checks'); }});
+  const drawMap = () => drawOppMap($('mapChart'), segVal($('mapMk')));
   seg($('libTabs'), v => { history.replaceState(null, '', '#/library/' + v); show(v); });
   seg($('mapMk'), v => drawOppMap($('mapChart'), v));
+  window.addEventListener('pc:currency', e => { if (e.detail.key === 'price_currency' && currentView === 'library') drawMap(); });
   $('libFilter').addEventListener('input', () => renderKeywords());
 
   async function show(t) {
-    drawOppMap($('mapChart'), segVal($('mapMk')));
     tab = ['keywords', 'checks', 'imports'].includes(t) ? t : 'keywords';
     setSeg($('libTabs'), tab);
     $('libKeywords').hidden = tab !== 'keywords';

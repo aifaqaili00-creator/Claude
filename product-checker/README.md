@@ -3,6 +3,7 @@
 A small Windows app that runs on your own PC, in its own window.
 
 1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**. **Price across markets** puts the typical page-1 price of each country side by side, converted to your currency, so you see at once where the product sells higher.
+   Switch to **A list** to check up to 20 products in one go (one per line). A table shows, for every product and country, the local and overseas sellers, buyers a month and the typical price, with the most buyers per local seller first; each row has **Report** and **Watch**, and **Save to Excel** keeps the table.
 2. **Product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet.
    **Niche keywords** shows what shoppers type for a niche and how each keyword does in every country.
 3. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
@@ -11,12 +12,14 @@ A small Windows app that runs on your own PC, in its own window.
 6. **Settings:** theme (light, dark, or the same as Windows), your currency, your Chrome profile, delivery locations and how checks run.
    - **Currency:** choose **your currency** (US$, A$, AED or €). Prices from the other marketplaces then also show “≈” in it, for example `AED 116 ≈ US$ 32`, and tables that mix marketplaces sort by the converted price. Choose separately the currency **your supplier quotes in**, used by **Profit?** and the profit calculator. Settings shows today's rates between all four currencies.
    - **Currency** in the top bar opens a converter between US$, A$, AED and € from any screen; click a result to copy it.
+   - **Save to Excel** after a check adds each country's currency and typical price, and every price converted to your currency.
 
 7. **Keyword report** (press **Open report** after a check, or open a keyword in the Library):
    - search interest over 5 years (Google Trends) and the seasonal pattern;
    - **units sold and revenue per month**: Helium 10 numbers when you have an Xray export for that month, otherwise an estimate from Amazon's "bought in past month" badges, plus a backcast from the Google Trends shape;
    - **demand vs supply** since you started checking: page-1 sales next to local and overseas sellers;
-   - prices, reviews, the top listings, and every market side by side.
+   - prices, reviews, the top listings, and every market side by side;
+   - **Top negative reviews**: the 5 most useful 1–3★ reviews of the top 5 listings on page 1 (not the ads), worst ratings and reviews from that country first, then the most helpful; at most 2 from one listing. They are read from Amazon by themselves when you open the report (and again after two weeks); **Read again** reads them now. Amazon shows its critical reviews pages only to signed-in shoppers, so otherwise they come from the reviews on each product page (only a few each). Each one links to the listing and to all its critical reviews (in your Chrome).
    Every estimate shows its range and where it came from. A blocked search is shown as a gap, never as zero.
 8. **Library:** every keyword you have checked, your recent checks, and your Helium 10 imports.
 
@@ -27,13 +30,16 @@ A small Windows app that runs on your own PC, in its own window.
    - Under **Settings → Automatic refresh**, turn on **Keep refreshing after I close the window** and **Start with Windows** to keep the data fresh all the time. Important news then arrives as a Windows notification (not at night, and not while the app is in front of you).
    - Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; that marketplace pauses and Home offers **Solve now**.
 
-10. **Product report** (open it from a keyword report's top listings, a radar card, or `#/p/<market>/<ASIN>`): the Best Sellers Rank over time, and **units sold and revenue per month for that one product**, estimated from its rank through a sales curve the app fits for each marketplace. Listings that show both a rank and a "bought in past month" badge teach the curve, as do your Helium 10 exports; **Track daily** reads the page every day. Until a marketplace has 30 readings the curve leans on default values, and the report says so. **Health** shows how well each curve fits.
+10. **Product report** (open it from a keyword report's top listings, a radar card, or `#/p/<market>/<ASIN>`): the Best Sellers Rank over time, and **units sold and revenue per month for that one product**, estimated from its rank through a sales curve the app fits for each marketplace. Listings that show both a rank and a "bought in past month" badge teach the curve, as do your Helium 10 exports; **Track daily** reads the page every day. Until a marketplace has 30 readings the curve leans on default values, and the report says so. **Health** shows how well each curve fits. It also shows that product's **top negative reviews**, read the same way as in the keyword report.
 
 11. **Money and decisions** (in every keyword report):
     - **Opportunity score** (0–100, Strong / Worth a look / Weak / Skip), built from demand, momentum, competition, the local gap and margin, with a reason for each part. Risky product types lower it.
     - **Profit per sale**: Amazon's referral, FBA, storage and placement fees for that marketplace, GST/VAT (set whether you are registered under Settings), freight by sea or air, duty, ads and returns. Type the product cost in US$, A$, AED or €. It also gives return on stock, break-even ad spend, the highest product cost for a 20% margin (in your supplier's currency), and a price grid that marks fee steps. What you type stays there when the report refreshes.
+    - **Size and weight** are filled in for you: **Refresh now** also opens the product pages of the top page-1 listings (not the ads) and reads their package size and weight, the ones Amazon's FBA fee uses. The calculator takes the median of up to 3 (or the Helium 10 weight if no page shows one). Click **Read size from Amazon** (or **Read more listings**) to do it without a full refresh. Your own numbers always win; **Use Amazon's size** puts Amazon's back. To use your supplier's size instead, paste the text from their page (e.g. `Single package size: 30X20X10 cm, Single gross weight: 0.5 kg`, inches and pounds work too) into the box under the form. The FBA fee line shows which size tier it lands in.
+    - **First order**: type how many units you would order. You see the money it needs (product, freight and duty), after how many sales the money is back, the profit on the whole order, and roughly how many months it lasts at the page-1 average.
+    - The report header also opens the same search on **Alibaba** (suppliers) and on the country's other big shop: **Noon** (UAE), **eBay** (Australia) or **Walmart** (USA).
     - **Launch plan**: from the seasonal pattern, the dates to order, ship and be in stock before demand rises, by sea and by air. Home reminds you two weeks before an order-by date.
-    - For US keywords, **Bring it from the USA?** scores how well the product would travel to Australia and the UAE.
+    - For US keywords, **Bring it from the USA?** scores how well the product would travel to Australia and the UAE, and shows each country's typical price against the USA's (for example "+20% against the USA").
     - Fee tables are dated 2026-10-09 and include links to check them; the Australian and UAE tables are estimates. US duty changed several times in 2026, so check it before ordering.
 
 **Your history is kept.** Every check, Google Trends sample and Helium 10 export is stored in `%LOCALAPPDATA%\ProductChecker\market.db`, with automatic backups in its `backup` folder. Helium 10 exports (Xray, Black Box, Magnet, Cerebro) in your Downloads folder are imported when the app starts, so months you researched before give you history from day one.
@@ -57,7 +63,7 @@ Every check now shows how the buyers are shared out among the sellers:
 - **Sales per seller:** buyers a month on page 1 divided by the number of sellers there, for example "≈ 39 sales per seller". **Per local seller** divides by the local sellers only; "none yet" means nobody delivers locally.
 - **Sales taken by overseas sellers:** the share of sales going to listings that ship from abroad. A high share means buyers are waiting for slow deliveries, which is a chance for local stock.
 - **Sales per seller chart:** one bar per listing, longest first. **Green** = local seller, **orange** = ships from overseas, **grey** = unknown. The thin line on each bar is the range behind the estimate. Hatched bars are the top "100K+" badge, where the real number is unknown. Listings without a badge are counted below the chart, not drawn as zero.
-- **Opportunity map** (Library, and Product ideas after **Check AU & UAE**): every product you checked is a dot. **Up** = more buyers a month (log scale), **right** = more local sellers. The **top-left corner**, with many buyers and few local sellers, is where the opportunities are. Click a dot to open its report.
+- **Opportunity map** (Library, and Product ideas after **Check AU & UAE**): every product you checked is a dot. **Up** = more buyers a month (log scale), **right** = more local sellers. The **top-left corner**, with many buyers and few local sellers, is where the opportunities are. Hover a dot for its buyers, sellers and typical price (≈ in your currency); click it to open its report.
 - **Idea and radar cards** show, after a check, a **Buyers** bar and a **Sellers** bar for each country (local green, overseas orange) and "≈ N buyers per local seller".
 
 All of these come from Amazon's "bought in past month" badges, which are ranges and are missing on many listings, so they are estimates and usually too low. Use them to compare products, not as exact sales.
@@ -193,7 +199,7 @@ To change these numbers, edit `TARGETS` at the top of `file_rank.py`.
 | `storage.py` | `market.db` (SQLite): every search, list scan, Trends sample and import; one writer thread, backups, retention |
 | `importer.py` | Helium 10 exports (Xray, Black Box, Magnet, Cerebro) into the database, once per file |
 | `trends.py` | Google Trends through the background browser, one request at a time, paused when Google pushes back |
-| `product.py` | Amazon product pages: rank, badge, price, offers, seller, size and weight |
+| `product.py` | Amazon product pages: rank, badge, price, offers, seller, size and weight, reviews; critical reviews pages |
 | `reports.py` | the keyword report and Library data, built from the database plus `engine/` |
 | `throttle.py`, `scheduler.py`, `collectors.py` | polite pacing, daily budgets and cooldowns per source; the background schedule; what each scheduled task does |
 | `analysis.py`, `notify.py`, `toast.ps1` | alerts after each refresh, and the Windows notification |

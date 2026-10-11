@@ -82,6 +82,7 @@ function inMine(v, mk, {short = false, d = null} = {}) {
 const approx = (v, mk, opt) => { const s = inMine(v, mk, opt); return s ? '≈ ' + s : ''; };
 const fxSpan = (v, mk, opt) => { const a = approx(v, mk, opt); return a ? ` <span class="fx" title="${esc(fxNote())}">${esc(a)}</span>` : ''; };
 const fxSub = (v, mk, opt) => { const a = approx(v, mk, opt); return a ? `<div class="sub fx" title="${esc(fxNote())}">${esc(a)}</div>` : ''; };
+const priceFx = (v, mk) => v == null ? '' : curMoney(v, MK_CUR[mk]) + (approx(v, mk) ? ' ' + approx(v, mk) : '');   // plain text
 const curSeg = (id, cur, label) => `<div class="seg slim"${id ? ` id="${id}"` : ''} role="group" aria-label="${esc(label)}">` +
   CURRENCIES.map(c => `<button type="button" data-v="${c}" aria-pressed="${c === cur}" title="${CUR_NAME[c]}">${CUR_SYM[c]}</button>`).join('') + '</div>';
 
@@ -188,13 +189,72 @@ function wireSourcing(root, find) {
   });
 }
 
+/* ---------- top negative reviews (1–3★) of a keyword's best listings, or of one listing ---------- */
+const rvJobs = new Map(), rvTried = new Set();     // report -> running job; listings already read (or tried) this session
+function rvHtml(r, q, extra) {
+  const items = r ? r.items : [];
+  const stars = n => `<span class="rvstars" role="img" aria-label="${n} out of 5 stars">${'★'.repeat(Math.round(n))}<span class="off">${'★'.repeat(5 - Math.round(n))}</span></span>`;
+  const when = day => day ? new Date(day + 'T12:00:00').toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}) : '';
+  const list = items.map(i => `<div class="rv">
+      <div class="rvhead">${stars(i.stars)}<b>${esc(i.title || 'No title')}</b></div>
+      ${i.body ? `<div class="rvbody" tabindex="0" title="Click to read it all">${esc(i.body)}</div>` : ''}
+      <div class="sub">${[i.country ? 'Reviewed in ' + esc(i.country) : '', esc(when(i.day)), i.helpful ? num(i.helpful) + ' found it helpful' : '',
+        i.verified ? 'verified purchase' : '', q.asin ? '' : `on <a data-open="${esc(i.url)}" title="${esc(i.listing)}">${esc(i.listing.length > 60 ? i.listing.slice(0, 60) + '…' : i.listing)}</a>`,
+        `<a data-open="${esc(i.all_url)}" title="Opens in your Chrome">all its critical reviews</a>`].filter(Boolean).join(' · ')}</div>
+    </div>`).join('');
+  const empty = !r ? '' : !r.searched ? 'Search this keyword first (Refresh now). Then the negative reviews of its top listings are read from Amazon.'
+    : r.read_at && !items.length ? 'No 1–3★ reviews among the reviews Amazon showed.' : '';
+  const src = r && r.read_at ? `Read ${ago(r.read_at)} from ${!r.critical ? 'the reviews on each product page (Amazon shows only a few there unless you are signed in to Amazon in the checker’s browser)'
+    : r.critical < r.read ? 'Amazon’s critical reviews pages and product pages' : 'Amazon’s critical reviews pages'}.` : '';
+  const again = r && r.searched && !rvJobs.has(q.market + '|' + (q.asin || q.kw)) ? `<button type="button" class="btn slim" data-rv-read="${r.read_at ? 'force' : ''}">${icon('refresh')}${r.read_at ? 'Read again' : 'Read them now'}</button>` : '';
+  return `<div class="head"><h3>Top negative reviews</h3><div class="row">${extra ? `<span class="small">${extra}</span>` : ''}${again}</div></div>
+    <div class="small muted">1–3★ reviews ${q.asin ? 'of this listing' : 'of the top ' + ((r && r.asins.length) || 5) + ' listings on page 1'} in ${esc(MK[q.market])}, most helpful first${q.asin ? '' : ', at most 2 from one listing'}.</div>
+    ${list ? `<div class="rvlist">${list}</div>` : empty ? `<div class="small">${empty}</div>` : ''}
+    ${src ? `<div class="small muted">${src}</div>` : ''}`;
+}
+/* Draws into element `id` for q = {market, kw} or {market, asin}, and reads the reviews from Amazon by itself
+   when they are missing or two weeks old (once per listing and session, and only if you stay on the report). */
+async function negReviews(id, q) {
+  const box = $(id);
+  if (!box) return;
+  const key = q.market + '|' + (q.asin || q.kw);
+  const mine = () => { const e = $(id); return e && e.dataset.rv === key ? e : null; };
+  let last = null;
+  const draw = (r, extra = '') => { const e = mine(); if (e) { last = r || last; e.innerHTML = rvHtml(last, q, extra); } };
+  const read = async force => {
+    let job = rvJobs.get(key);
+    if (!job) {
+      ((last && (force ? last.asins : last.todo)) || []).forEach(a => rvTried.add(q.market + a));
+      try { job = (await api('/api/report/reviews', {...q, force})).job; } catch (err) { draw(null, failPill(err.message)); return; }
+      rvJobs.set(key, job);
+    }
+    draw(null, busy('Opening Amazon…'));
+    try {
+      const r = await waitJob(job, line => draw(null, busy(line)));
+      rvJobs.delete(key);
+      draw(r);
+    } catch (err) { rvJobs.delete(key); draw(null, failPill(err.message)); }
+  };
+  box.dataset.rv = key;
+  box.onclick = e => {
+    const b = e.target.closest('[data-rv-read]'), t = e.target.closest('.rvbody');
+    if (b) { b.disabled = true; read(b.dataset.rvRead === 'force'); } else if (t) t.classList.toggle('open');
+  };
+  box.onkeydown = e => { if (e.key === 'Enter' && e.target.classList.contains('rvbody')) e.target.classList.toggle('open'); };
+  try { draw(await api('/api/report/reviews?market=' + q.market + (q.asin ? '&asin=' + encodeURIComponent(q.asin) : '&kw=' + encodeURIComponent(q.kw)))); }
+  catch (err) { draw(null, failPill(err.message)); return; }
+  if (!last) return;
+  if (rvJobs.has(key)) read(false);
+  else if (last.todo.some(a => !rvTried.has(q.market + a))) setTimeout(() => { if (mine() && !rvJobs.has(key)) read(false); }, 1500);
+}
+
 /* ---------- opportunity map: buyers a month against local sellers, for every checked product ---------- */
 async function drawOppMap(el, mk) {
   try {
     const d = await api('/api/opportunity_map?market=' + encodeURIComponent(mk));
     Charts.oppMap(el, {title: 'Opportunity map · Amazon ' + (MK[mk] || mk), height: 360,
       sub: 'Top-left = many buyers and few local sellers. Buyers are on a log scale.',
-      points: d.points, xLine: d.local_line, yLine: d.demand_line,
+      points: d.points, xLine: d.local_line, yLine: d.demand_line, priceFmt: v => priceFx(v, mk),
       onOpen: p => { location.hash = '#/k/' + mk + '/' + encodeURIComponent(p.kw); },
       empty: 'No checked products with sales badges in ' + (MK[mk] || mk) + ' yet. Run Check sellers or “Check AU & UAE” on some ideas.',
       foot: ['Buyers: “bought in past month” badges (estimate)', 'Latest good check of each product, last ' + d.days + ' days']

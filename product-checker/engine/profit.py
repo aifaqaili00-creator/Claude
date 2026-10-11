@@ -128,7 +128,7 @@ def unit_economics(inp, table=None):
         'Profit': r2(profit), 'Margin': round(profit / net_sales, 4) if net_sales else None,
         'ROI': round(profit / landed, 4) if landed > 0 else None,
         'BreakEvenACoS': round((profit + ads) / price, 4) if price else None,
-        'tier': tier.get('tier'), 'fee_source': source, 'fx': rate, 'warnings': warnings,
+        'tier': tier.get('tier'), 'tier_label': tier.get('label'), 'fee_source': source, 'fx': rate, 'warnings': warnings,
     }
     out['waterfall'] = [[k, out[k]] for k in ('NetSales', 'Referral', 'FBA', 'Storage', 'Placement', 'FeeTax', 'Landed', 'Ads',
                                               'Returns', 'Other') if out[k]] + [['Profit', out['Profit']]]

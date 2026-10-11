@@ -44,6 +44,38 @@ def test_parse_product_au_formats_and_missing_bits():
     assert product.parse_ranks('') == [] and product.parse_date('soon') is None and product.parse_dims('n/a') == (None, None)
 
 
+def test_size_pasted_from_a_supplier_page():
+    alibaba = 'Selling Units: Single item\nSingle package size: 30X20X10 cm\nSingle gross weight: 0.500 kg'
+    assert product.parse_size_text(alibaba) == ([30, 20, 10], 0.5)
+    assert product.parse_size_text('Size: 20*35*8cm  N.W.: 0.45kg  G.W.: 0.6kg') == ([35, 20, 8], 0.6)        # gross wins
+    assert product.parse_size_text('carton 30 x 20 x 10 cm, gross weight 650 g') == ([30, 20, 10], 0.65)
+    assert product.parse_size_text('15.7 x 11.8 x 3.9 inches; 1.1 Pounds') == ([39.88, 29.97, 9.91], 0.499)
+    assert product.parse_size_text('600g') == (None, 0.6) and product.parse_size_text('hello') == (None, None)
+
+
+def test_reviews_as_the_page_shows_them():
+    items = [
+        {'id': 'customer_review-R1AAAAAAAAAA1', 'stars': '1.0 out of 5 stars', 'title': '1.0 out of 5 stars Fell apart in a week',
+         'body': 'The zip broke. The media could not be loaded. Read more', 'date': 'Reviewed in Australia on 3 March 2025',
+         'helpful': '12 people found this helpful', 'verified': True, 'local': True},
+        {'id': 'R2BBBBBBBBBB2', 'stars': '2', 'title': 'Too small', 'body': 'Smaller than the photos',
+         'date': 'Reviewed in the United States on March 5, 2025', 'helpful': 'One person found this helpful', 'local': True},
+        {'id': 'R3CCCCCCCCCC3', 'stars': '', 'title': 'No stars', 'body': 'x'},                    # no rating: skipped
+        {'id': 'R1AAAAAAAAAA1', 'stars': '1.0 out of 5 stars', 'title': 'again', 'body': 'x'},     # the same review twice
+        {'id': '', 'stars': '5,0 out of 5 stars', 'title': 'Love it', 'body': 'Great', 'date': '', 'helpful': ''},
+    ]
+    r = product.parse_reviews(items, 'AU')
+    assert r[0] == {'id': 'R1AAAAAAAAAA1', 'stars': 1.0, 'title': 'Fell apart in a week', 'body': 'The zip broke.',
+                    'day': '2025-03-03', 'country': 'Australia', 'local': True, 'helpful': 12, 'verified': True}
+    assert (r[1]['stars'], r[1]['day'], r[1]['local'], r[1]['helpful'], r[1]['verified']) == (2.0, '2025-03-05', False, 1, False)
+    assert len(r) == 3 and r[2]['id'].startswith('h') and r[2]['stars'] == 5.0 and r[2]['local'] is True
+    p = product.parse_product({**RAW, 'review_items': items[:1], 'signed_in': False}, 'US', dt.date(2026, 10, 10))
+    assert p['review_items'][0]['local'] is False and p['signed_in'] is False                 # an Australian review on amazon.com
+    assert product.parse_product(RAW, 'US')['review_items'] is None
+    assert product.critical_url('AE', 'B0X') == 'https://www.amazon.ae/product-reviews/B0X/?filterByStar=critical&sortBy=helpful' \
+        '&reviewerType=all_reviews&language=en_AE'
+
+
 @pytest.fixture
 def db(tmp_path):
     d = storage.DB(tmp_path / 'm.db').open()

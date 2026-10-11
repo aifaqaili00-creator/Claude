@@ -73,11 +73,23 @@ def test_reopening_keeps_data_and_newer_schema_is_refused(tmp_path):
 def test_older_schema_is_backed_up_before_migrating(tmp_path, monkeypatch):
     d = storage.DB(tmp_path / 'm.db').open()
     d.close()
-    monkeypatch.setitem(storage.MIGRATIONS, 2, 'CREATE TABLE extra(x INT)')
-    monkeypatch.setattr(storage, 'SCHEMA_VERSION', 2)
+    nxt = storage.SCHEMA_VERSION + 1
+    monkeypatch.setitem(storage.MIGRATIONS, nxt, 'CREATE TABLE extra(x INT)')
+    monkeypatch.setattr(storage, 'SCHEMA_VERSION', nxt)
     d = storage.DB(tmp_path / 'm.db').open()
-    assert list((tmp_path / 'backup').glob('pre-migrate-v1-*.db'))
+    assert list((tmp_path / 'backup').glob('pre-migrate-v%d-*.db' % (nxt - 1)))
     assert d.one("SELECT name FROM sqlite_master WHERE name='extra'")
+    d.close()
+
+
+def test_a_version_1_database_gets_the_review_tables(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, 'SCHEMA_VERSION', 1)
+    d = storage.DB(tmp_path / 'm.db').open()
+    d.write(storage.save_serp, summary())
+    d.close()
+    monkeypatch.undo()
+    d = storage.DB(tmp_path / 'm.db').open()
+    assert d.one("SELECT name FROM sqlite_master WHERE name='review_read'") and d.one('SELECT COUNT(*) AS n FROM serp_snapshot')['n'] == 1
     d.close()
 
 

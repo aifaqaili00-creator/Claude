@@ -139,8 +139,12 @@
         <div class="panel">
           <form class="search" id="checkForm" autocomplete="off">
             <div class="field">
-              <label for="kw">Product to check</label>
+              <div class="lblrow"><label for="kw" id="kwLbl">Product to check</label>
+                <div class="seg slim" id="checkMode" role="group" aria-label="One product or a list">
+                  <button type="button" data-v="one" aria-pressed="true">One product</button>
+                  <button type="button" data-v="list" aria-pressed="false">A list</button></div></div>
               <input type="text" id="kw" placeholder="e.g. moving bags, overnight oats containers, sauna hat">
+              <textarea id="kwList" rows="5" hidden title="Ctrl+Enter checks the list" placeholder="One product per line, up to 20&#10;moving bags&#10;sauna hat&#10;dog bed"></textarea>
             </div>
             <div class="field">
               <span class="lbl">Countries</span>
@@ -168,8 +172,8 @@
               <button class="btn" id="btnExportCheck"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
             </div>
           </div>
+          <div id="priceCmp" class="pcmp-wrap"></div>
           <div class="cards" id="cards"></div>
-          <div id="priceCmp" style="margin-top:14px"></div>
         </div>
 
         <div id="listOut" hidden>
@@ -193,7 +197,22 @@
         <div class="panel empty" id="checkEmpty">
           <h2>How many sellers deliver fast?</h2>
           <p>Type a product and press <b>Check sellers</b>. All three Amazon sites are searched at the same time.<br>
-          If only <b>3–4 listings</b> arrive within a few days, the rest ship from overseas. Stock sent to Amazon (FBA) would stand out.</p>
+          If only <b>3–4 listings</b> arrive within a few days, the rest ship from overseas. Stock sent to Amazon (FBA) would stand out.<br>
+          Have several ideas? Switch to <b>A list</b> and check up to 20 products in one go.</p>
+        </div>
+
+        <div id="batchOut" hidden class="stackv">
+          <div class="head">
+            <div><h2 id="bTitle"></h2><div class="small" id="bSub"></div></div>
+            <div class="row">
+              <select id="bSort" aria-label="Order of the products">
+                <option value="gap">Most buyers per local seller first</option><option value="demand">Most buyers first</option><option value="typed">As typed</option>
+              </select>
+              <button class="btn" id="bExport"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
+            </div>
+          </div>
+          <div class="tablewrap"><table id="bTable"></table></div>
+          <p class="small">Each cell: local and overseas sellers on page 1 and the typical price. <b>Buyers</b> come from “bought in past month” badges (an estimate). A green <b>gap</b> means 4 or fewer local sellers. Every product is kept in the Library and on its opportunity map.</p>
         </div>
       </section>
 

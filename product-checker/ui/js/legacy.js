@@ -29,14 +29,24 @@ document.addEventListener('click', e => {
 /* ---------- Check sellers ---------- */
 $('mkSeg').dataset.multi = '1';
 seg($('mkSeg'));
-let currentJob = null, checkData = null;
+let currentJob = null, checkData = null, bData = null;
+function setCheckMode(mode) {
+  const list = mode === 'list';
+  setSeg($('checkMode'), mode);
+  $('kw').hidden = list; $('kwList').hidden = !list;
+  $('kwLbl').textContent = list ? 'Products to check, one per line' : 'Product to check';
+  $('kwLbl').htmlFor = list ? 'kwList' : 'kw';
+  $('btnCheck').textContent = list ? 'Check all' : 'Check sellers';
+}
+seg($('checkMode'), mode => { setCheckMode(mode); $(mode === 'list' ? 'kwList' : 'kw').focus(); });
+$('kwList').addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) $('checkForm').requestSubmit(); });
 $('checkForm').addEventListener('submit', e => {
   e.preventDefault();
-  const keyword = $('kw').value.trim();
+  const list = segVal($('checkMode')) === 'list', keyword = $('kw').value.trim();
   const markets = pressed($('mkSeg'));
-  if (!keyword) return $('kw').focus();
+  if (!list && !keyword) return $('kw').focus();
   if (!markets.length) return toast('Pick at least one country');
-  runCheck(keyword, markets, $('refresh').checked);
+  if (list) runList(markets, $('refresh').checked); else runCheck(keyword, markets, $('refresh').checked);
 });
 async function runCheck(keyword, markets, refresh) {
   $('btnCheck').disabled = true;
@@ -53,20 +63,25 @@ async function runCheck(keyword, markets, refresh) {
 }
 function renderCheck(res) {
   checkData = res;
-  $('checkEmpty').hidden = true; $('checkOut').hidden = false; $('listOut').hidden = false;
+  setCheckMode('one');
+  $('checkEmpty').hidden = true; $('batchOut').hidden = true; $('checkOut').hidden = false; $('listOut').hidden = false;
   $('checkTitle').textContent = '“' + res.keyword + '”';
   const times = res.results.filter(r => r.checked_at).map(r => r.checked_at);
   $('checkWhen').textContent = times.length ? 'Checked ' + ago(Math.min(...times)) + (res.results.some(r => r.cached) ? ' (saved result)' : '') : '';
-  $('cards').innerHTML = res.results.map(card).join('');
-  $('priceCmp').innerHTML = priceCompare(res);
-  res.results.forEach(r => {                       // sales per seller, drawn once the cards are in the page
-    const box = $('cards').querySelector(`[data-sb="${CSS.escape(r.market || '')}"]`);
-    if (box && r.per_seller) Charts.sellerBars(box, {title: 'Sales per seller', sub: 'Estimated sales a month of each listing on page 1',
-      listings: r.per_seller.listings, currency: r.currency, foot: ['Source: “bought in past month” badges (estimate)']});
-  });
+  drawCards(res);
   $('lmSeg').innerHTML = '<button type="button" data-v="all" aria-pressed="true">All</button>' +
     res.results.filter(r => !r.error).map(r => `<button type="button" data-v="${r.market}" aria-pressed="false">${MK_SHORT[r.market]}</button>`).join('');
   renderList();
+}
+function drawCards(res) {
+  $('cards').innerHTML = res.results.map(card).join('');
+  res.results.forEach(r => {                       // sales per seller, drawn once the cards are in the page
+    const box = $('cards').querySelector(`[data-sb="${CSS.escape(r.market || '')}"]`);
+    if (box && r.per_seller) Charts.sellerBars(box, {title: 'Sales per seller', sub: 'Estimated sales a month of each listing on page 1',
+      listings: r.per_seller.listings, currency: r.currency, priceFmt: v => priceFx(v, r.market),
+      foot: ['Source: “bought in past month” badges (estimate)']});
+  });
+  $('priceCmp').innerHTML = priceCompare(res);
 }
 function originParts(r) {
   const local = r.local ?? r.fast, abroad = r.overseas ?? r.slow;
@@ -116,6 +131,79 @@ function card(r) {
   </div>`;
 }
 let listSort = {k: 'speed', dir: 1};
+
+/* ---------- a list of products: up to 20, in every chosen country (3 searches at a time) ---------- */
+function listKeywords() {
+  const seen = new Set();
+  return $('kwList').value.split('\n').map(s => s.trim().replace(/\s+/g, ' ')).filter(s => {
+    const k = s.toLowerCase();
+    if (!s || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+async function runList(markets, refresh) {
+  let kws = listKeywords();
+  if (!kws.length) return $('kwList').focus();
+  if (kws.length > 20) { toast(`Only the first 20 of ${kws.length} products are checked`); kws = kws.slice(0, 20); }
+  const items = kws.flatMap(k => markets.map(m => ({key: k + '|' + m, market: m, search: k})));
+  bData = {keywords: kws, markets, res: Object.fromEntries(items.map(i => [i.key, 'busy']))};
+  $('checkEmpty').hidden = true; $('checkOut').hidden = true; $('listOut').hidden = true; $('batchOut').hidden = false;
+  renderBatch();
+  $('btnCheck').disabled = true;
+  $('progress').innerHTML = busy(`${items.length} searches, 3 at a time…`);
+  try {
+    const {job} = await api('/api/check_batch', {items, refresh});
+    Object.assign(bData.res, await waitJob(job, line => { $('progress').innerHTML = busy(line); }));
+    $('progress').textContent = '';
+    $('refresh').checked = false;
+  } catch (e) { $('progress').innerHTML = failPill(e.message); }
+  items.forEach(i => { if (bData.res[i.key] === 'busy') bData.res[i.key] = {error: 'no result'}; });
+  $('btnCheck').disabled = false;
+  renderBatch();
+}
+const bDemand = L => L && L.demand && L.demand.v != null ? L.demand.v : null;
+function bScore(k, by) {                          // best over the countries checked, -1 when nothing is known
+  const vals = bData.markets.map(m => bData.res[k + '|' + m]).filter(L => L && L.total != null && bDemand(L) != null)
+    .map(L => by === 'demand' ? bDemand(L) : bDemand(L) / ((L.local || 0) + 1));
+  return vals.length ? Math.max(...vals) : -1;
+}
+function renderBatch() {
+  if (!bData) return;
+  const d = bData, order = $('bSort').value, kws = [...d.keywords], all = Object.values(d.res);
+  if (order !== 'typed') kws.sort((a, b) => bScore(b, order) - bScore(a, order));
+  const done = all.filter(L => L && L.total != null).length, gaps = all.filter(L => L && L.total && L.local <= 4).length;
+  const failed = all.filter(L => L && L.error).length;
+  $('bTitle').textContent = `${d.keywords.length} product${d.keywords.length > 1 ? 's' : ''} in ${d.markets.map(m => MK[m]).join(', ')}`;
+  $('bSub').textContent = `${done} of ${all.length} searches have results` + (gaps ? ` · ${gaps} with a gap (4 or fewer local sellers)` : '') +
+    (failed ? ` · ${failed} failed: press Check all again to retry them (the others come from saved results)` : '');
+  const sub = L => !L || L.total == null ? '' : `<div class="sub">${bDemand(L) != null ? '≈ ' + compact(bDemand(L)) + ' buyers/mo' +
+    (L.per_local_seller ? ' · ≈ ' + compact(L.per_local_seller.v) + ' per local seller' : ' · no local seller yet') : 'no sales badges'} · ${L.fast} fast</div>`;
+  $('bTable').innerHTML = `<thead><tr><th>Product</th>${d.markets.map(m => `<th>${MK[m]}</th>`).join('')}<th></th></tr></thead><tbody>` +
+    kws.map(k => `<tr><td><b>${esc(k)}</b></td>${d.markets.map(m => `<td>${localPill(d.res[k + '|' + m], m)}${sub(d.res[k + '|' + m])}</td>`).join('')}
+      <td style="white-space:nowrap"><button class="btn slim" data-brep="${esc(k)}">${icon('chart')}Report</button>
+        <button class="btn slim" data-bwatch="${esc(k)}" title="Re-check it every day">${icon('eye')}Watch</button></td></tr>`).join('') + '</tbody>';
+}
+$('bSort').addEventListener('change', renderBatch);
+$('bTable').addEventListener('click', async e => {
+  const r = e.target.closest('[data-brep]'), w = e.target.closest('[data-bwatch]');
+  if (r) go('k', bData.markets.find(m => m !== 'US') || bData.markets[0], r.dataset.brep);
+  if (!w) return;
+  try {
+    await api('/api/watch', {kind: 'keyword', target: w.dataset.bwatch, markets: bData.markets});
+    toast('Watching “' + w.dataset.bwatch + '” in ' + bData.markets.map(m => MK[m]).join(', '));
+  } catch (err) { toast(err.message); }
+});
+$('bExport').addEventListener('click', () => {
+  if (!bData) return;
+  download({kind: 'batch', rows: bData.keywords.flatMap(k => bData.markets.map(m => {
+    const L = bData.res[k + '|' + m];
+    if (!L || L.total == null) return {product: k, market: m, error: (L && L.error) || 'not checked yet'};
+    return {product: k, market: m, local: L.local, overseas: L.overseas, fast: L.fast, total: L.total, demand: bDemand(L),
+            per_local_seller: L.per_local_seller ? L.per_local_seller.v : null, overseas_share: L.overseas_share_of_sales,
+            price_med: L.price_med, verdict: L.verdict};
+  }))});
+});
 /* The same search in several countries: median page-1 price in your currency, so the markets can be compared. */
 function priceCompare(res) {
   const my = myCur();
@@ -396,7 +484,7 @@ function renderNiche() {
     nData.keywords.map((k, i) => `<tr><td><input type="checkbox" data-nsel="${i}" ${k.sel ? 'checked' : ''} aria-label="Select ${esc(k.keyword)}"></td>
       <td><b>${esc(k.keyword)}</b></td>
       <td><div class="bar" style="width:90px" title="${k.hits} suggestion lists"><span style="width:${k.hits / maxHits * 100}%;background:var(--s-demand)"></span></div></td>
-      ${mks.map(m => { const L = nLocal[k.keyword + '|' + m]; return `<td>${L ? localPill(L, m) + (L.total != null ? `<div class="sub">${L.bought_top ? 'demand ' + num(L.bought_top) + '+/mo' : 'no sales badges'} · ${L.fast} fast${L.price_med != null ? ' · median ' + esc(curMoney(L.price_med, MK_CUR[m], 0)) : ''}</div>` : '') : '<span class="muted small">–</span>'}</td>`; }).join('')}
+      ${mks.map(m => { const L = nLocal[k.keyword + '|' + m]; return `<td>${L ? localPill(L, m) + (L.total != null ? `<div class="sub">${L.bought_top ? 'demand ' + num(L.bought_top) + '+/mo' : 'no sales badges'} · ${L.fast} fast${L.price_med != null ? ' · median ' + esc(curMoney(L.price_med, MK_CUR[m], 0) + (inMine(L.price_med, m) ? ' ≈ ' + inMine(L.price_med, m, {d: 0}) : '')) : ''}</div>` : '') : '<span class="muted small">–</span>'}</td>`; }).join('')}
       <td style="white-space:nowrap"><button class="btn slim" data-ntrend="${i}">Trends${icon('external')}</button> <button class="btn slim" data-nopen="${i}">Open${icon('external')}</button></td></tr>`).join('') + '</tbody>';
 }
 $('nTable').addEventListener('change', e => { const c = e.target.closest('[data-nsel]'); if (c) nData.keywords[+c.dataset.nsel].sel = c.checked; });
@@ -606,8 +694,10 @@ onState((s, fresh) => {
 
 /* Your currency or your supplier's currency changed: redraw the money in every tool that has results. */
 window.addEventListener('pc:currency', () => {
-  if (checkData) { $('cards').innerHTML = checkData.results.map(card).join(''); $('priceCmp').innerHTML = priceCompare(checkData); renderList(); }
+  if (checkData) { drawCards(checkData); renderList(); }
+  if (bData) renderBatch();
   if (iData) renderIdeas();
+  if (iData && !$('iMap').hidden) drawOppMap($('iMapChart'), segVal($('iMapMk')));
   if (nData) renderNiche();
   if (rankData) renderRank();
   if (xData) renderXKpis();

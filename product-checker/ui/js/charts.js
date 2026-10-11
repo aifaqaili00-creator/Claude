@@ -520,6 +520,7 @@ const Charts = (() => {
                   unknown: {label: 'Origin unknown', color: 'var(--s-other)'}};
   function sellerBars(el, o) {
     const id = ++uid, f = frame(el, o), max = o.max || 12, cur = o.currency || '';
+    const price = v => o.priceFmt ? o.priceFmt(v) : cur + ' ' + num(v, 2);
     const all = (o.listings || []).filter(x => x.units && finite(x.units.v));
     const noBadge = (o.listings || []).length - all.length;
     const shown = all.slice(0, max), rest = all.length - shown.length;
@@ -529,7 +530,7 @@ const Charts = (() => {
     const fmtU = u => '≈ ' + compact(u.v) + ' (' + compact(u.lo) + '–' + compact(u.hi) + (u.basis === 'assumed' ? '+' : '') + ')';
     fillTable(f.table, ['Listing', 'Sales / month', 'Seller', 'Price', 'Delivery'],
       (o.listings || []).map(x => [x.title || x.asin, x.units ? fmtU(x.units) : 'no badge', ORIGIN[key(x)].label,
-                                   x.price != null ? cur + ' ' + num(x.price, 2) : null, x.days != null ? x.days + ' days' : null]));
+                                   x.price != null ? price(x.price) : null, x.days != null ? x.days + (x.days === 1 ? ' day' : ' days') : null]));
     if (!shown.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No listing shows a “bought in past month” badge, so sales per seller are unknown.'); return; }
     const tip = tooltip(f.body);
     tip.hidden = true;
@@ -570,7 +571,7 @@ const Charts = (() => {
         svgEl('text', {x: Math.max(X(u.hi || u.v), m.l + len) + 6, y: by + bh - 2, class: 'vlabel'}, g).textContent = compact(u.v);
         const show = () => showTip(tip, f.body, X(u.v), x.title || x.asin, [
           {color: c, label: 'sales / month (badge estimate)', value: fmtU(u)},
-          {color: c, label: ORIGIN[key(x)].label + (x.days != null ? ' · arrives in ' + x.days + ' days' : ''), value: x.price != null ? cur + ' ' + num(x.price, 2) : ''}]);
+          {color: c, label: ORIGIN[key(x)].label + (x.days != null ? ' · arrives in ' + x.days + (x.days === 1 ? ' day' : ' days') : ''), value: x.price != null ? price(x.price) : ''}]);
         g.addEventListener('pointerenter', show); g.addEventListener('focus', show);
         g.addEventListener('pointerleave', () => { tip.hidden = true; }); g.addEventListener('blur', () => { tip.hidden = true; });
       });
@@ -580,10 +581,10 @@ const Charts = (() => {
   /* ---------- opportunity map: buyers a month (log) against local sellers, one dot per keyword ---------- */
   function oppMap(el, o) {
     const f = frame(el, o), H = o.height || 340, pts = (o.points || []).filter(p => finite(p.demand) && p.demand > 0);
-    const xLine = o.xLine ?? 4.5, yLine = o.yLine;
-    fillTable(f.table, ['Keyword', 'Buyers / month', 'Local sellers', 'Overseas sellers', 'Buyers per local seller', 'Checked'],
+    const xLine = o.xLine ?? 4.5, yLine = o.yLine, price = v => v == null ? null : o.priceFmt ? o.priceFmt(v) : num(v, 2);
+    fillTable(f.table, ['Keyword', 'Buyers / month', 'Local sellers', 'Overseas sellers', 'Buyers per local seller', 'Typical price', 'Checked'],
       pts.map(p => [p.display, '≈ ' + compact(p.demand), p.local, p.overseas, p.per_local_seller != null ? '≈ ' + compact(p.per_local_seller) : 'no local seller yet',
-                    p.ts ? new Date(p.ts * 1000).toLocaleDateString() : null]));
+                    price(p.price_med), p.ts ? new Date(p.ts * 1000).toLocaleDateString() : null]));
     if (!pts.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No checked products with sales badges yet.'); return; }
     const tip = tooltip(f.body);
     tip.hidden = true;
@@ -618,16 +619,19 @@ const Charts = (() => {
       const best = new Set(pts.filter(p => p.local < xLine && (yl == null || p.demand >= yLine)).slice(0, 6).map(p => p.kw));
       if (pts.length <= 3) pts.forEach(p => best.add(p.kw));              // a few dots: name them all
       const dots = svgEl('g', {}, svg), same = new Map(), placed = [];
+      const key = p => p.local + ':' + Math.round(L(p.demand) * 50);
+      pts.forEach(p => same.set(key(p), (same.get(key(p)) || 0) + 1));     // dots that land on one spot are nudged apart
+      const seen = new Map();
       for (const p of pts) {
-        const k = p.local + ':' + Math.round(L(p.demand) * 50), n = same.get(k) || 0;   // nudge dots that land on one spot
-        same.set(k, n + 1);
+        const k = key(p), n = seen.get(k) || 0, size = same.get(k);
+        seen.set(k, n + 1);
         const cx = X(p.local) + n * 7, cy = Y(p.demand);
         const g = svgEl('g', {class: 'dotgrp', tabindex: 0, role: 'link'}, dots);
         svgEl('circle', {cx, cy, r: 12, fill: 'transparent'}, g);
         svgEl('circle', {cx, cy, r: 5, class: 'dot'}, g);
-        if (best.has(p.kw)) {                        // left of the dot near the right edge; stacked, never overlapping
+        if (best.has(p.kw)) {                        // beside the whole group of dots; left of it near the right edge; stacked
           const t = p.display.length > 28 ? p.display.slice(0, 27) + '…' : p.display, right = cx > m.l + w * 0.7;
-          const lx = right ? cx - 9 : cx + 9, tw = t.length * 6.5;
+          const lx = right ? X(p.local) - 9 : X(p.local) + (size - 1) * 7 + 9, tw = t.length * 6.5;
           let ly = cy + 4;
           while (placed.some(b => Math.abs(b.y - ly) < 13 && Math.abs((right ? lx - tw / 2 : lx + tw / 2) - b.c) < (tw + b.w) / 2)) ly += 13;
           placed.push({y: ly, c: right ? lx - tw / 2 : lx + tw / 2, w: tw});
@@ -637,7 +641,8 @@ const Charts = (() => {
           {color: 'var(--s-demand)', label: 'buyers a month (badge estimate)', value: '≈ ' + compact(p.demand)},
           {color: 'var(--s-local)', label: 'local sellers', value: String(p.local)},
           {color: 'var(--s-overseas)', label: 'ship from overseas', value: String(p.overseas)},
-          {color: 'var(--s-demand)', label: 'buyers per local seller', value: p.per_local_seller != null ? '≈ ' + compact(p.per_local_seller) : 'no local seller yet'}]);
+          {color: 'var(--s-demand)', label: 'buyers per local seller', value: p.per_local_seller != null ? '≈ ' + compact(p.per_local_seller) : 'no local seller yet'}]
+          .concat(p.price_med != null ? [{color: 'var(--s-other)', label: 'typical price on page 1', value: price(p.price_med)}] : []));
         g.addEventListener('pointerenter', show); g.addEventListener('focus', show);
         g.addEventListener('pointerleave', () => { tip.hidden = true; }); g.addEventListener('blur', () => { tip.hidden = true; });
         const open = () => { if (o.onOpen) o.onOpen(p); };

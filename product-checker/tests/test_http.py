@@ -214,3 +214,145 @@ def test_profit_takes_the_supplier_cost_in_any_currency(server):
     assert d['max_cogs_20_cost'] == pytest.approx(fxrates.convert(usd['max_cogs_20'], 'USD', 'AED'), abs=0.02)
     st, _, raw = call(server, 'POST', '/api/profit', {**base, 'cogs': 5, 'cogs_currency': 'XYZ'})
     assert json.loads(raw)['cost_currency'] == 'USD'                       # unknown currency: read as US$
+
+
+def test_check_export_has_prices_in_your_currency(server):
+    import io
+    import time
+
+    import pandas as pd
+
+    import amazon_check as ac
+    import fxrates
+    rows = [{'market': 'AU', 'asin': 'B%d' % i, 'title': 't', 'price': p, 'sponsored': False, 'days': 2, 'delivery': 'x',
+             'reviews': 1, 'bought': None} for i, p in enumerate((10.0, 30.0))]
+    s = ac.summarize('AU', 'moving bags', 'Sydney 2000', rows)
+    server.jobs.jobs['xjob'] = {'id': 'xjob', 'status': 'done', 'result': {'keyword': 'moving bags', 'results': [s]},
+                                'finished': time.time(), 'log': []}
+    st, _, raw = call(server, 'POST', '/api/export', {'kind': 'check', 'job': 'xjob'})
+    sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None)
+    summ, listings = sheets['Summary'], sheets['Listings']
+    assert st == 200 and summ.loc[0, 'currency'] == 'A$' and summ.loc[0, 'typical_price'] == 20
+    assert summ.loc[0, 'typical_price_USD'] == pytest.approx(fxrates.convert(20, 'AUD', 'USD'), abs=0.01)
+    assert list(listings['currency']) == ['A$', 'A$']
+    assert listings.loc[1, 'price_USD'] == pytest.approx(fxrates.convert(30, 'AUD', 'USD'), abs=0.01)
+
+
+def test_list_export_checks_every_row_and_converts_prices(server):
+    import io
+
+    import openpyxl
+    import pandas as pd
+
+    import fxrates
+    rows = [{'product': '=HYPERLINK("http://x")', 'market': 'AU', 'local': 3, 'overseas': 9, 'fast': 2, 'total': 20,
+             'demand': 1200.5, 'per_local_seller': 300, 'overseas_share': 0.42, 'price_med': 20, 'verdict': 'gap'},
+            {'product': 'dog bed', 'market': 'AE', 'error': 'captcha'},
+            {'product': 'bad', 'market': 'XX', 'local': 1}, 'not a row', {'product': 'odd', 'market': 'US', 'local': 'many'}]
+    st, _, raw = call(server, 'POST', '/api/export', {'kind': 'batch', 'rows': rows})
+    df = pd.read_excel(io.BytesIO(raw))
+    assert st == 200 and list(df['Market']) == ['Australia', 'UAE', 'USA']                  # the unknown market is left out
+    assert df.loc[0, 'Overseas share of sales %'] == 42 and df.loc[1, 'Verdict'] == 'captcha'
+    assert df.loc[0, 'Typical price (US$)'] == pytest.approx(fxrates.convert(20, 'AUD', 'USD'), abs=0.01)
+    assert pd.isna(df.loc[2, 'Local sellers'])                                              # not a number: left empty
+    ws = openpyxl.load_workbook(io.BytesIO(raw)).active
+    assert ws['A2'].data_type == 's' and ws['A2'].value.startswith("'=")                     # text, never a formula
+    assert call(server, 'POST', '/api/export', {'kind': 'batch', 'rows': []})[0] == 400
+
+
+def test_download_name_works_for_an_arabic_keyword(server):
+    import time
+
+    import amazon_check as ac
+    rows = [{'market': 'AE', 'asin': 'B1', 'title': 't', 'price': 50.0, 'sponsored': False, 'days': 2, 'delivery': 'x',
+             'reviews': 1, 'bought': None}]
+    kw = 'حقيبة "سفر"'
+    server.jobs.jobs['ajob'] = {'id': 'ajob', 'status': 'done', 'finished': time.time(), 'log': [],
+                                'result': {'keyword': kw, 'results': [ac.summarize('AE', kw, 'Dubai', rows)]}}
+    c = http.client.HTTPConnection('127.0.0.1', server.port, timeout=5)
+    c.request('POST', '/api/export', body=json.dumps({'kind': 'check', 'job': 'ajob'}).encode(),
+              headers={'Host': '127.0.0.1:%d' % server.port, 'X-PC-Token': server.token, 'Content-Type': 'application/json'})
+    r = c.getresponse()
+    r.read()
+    c.close()
+    cd = r.getheader('Content-Disposition')
+    assert r.status == 200 and 'filename="Delivery_check_.xlsx"' in cd and "filename*=UTF-8''Delivery_check_%D8" in cd
+    assert app.attachment('Top_products.xlsx') == 'attachment; filename="Top_products.xlsx"; filename*=UTF-8\'\'Top_products.xlsx'
+
+
+def test_sizes_are_read_from_the_top_product_pages(server, monkeypatch):
+    import asyncio
+
+    import amazon_check as ac
+    import product
+    import storage
+    rows = [{'market': 'AU', 'asin': 'S%d' % i, 'title': 'Box %d' % i, 'price': 30.0, 'sponsored': i == 1, 'days': 2,
+             'delivery': 'x', 'reviews': 5, 'bought': None} for i in range(7)]
+    server.db.write(storage.save_serp, ac.summarize('AU', 'storage box', 'Sydney 2000', rows), 'user', None, 1, '2000')
+    read = []
+
+    async def fake_read(checker, asin, code):
+        read.append(asin)
+        if asin == 'S2':
+            raise RuntimeError('page did not load')
+        return {'title': 'Box', 'root_rank': 100, 'status': 'ok', 'pkg_cm': [40.0, 30.0, 10.0 + len(read)], 'pkg_kg': 1.2}
+    monkeypatch.setattr(product, 'read_product', fake_read)
+    sz = asyncio.run(server.read_sizes('AU', 'storage box'))
+    assert read == ['S0', 'S2', 'S3'] and sz['n'] == 2 and sz['dims_cm'] == [40.0, 30.0, 12.0] and sz['kg'] == 1.2
+    assert sz['missing'] == ['S2', 'S4', 'S5']                                  # the ad (S1) is never opened
+
+    async def captcha(checker, asin, code):
+        read.append(asin)
+        raise ac.CaptchaRequired('Amazon wants a captcha')
+    monkeypatch.setattr(product, 'read_product', captcha)
+    del read[:]
+    asyncio.run(server.read_sizes('AU', 'storage box', want=5))
+    assert read == ['S2']                                                       # stops at the captcha
+    with pytest.raises(ac.CaptchaRequired):                                     # the button says why nothing was read
+        asyncio.run(server.read_sizes('AU', 'storage box', want=5, strict=True))
+    st, _, raw = call(server, 'POST', '/api/parse_size', {'text': 'Single package size: 30X20X10 cm Single gross weight: 0.5 kg'})
+    assert st == 200 and json.loads(raw) == {'dims_cm': [30, 20, 10], 'kg': 0.5}
+
+
+def test_negative_reviews_are_read_from_amazon(server, monkeypatch):
+    import asyncio
+
+    import amazon_check as ac
+    import product
+    import storage
+    rows = [{'market': 'US', 'asin': 'M%d' % i, 'title': 'Bowl %d' % i, 'price': 20.0, 'sponsored': i == 1, 'days': 2,
+             'delivery': 'x', 'reviews': 5, 'bought': None} for i in range(4)]
+    server.db.write(storage.save_serp, ac.summarize('US', 'mixing bowl', 'New York 10001', rows), 'user', None, 1, '10001')
+    calls, signed = [], [False]
+
+    async def critical(checker, asin, code):
+        calls.append(('reviews page', asin))
+        if not signed[0]:
+            raise product.SignInNeeded('sign in')
+        return [{'id': 'RX' + asin + '000000', 'stars': 1.0, 'title': 'Broke', 'body': 'b', 'local': True, 'helpful': 9}]
+
+    async def page(checker, asin, code, reviews=False):
+        calls.append(('product page', asin))
+        return {'title': 'Bowl', 'root_rank': 10, 'status': 'ok', 'reviews': 50, 'signed_in': signed[0], 'review_items': [
+            {'id': 'R' + asin + '00000000', 'stars': 2.0, 'title': 'Cracked', 'body': 'b', 'local': True, 'helpful': 3}]}
+    monkeypatch.setattr(product, 'read_critical_reviews', critical)
+    monkeypatch.setattr(product, 'read_product', page)
+    st, _, raw = call(server, 'GET', '/api/report/reviews?market=US&kw=mixing%20bowl')
+    assert st == 200 and json.loads(raw)['todo'] == ['M0', 'M2', 'M3'] and json.loads(raw)['items'] == []
+    assert asyncio.run(server.read_reviews('US', ['M0', 'M2', 'M3'])) == 3
+    assert calls == [('reviews page', 'M0'), ('product page', 'M0'), ('product page', 'M2'), ('product page', 'M3')]
+    r = json.loads(call(server, 'GET', '/api/report/reviews?market=US&kw=mixing%20bowl')[2])
+    assert r['todo'] == [] and [i['asin'] for i in r['items']] == ['M0', 'M2', 'M3'] and not r['critical']
+    signed[0], calls[:] = True, []                          # signed in now: a product page shows it, then reviews pages
+    asyncio.run(server.read_reviews('US', ['M0', 'M2']))
+    assert calls == [('product page', 'M0'), ('reviews page', 'M2')]
+    r = json.loads(call(server, 'GET', '/api/report/reviews?market=US&asin=M2')[2])
+    assert r['critical'] and r['items'][0]['title'] == 'Broke'
+
+    async def captcha(checker, asin, code, reviews=False):
+        raise ac.CaptchaRequired('Amazon wants a captcha')
+    monkeypatch.setattr(product, 'read_critical_reviews', captcha)
+    with pytest.raises(ac.CaptchaRequired):                                     # nothing read: the reason is shown
+        asyncio.run(server.read_reviews('US', ['M3']))
+    assert call(server, 'POST', '/api/report/reviews', {'market': 'US', 'asin': 'B0-1'})[0] == 400
+    assert call(server, 'GET', '/api/report/reviews?market=US&kw=%20')[0] == 400

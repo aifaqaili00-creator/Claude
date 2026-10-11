@@ -44,6 +44,7 @@ RANGE = re.compile(r'\b(\d{1,2})\s*[-–]\s*\d{1,2}\s+' + MON, re.I)   # 15 - 16
 INTERNATIONAL = re.compile(r'international delivery|international items|ships from abroad|global store|'
                            r'ships from outside|imported from|from overseas|international shipping', re.I)
 LOCAL_MAX_DAYS = 9          # slower than this (and no "international" text) = probably shipped from abroad
+SIGNIN = re.compile(r'/(?:ap/signin|ax/claim)\b')        # Amazon's sign-in pages
 
 # True while the scheduler runs background work: then a captcha must never pop the window up.
 BACKGROUND = contextvars.ContextVar('pc_background', default=False)
@@ -386,7 +387,7 @@ class Checker:
                 raise BlockedError('offline', BLOCK_TEXT['offline'] % name)
             raise
         await self._get_past_blocks(page, code)
-        if not _same_page(page.url, url):              # "Continue shopping" can land on the home page instead
+        if not _same_page(page.url, url) and not SIGNIN.search(urlparse(page.url).path):   # "Continue shopping" can land on the home page instead
             try:
                 resp = await page.goto(url, wait_until='domcontentloaded', timeout=60000)
             except Exception as e:                      # noqa: BLE001

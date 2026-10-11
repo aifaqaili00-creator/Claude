@@ -256,10 +256,10 @@ def export_excel(a, path):
         ('Left per sale after fees (median)', '%s (%s)' % (money(m['left_median']), pct(m['left_pct']))),
     ] + [('Reason', r['text']) for r in a['reasons']]
     with pd.ExcelWriter(path, engine='openpyxl') as xw:
-        pd.DataFrame(summary, columns=['What', 'Value']).to_excel(xw, sheet_name='Summary', index=False)
+        fr.excel_safe(pd.DataFrame(summary, columns=['What', 'Value'])).to_excel(xw, sheet_name='Summary', index=False)
         rows = pd.DataFrame(a['rows'])
         rows['flags'] = rows['flags'].map(', '.join)
-        rows.to_excel(xw, sheet_name='Listings', index=False)
+        fr.excel_safe(rows).to_excel(xw, sheet_name='Listings', index=False)
         xw.sheets['Summary'].column_dimensions['A'].width = 34
         xw.sheets['Summary'].column_dimensions['B'].width = 90
         xw.sheets['Listings'].column_dimensions['C'].width = 60

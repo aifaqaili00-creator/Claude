@@ -72,7 +72,9 @@ async function download(body) {
       const d = await r.json().catch(() => ({}));
       throw new Error(d.error || 'Could not save the file');
     }
-    const name = ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [])[1] || 'export.xlsx';
+    const cd = r.headers.get('Content-Disposition') || '', star = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    let name = (cd.match(/filename="([^"]+)"/) || [])[1] || 'export.xlsx';
+    if (star) { try { name = decodeURIComponent(star[1]); } catch (e) { /* keep the plain name */ } }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(await r.blob());
     a.download = name;

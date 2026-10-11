@@ -37,7 +37,7 @@ FETCH_LOG_KEEP_DAYS = 30
 ALERT_KEEP_DAYS = 180
 BACKUPS = {'daily': 2, 'weekly': 2}
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIGRATIONS = {
     1: """
 -- operations
@@ -131,6 +131,12 @@ CREATE INDEX calib_point_key ON calib_point(market, node);
 CREATE INDEX alert_ts ON alert(ts);
 CREATE INDEX fetch_log_ts ON fetch_log(ts);
 CREATE INDEX task_next ON task(next_run_at);
+""",
+    2: """
+-- critical (1-3 star) reviews of listings, and when each listing's reviews were read (product page / reviews page)
+CREATE TABLE review(market TEXT, asin TEXT, id TEXT, stars REAL, title TEXT, body TEXT, day TEXT, country TEXT,
+  local INT, helpful INT, verified INT, source TEXT, first_seen INT, last_seen INT, PRIMARY KEY(market, asin, id));
+CREATE TABLE review_read(market TEXT, asin TEXT, page_at INT, critical_at INT, PRIMARY KEY(market, asin));
 """,
 }
 
@@ -702,6 +708,9 @@ def save_product(conn, market, asin, p, ts=None, run_id=None):
         if cp:
             conn.execute('INSERT INTO calib_point(market, node, ts, ln_bsr, low, high, kind, asin, ref_id) VALUES (?,?,?,?,?,?,?,?,?)',
                          (cp['market'], cp['node'], cp['ts'], cp['ln_bsr'], cp['low'], cp['high'], cp['kind'], asin, cur.lastrowid))
+        items = p.get('review_items')
+        if items is not None and (items or not p.get('reviews')):     # no reviews seen counts only for a listing without any
+            save_reviews(conn, market, asin, items, 'page', t)
     return cur.lastrowid
 
 
@@ -716,6 +725,37 @@ def product_history(conn, market, asin, since_ts=0):
 def asin_info(conn, market, asin):
     r = conn.execute('SELECT * FROM asin WHERE market=? AND asin=?', (market, asin)).fetchone()
     return dict(r) if r else None
+
+
+# ---------- reviews ----------
+def save_reviews(conn, market, asin, items, source, ts=None):
+    """Keep the critical (1-3 star) reviews read from a listing's product page (source 'page') or its reviews page
+    ('critical'), and when that page was read. Returns how many critical reviews it had."""
+    t = _now(ts)
+    crit = [r for r in items or [] if r.get('id') and r.get('stars') and r['stars'] <= 3]
+    for r in crit:
+        conn.execute(
+            'INSERT INTO review(market, asin, id, stars, title, body, day, country, local, helpful, verified, source, first_seen, '
+            'last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(market, asin, id) DO UPDATE SET stars=excluded.stars, '
+            'title=excluded.title, body=excluded.body, day=excluded.day, country=excluded.country, local=excluded.local, '
+            'helpful=excluded.helpful, verified=excluded.verified, last_seen=excluded.last_seen',
+            (market, asin, r['id'], r['stars'], (r.get('title') or '')[:300], (r.get('body') or '')[:1500], r.get('day'),
+             (r.get('country') or '')[:60], 1 if r.get('local') else 0, int(r.get('helpful') or 0), 1 if r.get('verified') else 0,
+             source, t, t))
+    col = 'critical_at' if source == 'critical' else 'page_at'
+    conn.execute('INSERT INTO review_read(market, asin, %s) VALUES (?,?,?) ON CONFLICT(market, asin) DO UPDATE SET %s=excluded.%s'
+                 % (col, col, col), (market, asin, t))
+    return len(crit)
+
+
+def reviews_of(conn, market, asins):
+    """The stored critical reviews of these listings, and when each listing's reviews were read ({asin: row})."""
+    if not asins:
+        return [], {}
+    marks = ','.join('?' * len(asins))
+    rows = _rows(conn.execute('SELECT * FROM review WHERE market=? AND asin IN (%s)' % marks, (market, *asins)))
+    reads = _rows(conn.execute('SELECT * FROM review_read WHERE market=? AND asin IN (%s)' % marks, (market, *asins)))
+    return rows, {r['asin']: r for r in reads}
 
 
 def calib_obs(conn, market, now=None):

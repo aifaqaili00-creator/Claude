@@ -7,6 +7,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import secrets
 import socket
 import sys
@@ -16,7 +17,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import amazon_check as ac
 import analysis
@@ -121,6 +122,7 @@ class State:
         self.xrays = {}                                           # xray analysis id -> result
         self.idea_cats = {}                                       # market -> Movers & Shakers categories
         self.idea_cache = {}                                      # (market, slugs, kinds) -> raw scan
+        self.review_wall = {}                                     # market -> when its reviews page asked to sign in
         self.messages = []                                        # recent log lines for the UI
         self.last_beat = time.time()
         self.window = None
@@ -300,8 +302,72 @@ class State:
         await self.db.awrite(storage.finish_run, run_id, 'done' if fresh or not failed else 'error', len(fresh), failed)
         return {'keyword': keyword, 'results': results, 'run_id': run_id}
 
-    async def check_batch(self, items, progress):
-        """Check several products (from a ranked file or ideas), 3 at a time."""
+    async def read_sizes(self, market, kw, progress=None, want=3, strict=False):
+        """Open the Amazon pages of the best page-1 listings whose package size is not known yet (until `want` are
+        known), so the profit calculator gets a real size and weight. Returns the keyword's size suggestion.
+        With `strict`, failing to read any page is an error (so the button can say why)."""
+        sz = await asyncio.to_thread(self.db.read, reports.size_suggestion, market, kw)
+        todo = sz['missing'][:max(0, want - sz['n'])]
+        read, err = 0, None
+        for i, asin in enumerate(todo, 1):
+            if progress:
+                progress('Reading the size and weight of listing %d of %d on Amazon %s...' % (i, len(todo), ac.MARKETS[market]['name']))
+            try:
+                p = await product.read_product(self.checker, asin, market)
+            except ac.BlockedError as e:                    # a block or a captcha: stop and keep what we have
+                err = e
+                if progress:
+                    progress(str(e).splitlines()[0][:150])
+                break
+            except Exception as e:                          # noqa: BLE001 - one page failing is not fatal
+                err = e
+                log.info('size of %s %s not read: %s', market, asin, e)
+                continue
+            await self.db.awrite(storage.save_product, market, asin, p)
+            read += 1
+        if strict and err and not read:
+            raise err
+        return await asyncio.to_thread(self.db.read, reports.size_suggestion, market, kw)
+
+    async def read_reviews(self, market, asins, progress=None):
+        """Read the critical reviews of these listings: from the listing's reviews page (the 10 most helpful 1-3 star
+        reviews) while Amazon shows it, else from the reviews on its product page (which also gives its size).
+        Amazon shows reviews pages only to signed-in shoppers; that is retried after 12 hours or once a product
+        page shows you are signed in. Raises when no listing could be read. Returns how many were read."""
+        read, err = 0, None
+        for i, asin in enumerate(asins, 1):
+            if progress:
+                progress('Reading the negative reviews of listing %d of %d on Amazon %s...' % (i, len(asins), ac.MARKETS[market]['name']))
+            try:
+                if time.time() - self.review_wall.get(market, 0) > 12 * 3600:
+                    try:
+                        items = await product.read_critical_reviews(self.checker, asin, market)
+                    except product.SignInNeeded:
+                        self.review_wall[market] = time.time()
+                        items = None
+                    if items:                               # none at all: check the product page instead
+                        await self.db.awrite(storage.save_reviews, market, asin, items, 'critical')
+                        read += 1
+                        continue
+                p = await product.read_product(self.checker, asin, market, reviews=True)
+                await self.db.awrite(storage.save_product, market, asin, p)
+                if p.get('signed_in'):
+                    self.review_wall.pop(market, None)
+                read += 1
+            except (ac.BlockedError, throttle.ThrottleError) as e:     # a block, captcha or pause: stop, keep what we have
+                err = e
+                if progress:
+                    progress(str(e).splitlines()[0][:150])
+                break
+            except Exception as e:                          # noqa: BLE001 - one page failing is not fatal
+                err = e
+                log.info('reviews of %s %s not read: %s', market, asin, e)
+        if err and not read:
+            raise err
+        return read
+
+    async def check_batch(self, items, progress, refresh=False):
+        """Check several products (a list you typed, a ranked file or ideas), 3 at a time."""
         fast, local, pages = self.days()
         sem = asyncio.Semaphore(3)
         out = {}
@@ -310,7 +376,7 @@ class State:
         async def one(it):
             async with sem:
                 kw, code = it['search'], it['market']
-                hit = self.cached(code, kw, pages)
+                hit = None if refresh else self.cached(code, kw, pages)
                 if not hit:
                     try:
                         hit = await self.checker.check(kw, code, fast, pages, None, local)
@@ -517,6 +583,11 @@ class Handler(BaseHTTPRequestHandler):
     def _export(self, q):
         import pandas as pd
         tmp = os.path.join(tempfile.gettempdir(), 'pc_export_%s.xlsx' % uuid.uuid4().hex[:6])
+        mine = S.settings.get('price_currency', 'USD')
+
+        def conv(v, market):
+            code = fxrates.CURRENCY.get(market)
+            return round(fxrates.convert(v, code, mine), 2) if isinstance(v, (int, float)) and code else None
         if q.get('kind') == 'rank' and q.get('id') in S.ranks:
             df = S.ranks[q['id']].copy()
             fast = q.get('fast') or {}                               # delivery results from the UI, by ASIN
@@ -535,14 +606,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(410, {'error': 'This check is no longer in memory. Run it again to save it.'})
             res = job['result'].get('results', [])
             with pd.ExcelWriter(tmp, engine='openpyxl') as xw:
-                pd.DataFrame([{k: r.get(k) for k in ('name', 'location', 'total', 'fast', 'slow', 'unknown',
-                                                     'local', 'overseas', 'overseas_intl', 'overseas_slow',
-                                                     'origin_unknown', 'sponsored', 'fast_reviews_median', 'bought_top',
-                                                     'verdict')}
-                              for r in res if 'error' not in r]).to_excel(xw, sheet_name='Summary', index=False)
-                rows = [x for r in res for x in r.get('rows', [])]
-                pd.DataFrame(rows).drop(columns=['image'], errors='ignore').to_excel(xw, sheet_name='Listings', index=False)
+                fr.excel_safe(pd.DataFrame([{**{k: r.get(k) for k in (
+                    'name', 'location', 'total', 'fast', 'slow', 'unknown', 'local', 'overseas', 'overseas_intl', 'overseas_slow',
+                    'origin_unknown', 'sponsored', 'fast_reviews_median', 'bought_top', 'verdict', 'currency')},
+                    'typical_price': r.get('price_med'), 'typical_price_' + mine: conv(r.get('price_med'), r.get('market'))}
+                    for r in res if 'error' not in r])).to_excel(xw, sheet_name='Summary', index=False)
+                rows = [{**x, 'currency': r.get('currency'), 'price_' + mine: conv(x.get('price'), r.get('market'))}
+                        for r in res for x in r.get('rows', [])]
+                fr.excel_safe(pd.DataFrame(rows).drop(columns=['image'], errors='ignore')).to_excel(xw, sheet_name='Listings', index=False)
             name = 'Delivery_check_%s.xlsx' % '_'.join(job['result'].get('keyword', 'x').split())
+        elif q.get('kind') == 'batch':
+            out = []
+            for r in (q.get('rows') if isinstance(q.get('rows'), list) else [])[:200]:
+                if not isinstance(r, dict) or r.get('market') not in ac.MARKETS:
+                    continue
+                n = lambda k: r[k] if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) else None  # noqa: E731
+                share = n('overseas_share')
+                out.append({'Product': str(r.get('product') or '')[:120], 'Market': ac.MARKETS[r['market']]['name'],
+                            'Local sellers': n('local'), 'Overseas sellers': n('overseas'), 'Fast (local stock)': n('fast'),
+                            'Listings': n('total'), 'Buyers / month': n('demand'), 'Buyers per local seller': n('per_local_seller'),
+                            'Overseas share of sales %': round(share * 100) if share is not None else None,
+                            'Typical price': n('price_med'), 'Currency': ac.MARKETS[r['market']]['currency'],
+                            'Typical price (%s)' % fxrates.SYMBOL[mine].strip(): conv(n('price_med'), r['market']),
+                            'Verdict': str(r.get('verdict') or r.get('error') or '')[:300]})
+            if not out:
+                return self._send(400, {'error': 'Nothing to save yet. Check some products first.'})
+            fr.excel_safe(pd.DataFrame(out)).to_excel(tmp, index=False, sheet_name='Products')
+            name = 'Products_check.xlsx'
         elif q.get('kind') == 'xray' and q.get('id') in S.xrays:
             a = S.xrays[q['id']]
             xray.export_excel(a, tmp)
@@ -552,7 +642,14 @@ class Handler(BaseHTTPRequestHandler):
         data = Path(tmp).read_bytes()
         os.remove(tmp)
         return self._send(200, data, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                          {'Content-Disposition': 'attachment; filename="%s"' % name})
+                          {'Content-Disposition': attachment(name)})
+
+
+def attachment(name):
+    """Content-Disposition for a download. Headers are Latin-1, so a keyword in Arabic (or with quotes) goes in the
+    RFC 5987 form, next to a plain fallback name."""
+    plain = re.sub(r'[^A-Za-z0-9.-]+', '_', name).strip('_') or 'export.xlsx'
+    return 'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (plain, quote(name))
 
 
 # ---------------- GET routes ----------------
@@ -657,11 +754,65 @@ def api_report_refresh(h, q):
 
     async def work(progress):
         if d.get('amazon', True):
-            await S.check_many(kw, [market], True, progress)
+            res = await S.check_many(kw, [market], True, progress)
+            if not any('error' in r for r in res['results']):
+                await S.read_sizes(market, kw, progress)
         if d.get('trends', True) and S.settings.get('trends_enabled', True):
             await S.refresh_trends(kw, market, progress, force=bool(d.get('force_trends')))
         return await asyncio.to_thread(reports.keyword_report, S.db, market, kw, S.settings)
     return h._send(200, {'job': S.new_job('report', work)})
+
+
+@route('POST', '/api/report/size')
+def api_report_size(h, q):
+    """Read the package size and weight of the keyword's top listings from their Amazon pages."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    kw = ' '.join(str(d.get('kw', '')).split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+    return h._send(200, {'job': S.new_job('size', lambda p: S.read_sizes(market, kw, p, strict=True))})
+
+
+def _review_target(d):
+    """Market, keyword and ASIN of a reviews request: a keyword's best listings, or one listing (asin)."""
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    asin = str(d.get('asin') or '').strip().upper()[:12]
+    kw = None if asin else ' '.join(str(d.get('kw') or '').split())[:120]
+    return market, kw, asin if asin.isalnum() else None
+
+
+@route('GET', '/api/report/reviews')
+def api_report_reviews(h, q):
+    """The top negative reviews of a keyword's best listings, or of one listing."""
+    market, kw, asin = _review_target(q)
+    if not asin and not config.norm_kw(kw or ''):
+        return h._send(400, {'error': 'Which keyword or product?'})
+    return h._send(200, reports.reviews_for(S.db, market, kw, asin))
+
+
+@route('POST', '/api/report/reviews')
+def api_report_reviews_read(h, q):
+    """Read the negative reviews on Amazon: of the listings not read in two weeks, or of all of them (force)."""
+    d = h._json()
+    market, kw, asin = _review_target(d)
+    if not asin and not config.norm_kw(kw or ''):
+        return h._send(400, {'error': 'Which keyword or product?'})
+
+    async def work(progress):
+        r = await asyncio.to_thread(reports.reviews_for, S.db, market, kw, asin)
+        todo = r['asins'] if d.get('force') else r['todo']
+        if todo:
+            await S.read_reviews(market, todo, progress)
+        return await asyncio.to_thread(reports.reviews_for, S.db, market, kw, asin)
+    return h._send(200, {'job': S.new_job('reviews', work)})
+
+
+@route('POST', '/api/parse_size')
+def api_parse_size(h, q):
+    """Size and weight from text pasted from a supplier page, e.g. 'Single package size: 30X20X10 cm'."""
+    dims, kg = product.parse_size_text(str(h._json().get('text') or '')[:3000])
+    return h._send(200, {'dims_cm': dims, 'kg': kg})
 
 
 @route('POST', '/api/import/scan')
@@ -704,7 +855,7 @@ def api_check_batch(h, q):
         if isinstance(i, dict) and i.get('market') in ac.MARKETS and config.norm_kw(i.get('search')):
             items.append({'key': str(i.get('key', ''))[:200], 'market': i['market'],
                           'search': ' '.join(str(i['search']).split())[:120]})
-    jid = S.new_job('batch', lambda p: S.check_batch(items[:60], p))
+    jid = S.new_job('batch', lambda p: S.check_batch(items[:60], p, bool(d.get('refresh'))))
     return h._send(200, {'job': jid})
 
 
@@ -970,7 +1121,7 @@ def api_report_product_refresh(h, q):
 
     async def work(progress):
         progress('Reading the product page on Amazon %s...' % ac.MARKETS[market]['name'])
-        p = await product.read_product(S.checker, asin, market)
+        p = await product.read_product(S.checker, asin, market, reviews=True)
         await S.db.awrite(storage.save_product, market, asin, p)
         progress('Updating the sales curve...')
         await S.refit_curve(market)

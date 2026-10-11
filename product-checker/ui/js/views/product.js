@@ -44,6 +44,7 @@
       <div class="panel" id="pRank"></div>
       <div class="grid2"><div class="panel" id="pUnits"></div><div class="panel" id="pRev"></div></div>
       <div class="grid2"><div class="panel" id="pPrice"></div><div class="panel" id="pReviews"></div></div>
+      <div class="panel stackv" id="pNeg"></div>
       <h2 class="section">Other markets</h2>
       <div class="tablewrap"><table><thead><tr><th>Market</th><th class="r">Rank</th><th class="r">Price</th><th class="r">Sellers</th><th>Ships from</th><th>Read</th><th></th></tr></thead><tbody>
         ${Object.entries(d.other_markets).map(([m, r]) => `<tr><td><b>${MK[m]}</b></td><td class="r">${r && r.root_rank ? '#' + num(r.root_rank) : '–'}</td><td class="r">${r && r.price ? curMoney(r.price, MK_CUR[m]) + fxSub(r.price, m) : '–'}</td>
@@ -56,6 +57,7 @@
     $('pRefresh').addEventListener('click', () => refresh(d));
     $('pTrack').addEventListener('click', () => api('/api/watch', {kind: 'asin', target: d.asin, markets: [d.market]})
       .then(() => toast('Tracking ' + d.asin + ' daily in ' + MK[d.market])).catch(e => toast(e.message)));
+    negReviews('pNeg', {market: d.market, asin: d.asin});
 
     const hist = d.history.filter(h => ['ok', 'partial'].includes(h.status));
     const gaps = d.history.filter(h => !['ok', 'empty', 'partial'].includes(h.status)).map(h => ({t: h.ts * 1000, status: h.status}));

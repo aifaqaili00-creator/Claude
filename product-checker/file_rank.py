@@ -224,6 +224,13 @@ EXPORT_HEAD = ['Rank', 'Verdict', 'Title', 'Brand', 'Price', 'Sales/mo', 'Revenu
                'Sellers', '90d trend %', 'Weight lb', 'Fulfillment', 'Flags', 'Score', 'ASIN', 'URL']
 
 
+def excel_safe(df):
+    """Text starting with '=' would be saved as an Excel formula (a product title, a typed keyword): keep it as text."""
+    if not len(df.columns):
+        return df
+    return df.apply(lambda col: col.map(lambda v: "'" + v if isinstance(v, str) and v.startswith('=') else v))
+
+
 def export_excel(df, path, extra=()):
     """Save ranked products to a formatted Excel file. extra = [(column, heading), ...] added after Flags."""
     from openpyxl.styles import Font, PatternFill
@@ -233,7 +240,7 @@ def export_excel(df, path, extra=()):
         cols.insert(at, key)
         heads.insert(at, head)
         at += 1
-    out = df[[c for c in cols if c in df]].copy()
+    out = excel_safe(df[[c for c in cols if c in df]].copy())
     out.columns = [heads[cols.index(c)] for c in out.columns]
     with pd.ExcelWriter(path, engine='openpyxl') as xw:
         out.to_excel(xw, index=False, sheet_name='Ranked')

@@ -3,6 +3,9 @@
    supply over time, competition, every market side by side, and where each number comes from. */
 (() => {
   const BASIS_LABEL = {reported: 'Helium 10', estimated: 'estimate', backcast: 'backcast', forecast: 'forecast', measured: 'measured'};
+  const OTHER_SHOP = {AE: {name: 'Noon', url: 'https://www.noon.com/uae-en/search/?q='},
+                      AU: {name: 'eBay', url: 'https://www.ebay.com.au/sch/i.html?_nkw='},
+                      US: {name: 'Walmart', url: 'https://www.walmart.com/search?q='}};
   let current = null, loading = 0;
 
   view('k', {
@@ -50,6 +53,8 @@
             <button class="btn primary" id="kRefresh">${icon('refresh')}Refresh now</button>
             <button class="btn" data-open="${esc(d.search_url)}">Amazon${icon('external')}</button>
             <button class="btn" data-open="${esc(d.trends_url)}">Google Trends${icon('external')}</button>
+            <button class="btn" data-open="${esc(alibabaUrl(d.keyword))}" title="Find suppliers for this product on Alibaba">Alibaba${icon('external')}</button>
+            <button class="btn" data-open="${esc(OTHER_SHOP[d.market].url + encodeURIComponent(d.keyword))}" title="The same search on ${OTHER_SHOP[d.market].name}, another big shop in ${esc(MK[d.market])}">${OTHER_SHOP[d.market].name}${icon('external')}</button>
             <button class="btn" id="kXray">${icon('scan')}Xray</button>
             <button class="btn" id="kWatch" title="Re-check this keyword every day and fetch Google Trends weekly">${icon('eye')}Watch</button>
           </div>
@@ -87,6 +92,7 @@
         <div class="panel" id="kRev"></div>
       </div>
       <div id="kTop"></div>
+      <div class="panel stackv" id="kNeg"></div>
       <h2 class="section">All markets</h2>
       <div id="kMarkets"></div>
       <h2 class="section">Where these numbers come from</h2>
@@ -103,6 +109,7 @@
     drawRevenue(d);
     drawRecent(d);
     drawCompetition(d);
+    negReviews('kNeg', {market: d.market, kw: d.keyword});
     drawMarkets(d);
     drawData(d);
     loadMoney(d);
@@ -111,6 +118,14 @@
   /* ---------- opportunity, profit and launch plan ---------- */
   const LABEL_TONE = {Strong: 'good', 'Worth a look': 'accent', Weak: 'warn', Skip: 'bad'};
   const pfSaved = new Map();                               // market|keyword -> the profit form as you left it
+  const sizeText = (dims, kg) => [dims ? dims.map(v => num(v, 1)).join(' × ') + ' cm' : '', kg != null ? num(kg, 2) + ' kg' : ''].filter(Boolean).join(' · ');
+  /* Typical price in market t against the USA, both in US$: tells whether importing leaves room on price. */
+  function priceGap(d, t) {
+    const us = (d.markets.US || {}).price_med, there = (d.markets[t] || {}).price_med, thereUsd = fxConvert(there, MK_CUR[t], 'USD');
+    if (us == null || thereUsd == null) return '';
+    const diff = Math.round((thereUsd / us - 1) * 100);
+    return `<div class="small">Typical price ${esc(priceFx(there, t))} · <b class="${diff >= 10 ? 'up' : diff <= -10 ? 'down' : ''}">${diff > 0 ? '+' : ''}${diff}%</b> against the USA (${esc(priceFx(us, 'US'))})</div>`;
+  }
   async function loadMoney(d) {
     let m;
     try { m = await api('/api/report/money?market=' + d.market + '&kw=' + encodeURIComponent(d.keyword)); }
@@ -121,8 +136,12 @@
     const plan = m.plan || {};
     const dates = x => x ? `order by <b>${esc(x.order_by)}</b> · ship by ${esc(x.ship_by)} · in stock by ${esc(x.in_stock_by)}` : '–';
     // what you typed in the profit calculator survives a refresh or a currency change of this report
-    const pfKey = d.market + '|' + d.kw_norm, saved = pfSaved.get(pfKey) || {};
+    const pfKey = d.market + '|' + d.kw_norm, saved = pfSaved.get(pfKey) || {};       // only the fields you changed yourself
+    pfSaved.set(pfKey, saved);
     const pfVal = (k, dflt) => esc(saved[k] != null && saved[k] !== '' ? saved[k] : dflt);
+    const sz = m.size || {}, amz = {l: (sz.dims_cm || [])[0], w: (sz.dims_cm || [])[1], h: (sz.dims_cm || [])[2], kg: sz.kg};
+    const sizeVal = k => pfVal(k, amz[k] ?? {l: 30, w: 20, h: 10, kg: 0.5}[k]);
+    const amzKnown = sz.dims_cm || sz.kg != null;
     let cogs = m.cogs_usd != null ? +fxConvert(m.cogs_usd, 'USD', costCur()).toFixed(2) : '';
     if (saved.cogs != null && saved.cogs !== '') {
       cogs = saved.cogs_currency && saved.cogs_currency !== costCur() ? +fxConvert(+saved.cogs, saved.cogs_currency, costCur()).toFixed(2) : saved.cogs;
@@ -134,7 +153,7 @@
           ${o ? `<div class="parts">${o.parts.map(part).join('')}</div>
             <div class="small">Crowding ${m.saturation && m.saturation.score != null ? Math.round(m.saturation.score) + ' / 100' : 'unknown'} · confidence ${esc(o.conf)}${o.risk && o.risk.n ? ' · risky: ' + esc(o.risk.flags.join(', ')) : ''}</div>`
             : '<div class="small">Check sellers for this keyword first.</div>'}
-          ${Object.keys(m.arbitrage).length ? `<div class="divider"></div><h3>Bring it from the USA?</h3>${Object.entries(m.arbitrage).map(([t, a]) => a ? `<div class="row" style="justify-content:space-between"><span><b>${esc(MK[t])}</b> <span class="small">${esc((a.why || []).slice(0, 2).join(' · '))}</span></span><span class="pill ${LABEL_TONE[a.label] || 'weak'}">${esc(a.label || '')} ${a.score != null ? Math.round(a.score) : '?'}</span></div>` : `<div class="small">${esc(MK[t])}: not checked yet. <a href="#/k/${t}/${encodeURIComponent(d.keyword)}">Open</a> and refresh.</div>`).join('')}` : ''}
+          ${Object.keys(m.arbitrage).length ? `<div class="divider"></div><h3>Bring it from the USA?</h3>${Object.entries(m.arbitrage).map(([t, a]) => a ? `<div class="row" style="justify-content:space-between"><span><b>${esc(MK[t])}</b> <span class="small">${esc((a.why || []).slice(0, 2).join(' · '))}</span>${priceGap(d, t)}</span><span class="pill ${LABEL_TONE[a.label] || 'weak'}">${esc(a.label || '')} ${a.score != null ? Math.round(a.score) : '?'}</span></div>` : `<div class="small">${esc(MK[t])}: not checked yet. <a href="#/k/${t}/${encodeURIComponent(d.keyword)}">Open</a> and refresh.</div>`).join('')}` : ''}
         </div>
         <div class="panel stackv">
           <h3>Launch plan</h3>
@@ -152,33 +171,92 @@
           <div class="field"><label for="pfPrice">Price (${esc(cur)})</label><input type="number" step="0.01" id="pfPrice" name="price" value="${pfVal('price', m.price != null ? m.price : '')}"></div>
           <div class="field"><label for="pfCost">Product cost per piece</label><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="number" step="0.01" min="0" id="pfCost" name="cogs" value="${esc(cogs)}" placeholder="from supplier">
             <select name="cogs_currency" aria-label="Currency of the product cost" title="The currency your supplier quotes in">${CURRENCIES.map(c => `<option value="${c}" ${c === costCur() ? 'selected' : ''}>${CUR_SYM[c]}</option>`).join('')}</select></div></div>
-          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" name="l" style="width:64px" value="${pfVal('l', 30)}" aria-label="Length (cm)"><input type="number" name="w" style="width:64px" value="${pfVal('w', 20)}" aria-label="Width (cm)"><input type="number" name="h" style="width:64px" value="${pfVal('h', 10)}" aria-label="Height (cm)"></div></div>
-          <div class="field"><label for="pfKg">Weight (kg)</label><input type="number" step="0.01" id="pfKg" name="kg" value="${pfVal('kg', 0.5)}"></div>
+          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" step="0.1" name="l" style="width:64px" value="${sizeVal('l')}" aria-label="Length (cm)"><input type="number" step="0.1" name="w" style="width:64px" value="${sizeVal('w')}" aria-label="Width (cm)"><input type="number" step="0.1" name="h" style="width:64px" value="${sizeVal('h')}" aria-label="Height (cm)"></div></div>
+          <div class="field"><label for="pfKg">Weight (kg)</label><input type="number" step="0.01" id="pfKg" name="kg" value="${sizeVal('kg')}"></div>
           <div class="field"><label for="pfFreight">Freight</label><select id="pfFreight" name="freight_mode"><option value="sea">Sea</option><option value="air" ${saved.freight_mode === 'air' ? 'selected' : ''}>Air</option></select></div>
+          <div class="field"><label for="pfUnits">First order (units)</label><input type="number" min="0" step="50" id="pfUnits" name="units" value="${pfVal('units', 300)}"></div>
           ${d.market !== 'US' ? `<label class="small"><input type="checkbox" name="registered" ${(ST.settings.registered || {})[d.market] ? 'checked' : ''}> Registered for ${d.market === 'AU' ? 'GST' : 'VAT'}</label>` : ''}
           <label class="small"><input type="checkbox" name="save_cogs"> Remember the cost</label>
         </form>
+        <div class="row small sizebar" id="pfSize">
+          <span>${amzKnown ? `Size from Amazon: <b>${esc(sizeText(sz.dims_cm, sz.kg))}</b> <span class="muted">(${sz.n ? 'median of ' + sz.n + ' top listing' + (sz.n > 1 ? 's' : '') : 'weight from Helium 10'})</span>`
+            : sz.searched ? 'Size and weight above are a guess until Amazon\'s are read.' : 'Search this keyword (Refresh now) to read the size from Amazon.'}</span>
+          ${amzKnown ? '<button type="button" class="btn slim" id="pfUseAmz" hidden>Use Amazon\'s size</button>' : ''}
+          ${sz.searched && sz.n < 3 && (sz.missing || []).length ? `<button type="button" class="btn slim" id="pfReadAmz" title="Opens the product pages of the top listings in the background">${sz.n ? 'Read more listings' : 'Read size from Amazon'}</button>` : ''}
+          <input type="text" id="pfPaste" placeholder="Or paste the supplier's size and weight, e.g. 30*20*10 cm, gross weight 0.5 kg" aria-label="Paste the supplier's size and weight">
+          <span id="pfSizeOut"></span>
+        </div>
         <div id="pfOut"></div>
       </div>`;
     const form = $('pfForm');
-    const keep = () => pfSaved.set(pfKey, Object.fromEntries(new FormData(form)));
+    const syncUse = () => {                                   // offer Amazon's size again once you have changed it
+      if ($('pfUseAmz')) $('pfUseAmz').hidden = !['l', 'w', 'h', 'kg'].some(k => amz[k] != null && +form[k].value !== +amz[k]);
+    };
+    const keep = (...names) => { names.forEach(n => { if (form[n]) saved[n] = form[n].value; }); syncUse(); };
+    const setSize = (dims, kg) => {
+      const names = [];
+      if (dims) ['l', 'w', 'h'].forEach((k, i) => { form[k].value = dims[i]; names.push(k); });
+      if (kg != null) { form.kg.value = kg; names.push('kg'); }
+      return names;
+    };
+    let last = null;
     const run = async () => {
       const f = Object.fromEntries(new FormData(form));
       f.registered = !!form.registered && form.registered.checked;
       f.save_cogs = form.save_cogs.checked;
       Object.assign(f, {market: d.market, kw: d.keyword});
-      try { renderProfit(await api('/api/profit', f), m, d.market); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
+      try { last = await api('/api/profit', f); renderProfit(last, m, d.market); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
     };
-    form.addEventListener('input', keep);
+    form.addEventListener('input', e => {
+      if (e.target.name === 'cogs') keep('cogs', 'cogs_currency'); else if (e.target.name) keep(e.target.name);
+      if (e.target.name === 'units' && last) renderProfit(last, m, d.market);     // planner only: no new calculation needed
+    });
     form.addEventListener('change', e => {
+      if (e.target.name === 'units') return;
       if (e.target.name === 'cogs_currency') {
         const was = costCur(), cost = parseFloat(form.cogs.value);
         if (cost >= 0) form.cogs.value = +fxConvert(cost, was, e.target.value).toFixed(2);   // the same cost, in the other currency
-        keep();
+        keep('cogs', 'cogs_currency');
         saveCurrency('cost_currency', e.target.value);
-      } else keep();
+      } else if (e.target.name) keep(e.target.name);
       run();
     });
+    let pasteTimer = 0;
+    $('pfSize').addEventListener('input', e => {
+      if (e.target.id !== 'pfPaste') return;
+      clearTimeout(pasteTimer);
+      pasteTimer = setTimeout(() => readPaste(e.target.value.trim()), 400);
+    });
+    const readPaste = async text => {
+      const out = $('pfSizeOut');
+      if (!text) { out.innerHTML = ''; return; }
+      try {
+        const r = await api('/api/parse_size', {text});
+        if (!r.dims_cm && r.kg == null) { out.innerHTML = '<span class="pill weak">No size or weight found in that text</span>'; return; }
+        keep(...setSize(r.dims_cm, r.kg));
+        out.innerHTML = `<span class="pill good">${icon('ok')}Supplier: ${esc(sizeText(r.dims_cm, r.kg))}</span>`;
+        run();
+      } catch (err) { out.innerHTML = failPill(err.message); }
+    };
+    $('pfSize').addEventListener('click', async e => {
+      if (e.target.closest('#pfUseAmz')) {
+        setSize(sz.dims_cm, sz.kg).forEach(k => delete saved[k]);          // follow Amazon's size again
+        syncUse();
+        return run();
+      }
+      const b = e.target.closest('#pfReadAmz');
+      if (!b) return;
+      b.disabled = true;
+      $('pfSizeOut').innerHTML = busy('Opening product pages on Amazon…');
+      try {
+        const {job} = await api('/api/report/size', {market: d.market, kw: d.keyword});
+        const got = await waitJob(job, line => { $('pfSizeOut').innerHTML = busy(line); });
+        ['l', 'w', 'h', 'kg'].forEach(k => delete saved[k]);                // you asked for Amazon's size: use it
+        if (!got.dims_cm && got.kg == null) toast('Those Amazon pages show no size. Type it, or paste it from the supplier.', 7000);
+        loadMoney(d);
+      } catch (err) { $('pfSizeOut').innerHTML = failPill(err.message); b.disabled = false; }
+    });
+    syncUse();
     form.addEventListener('submit', e => { e.preventDefault(); run(); });
     if (form.price.value) run();
   }
@@ -194,13 +272,32 @@
         <div class="kpi"><span class="eyebrow">Highest product cost</span><span class="v">${r.max_cogs_20_cost != null ? curMoney(r.max_cogs_20_cost, r.cost_currency || 'USD') : '–'}</span><span class="s">for a 20% margin${r.max_cogs_20 != null && r.cost_currency !== 'USD' ? ' · US$ ' + num(r.max_cogs_20, 2) : ''}</span></div>
         ${units ? `<div class="kpi"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">${[approx(e.Profit * units, mk, {d: 0}), '~' + num(units) + ' sales a month (badge estimate, rough)'].filter(Boolean).join(' · ')}</span></div>` : ''}
       </div>
+      ${orderPlan(e, mk, mny)}
       <div class="grid2">
-        <div><table><tbody>${e.waterfall.map(([k, v]) => `<tr${k === 'Profit' ? ' class="fast"' : ''}><td>${esc({NetSales: e.registered ? 'Price without GST/VAT' : 'Price', Referral: 'Referral fee', FBA: 'FBA fee (' + e.fee_source + ')', Storage: 'Storage', Placement: 'Inbound placement', FeeTax: 'GST/VAT on fees', Landed: 'Product + freight + duty', Ads: 'Ads (12% of sales)', Returns: 'Returns (2.5%)', Other: 'Other', Profit: 'Profit'}[k] || k)}</td><td class="r">${k === 'NetSales' || k === 'Profit' ? mny(v) : '− ' + num(v, 2)}</td></tr>`).join('')}</tbody></table>
+        <div><table><tbody>${e.waterfall.map(([k, v]) => `<tr${k === 'Profit' ? ' class="fast"' : ''}><td>${esc({NetSales: e.registered ? 'Price without GST/VAT' : 'Price', Referral: 'Referral fee', FBA: 'FBA fee (' + (e.fee_source === 'table' ? (e.tier_label || 'table') : e.fee_source === 'h10' ? 'Helium 10' : 'yours') + ')', Storage: 'Storage', Placement: 'Inbound placement', FeeTax: 'GST/VAT on fees', Landed: 'Product + freight + duty', Ads: 'Ads (12% of sales)', Returns: 'Returns (2.5%)', Other: 'Other', Profit: 'Profit'}[k] || k)}</td><td class="r">${k === 'NetSales' || k === 'Profit' ? mny(v) : '− ' + num(v, 2)}</td></tr>`).join('')}</tbody></table>
           ${e.warnings.map(w => `<div class="small">${icon('warn')} ${esc(w)}</div>`).join('')}</div>
         <div><table><thead><tr><th class="r">Price</th><th class="r">Profit</th><th class="r">Margin</th><th></th></tr></thead><tbody>
           ${r.grid.filter((g, i) => i % 2 === 0 || g.cliff).map(g => `<tr><td class="r">${num(g.price, 2)}</td><td class="r ${g.profit < 0 ? 'down' : ''}">${num(g.profit, 2)}</td><td class="r">${g.margin != null ? Math.round(g.margin * 100) + '%' : ''}</td><td>${g.cliff ? '<span class="pill warn">fee step</span>' : ''}</td></tr>`).join('')}
         </tbody></table></div>
       </div>`;
+  }
+
+  /* The first order: money it ties up, how many sales bring it back, and how long it lasts at the page-1 average. */
+  function orderPlan(e, mk, mny) {
+    const n = Math.round(+(($('pfForm') || {}).units || {}).value || 0);
+    if (!(n > 0)) return '';
+    if (!(e.COGS > 0)) return '<div class="small">Type the product cost to plan the first order.</div>';
+    const ps = current && current.now && current.now.per_seller, rate = ps && ps.per_seller ? ps.per_seller.v : null;
+    const back = e.Profit + e.Landed, months = rate ? n / rate : null;          // each sale returns its landed cost + profit
+    const tile = (label, v, s, tone) => `<div><div class="of">${label}</div><div class="v"${tone ? ` style="color:var(--${tone}-text)"` : ''}>${v}</div><div class="of">${s || ''}</div></div>`;
+    return `<h3 style="margin-top:4px">First order of ${num(n)} units</h3><div class="perseller" style="margin:8px 0">
+      ${tile('Money needed', mny(n * e.Landed), [approx(n * e.Landed, mk, {d: 0}), 'product, freight and duty'].filter(Boolean).join(' · '))}
+      ${tile('Money back after', e.Profit >= 0 ? num(Math.ceil(n * e.Landed / back)) + ' sales' : 'never',
+             e.Profit >= 0 ? Math.round(e.Landed / back * 100) + '% of the order' : 'each sale loses money', e.Profit >= 0 ? '' : 'bad')}
+      ${tile('Profit on the whole order', mny(n * e.Profit), approx(n * e.Profit, mk, {d: 0}), e.Profit >= 0 ? 'good' : 'bad')}
+      ${tile('Sold out in about', months == null ? '–' : months < 1 ? 'under a month' : num(months, 1) + ' months',
+             rate ? 'at ≈ ' + compact(rate) + ' sales a month (page-1 average per seller)' : 'needs sales badges on page 1')}
+    </div>${months > 4 ? `<div class="small">${icon('warn')} Slow to sell: storage after the first 2 months is not in the profit above, and a smaller first order ties up less money.</div>` : ''}`;
   }
 
   const median = v => { const s = [...v].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
@@ -282,7 +379,7 @@
     if (ps) {
       $('kPer').innerHTML = `<h3>Demand vs sellers</h3>${perSellerTiles(ps) || '<div class="small muted">No listing shows a “bought in past month” badge, so sales per seller are unknown.</div>'}<div id="kPerBars"></div>`;
       if (ps.demand.v != null) Charts.sellerBars($('kPerBars'), {title: 'Sales per seller', sub: 'Estimated sales a month of each listing on page 1',
-        listings: ps.listings, currency: d.currency, foot: ['Source: “bought in past month” badges (estimate)', 'Latest check']});
+        listings: ps.listings, currency: d.currency, priceFmt: v => priceFx(v, d.market), foot: ['Source: “bought in past month” badges (estimate)', 'Latest check']});
     }
     Charts.histogram($('kPrice'), {title: 'Prices on page 1', sub: d.currency, values: c ? c.prices : [], format: v => num(v, 0), xTitle: 'Price',
       empty: 'No listings yet.', foot: ['Latest check']});
