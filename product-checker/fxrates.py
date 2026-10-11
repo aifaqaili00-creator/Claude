@@ -1,4 +1,4 @@
-"""Exchange rates for turning your price range (US$ or EUR) into A$ and AED.
+"""Exchange rates between US$, A$, AED and EUR (your price range, supplier costs and the converter).
 
 Source: the European Central Bank's daily reference rates (free, published every working day around 16:00 CET).
 The UAE dirham is pegged to the US dollar at 3.6725. Rates are fetched at most once a day, kept in fx.json, and
@@ -18,12 +18,15 @@ log = logging.getLogger('pc')
 ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml'
 AED_PER_USD = 3.6725
 MAX_AGE = 20 * 3600
+RETRY_AFTER = 30 * 60                                   # after a failed fetch (offline), wait before trying again
 FALLBACK = {'as_of': None, 'source': 'fixed', 'per_usd': {'USD': 1.0, 'EUR': 0.92, 'AUD': 1.55, 'AED': AED_PER_USD}}
 CURRENCY = {'US': 'USD', 'AU': 'AUD', 'AE': 'AED'}
+CURRENCIES = config.CURRENCIES
 SYMBOL = {'USD': 'US$', 'EUR': '€', 'AUD': 'A$', 'AED': 'AED '}
 
 _lock = threading.Lock()
 _rates = None
+_last_try = 0.0
 
 
 def cache_file():
@@ -71,11 +74,13 @@ def _apply(d):
 
 def refresh(force=False, fetch=None, now=None):
     """Fetch new rates if the saved ones are older than about a day. Never raises; returns the rates in use."""
+    global _last_try
     now = now or time.time()
     with _lock:
         saved = _load()
         if saved and not force and now - saved.get('fetched_at', 0) < MAX_AGE:
             return _apply(saved)
+        _last_try = now
         try:
             d = parse_ecb((fetch or _fetch)())
             d['fetched_at'] = now
@@ -119,17 +124,26 @@ def ranges(settings):
 
 def summary(settings):
     r = rates()
-    return {'as_of': r.get('as_of'), 'source': r.get('source'), 'per_usd': r['per_usd'], 'ranges': ranges(settings),
-            'currency': settings.get('price_currency', 'USD')}
+    return {'as_of': r.get('as_of'), 'source': r.get('source'), 'fetched_at': r.get('fetched_at'),
+            'per_usd': {c: r['per_usd'][c] for c in CURRENCIES}, 'currencies': list(CURRENCIES),
+            'ranges': ranges(settings), 'currency': settings.get('price_currency', 'USD')}
 
 
 _busy = threading.Event()
 
 
-def refresh_soon(force=False):
-    """Refresh in a background thread if the rates are due (or force). Returns at once."""
+def due(now=None):
+    """True when the rates are older than about a day and the last attempt was not a moment ago."""
+    now = now or time.time()
     r = rates()
-    if os.environ.get('PC_FX_OFFLINE') or _busy.is_set() or (not force and r.get('fetched_at') and time.time() - r['fetched_at'] < MAX_AGE):
+    fresh = r.get('fetched_at') and now - r['fetched_at'] < MAX_AGE
+    return not fresh and now - _last_try >= RETRY_AFTER
+
+
+def refresh_soon(force=False):
+    """Refresh in a background thread if the rates are due (or force). Returns at once.
+    Called on every status poll, so after a failure it waits RETRY_AFTER instead of asking again every 2 s."""
+    if os.environ.get('PC_FX_OFFLINE') or _busy.is_set() or not (force or due()):
         return False
     _busy.set()
 

@@ -18,6 +18,7 @@ APP_DIR = Path(os.environ.get('PC_APP_DIR') or
 MARKETS = ('US', 'AU', 'AE')
 MARKET_TZ = {'US': 'America/New_York', 'AU': 'Australia/Sydney', 'AE': 'Asia/Dubai'}
 _FALLBACK_OFFSET = {'US': -5, 'AU': 10, 'AE': 4}             # used only if the time zone database is missing
+CURRENCIES = ('USD', 'AUD', 'AED', 'EUR')                   # prices and supplier costs can be typed in these
 
 # key: (type, default, extra) -- extra = (min, max) for numbers, choices for strings
 SCHEMA = {
@@ -38,9 +39,10 @@ SCHEMA = {
     'trends_enabled': (bool, True, None),
     'import_folder': (str, '', None),
     'price_filter': (bool, True, None),                 # show only ideas selling within your price range
-    'price_min': (float, 20.0, (1, 5000)),
-    'price_max': (float, 50.0, (1, 5000)),
-    'price_currency': (str, 'USD', ('USD', 'EUR')),    # the range is typed in this currency, converted per market
+    'price_min': (float, 20.0, (1, 20000)),
+    'price_max': (float, 50.0, (1, 20000)),
+    'price_currency': (str, 'USD', CURRENCIES),         # your currency: the range is typed in it, other prices show ≈ in it
+    'cost_currency': (str, 'USD', CURRENCIES),          # what your supplier quotes in (profit calculator, Profit?)
     'exclude_tech': (bool, True, None),                 # no phones, laptops or their accessories
 }
 DEFAULT_LOCATIONS = {'US': '10001', 'AU': '2000', 'AE': 'Dubai'}

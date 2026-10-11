@@ -32,12 +32,13 @@
         <td>${r.units ? `<b>${compact(r.units.v)}</b> <span class="sub">${compact(r.units.lo)}–${compact(r.units.hi)}</span> ` : '<span class="muted small">–</span> '}${Charts.spark(r.spark, {label: 'bought per month'})}</td>
         <td class="r">${r.fast ?? '–'}${r.fast_change ? ` <span class="${r.fast_change > 0 ? 'down' : 'up'}">${r.fast_change > 0 ? '+' : ''}${r.fast_change}</span>` : ''}</td>
         <td class="r">${r.overseas_share != null ? Math.round(r.overseas_share * 100) + '%' : '–'}</td>
-        <td class="r">${r.price_med != null ? num(r.price_med, 0) : '–'}</td><td class="r">${r.review_barrier != null ? num(r.review_barrier) : '–'}</td>
+        <td class="r">${r.price_med != null ? curMoney(r.price_med, MK_CUR[r.market], 0) + fxSub(r.price_med, r.market, {d: 0}) : '–'}</td><td class="r">${r.review_barrier != null ? num(r.review_barrier) : '–'}</td>
         <td>${r.trend && r.trend.label ? esc(r.trend.label) : '<span class="muted small">–</span>'}</td>
         <td>${r.checked_at ? ago(r.checked_at) : '<span class="muted small">waiting</span>'}${r.last_status && !['ok', 'empty', 'partial'].includes(r.last_status) ? ` <span class="pill warn" title="Last attempt">${esc(r.last_status)}</span>` : ''}</td>
         <td><button class="btn slim ghost" data-unwatch="${r.id}" title="Stop watching">${icon('x')}</button></td></tr>`).join('')}
       </tbody></table></div><p class="small" style="margin-top:8px">Fast local = arrives within ${ST.settings.fast_days || 3} days (green change = fewer fast sellers than a week ago, so the gap is opening).</p>`;
   }
+  window.addEventListener('pc:currency', e => { if (e.detail.key === 'price_currency' && currentView === 'watch') load(); });
   $('watchOut').addEventListener('change', e => {
     const s = e.target.closest('[data-stage]'); if (!s) return;
     api('/api/watch/update', {id: +s.dataset.stage, stage: s.value}).then(() => toast('Stage saved', 1500)).catch(err => toast(err.message));

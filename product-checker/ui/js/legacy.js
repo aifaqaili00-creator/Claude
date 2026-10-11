@@ -9,7 +9,7 @@ view('niche', {title: 'Niche keywords', sub: 'What shoppers type into Amazon, wi
                onShow: () => $('nSeed').focus()});
 view('xray', {title: 'Xray analysis', sub: 'Run Helium 10 Xray in your Chrome; the export is picked up and analysed here'});
 view('rank', {title: 'Rank a file', sub: 'Top products from a Black Box, Xray or any export, with local seller checks'});
-view('settings', {title: 'Settings', sub: 'Theme, Chrome profile, delivery locations and checks'});
+view('settings', {title: 'Settings', sub: 'Theme, currency, Chrome profile, delivery locations and checks'});
 
 /* Search phrases the user edited, kept across re-renders (key: "rank:<asin>" or "idea:<asin>"). */
 const editedSearch = new Map();
@@ -58,6 +58,7 @@ function renderCheck(res) {
   const times = res.results.filter(r => r.checked_at).map(r => r.checked_at);
   $('checkWhen').textContent = times.length ? 'Checked ' + ago(Math.min(...times)) + (res.results.some(r => r.cached) ? ' (saved result)' : '') : '';
   $('cards').innerHTML = res.results.map(card).join('');
+  $('priceCmp').innerHTML = priceCompare(res);
   $('lmSeg').innerHTML = '<button type="button" data-v="all" aria-pressed="true">All</button>' +
     res.results.filter(r => !r.error).map(r => `<button type="button" data-v="${r.market}" aria-pressed="false">${MK_SHORT[r.market]}</button>`).join('');
   renderList();
@@ -92,11 +93,26 @@ function card(r) {
       <div><dt>Listings</dt><dd class="tnum">${r.total} organic + ${r.sponsored} ads${r.results_total ? ` · Amazon says ${r.results_over ? 'over ' : ''}${num(r.results_total)} results` : ''}</dd></div>
       <div><dt>Fast sellers</dt><dd>${r.fast ? r.fast + ' · median ' + num(r.fast_reviews_median) + ' reviews' + (r.fast_price_min != null ? ' · ' + money(r.fast_price_min, cur) + '–' + num(r.fast_price_max, 2) : '') : '<span class="muted">none</span>'}</dd></div>
       <div><dt>Demand</dt><dd>${r.bought_listings ? r.bought_listings + ' listings show “bought in past month”, top ' + num(r.bought_top) + '+' : '<span class="muted">Amazon shows no sales badges</span>'}</dd></div>
+      <div><dt>Typical price</dt><dd>${r.price_med != null ? curMoney(r.price_med, MK_CUR[r.market]) + fxSpan(r.price_med, r.market) + ' <span class="muted">median of page 1</span>' : '<span class="muted">no prices shown</span>'}</dd></div>
     </dl>
     <div class="row"><button class="btn slim" data-open="${esc(r.search_url)}">Open search in Chrome${icon('external')}</button>${r.cached ? '<span class="small">saved ' + ago(r.checked_at) + '</span>' : ''}</div>
   </div>`;
 }
 let listSort = {k: 'speed', dir: 1};
+/* The same search in several countries: median page-1 price in your currency, so the markets can be compared. */
+function priceCompare(res) {
+  const my = myCur();
+  const rows = res.results.filter(r => !r.error && r.price_med != null)
+    .map(r => ({mk: r.market, local: r.price_med, mine: fxConvert(r.price_med, MK_CUR[r.market], my)})).filter(x => x.mine != null);
+  if (rows.length < 2) return '';
+  const lo = Math.min(...rows.map(x => x.mine)), hi = Math.max(...rows.map(x => x.mine));
+  return `<div class="panel stackv"><div class="head"><h3>Price across markets</h3><span class="small" title="${esc(fxNote())}">median page-1 price, compared in ${CUR_SYM[my]}</span></div>
+    <div class="pcmp">${rows.map(x => `<b>${esc(MK[x.mk])}</b>
+      <div class="bar" role="img" aria-label="${esc(curMoney(x.mine, my))}"><span style="width:${x.mine / hi * 100}%;background:var(--s-demand)"></span></div>
+      <span class="tnum">${curMoney(x.local, MK_CUR[x.mk])}</span><span class="tnum muted">${MK_CUR[x.mk] !== my ? '≈ ' + curMoney(x.mine, my) : ''}</span>
+      <span class="small tnum">${x.mine === lo ? 'lowest' : '+' + Math.round((x.mine / lo - 1) * 100) + '%'}</span>`).join('')}</div>
+    <div class="small">A clearly higher price where few listings deliver fast can leave room for stock shipped in from the cheaper market. Check the fees and freight with <b>Open report</b> → Profit per sale.</div></div>`;
+}
 function renderList() {
   if (!checkData) return;
   const spd = segVal($('spdSeg')), lm = segVal($('lmSeg')), hide = $('hideAds').checked;
@@ -104,7 +120,8 @@ function renderList() {
   rows = rows.filter(x => (spd === 'all' || x.speed === spd || x.origin === spd) && (lm === 'all' || x.market === lm) && !(hide && x.sponsored));
   const order = {fast: 0, slow: 1, unknown: 2}, oorder = {local: 0, unknown: 1, overseas: 2};
   const key = {speed: x => order[x.speed] * 100 + (x.days ?? 99), origin: x => oorder[x.origin] * 100 + (x.days ?? 99), market: x => x.market,
-               days: x => x.days ?? 999, price: x => x.price ?? -1, reviews: x => x.reviews ?? -1, rating: x => x.rating ?? -1,
+               days: x => x.days ?? 999, price: x => x.price == null ? -1 : fxConvert(x.price, MK_CUR[x.market], 'USD') ?? x.price,
+               reviews: x => x.reviews ?? -1, rating: x => x.rating ?? -1,
                bought: x => x.bought ?? -1, title: x => x.title}[listSort.k];
   rows.sort((a, b) => { const A = key(a), B = key(b); return (A > B ? 1 : A < B ? -1 : 0) * listSort.dir; });
   const cols = [['market', 'Market'], ['origin', 'Ships from'], ['speed', 'Delivery'], ['days', 'Days', 'r'], ['price', 'Price', 'r'],
@@ -117,7 +134,7 @@ function renderList() {
     (rows.length ? rows.map(x => `<tr class="${x.speed}">
       <td>${MK_SHORT[x.market] || x.market}</td><td title="${esc(x.why || '')}">${og(x)}<div class="sub">${esc(x.why || '')}</div></td>
       <td>${sp[x.speed] || ''}${x.prime ? ' <span class="pill accent">prime</span>' : ''}${x.sponsored ? ' <span class="pill weak">ad</span>' : ''}</td>
-      <td class="r">${x.days ?? ''}</td><td class="r">${money(x.price, '')}</td><td class="r">${num(x.reviews)}</td><td class="r">${x.rating ?? ''}</td><td class="r">${x.bought ? num(x.bought) + '+' : ''}</td>
+      <td class="r">${x.days ?? ''}</td><td class="r">${x.price != null ? curMoney(x.price, MK_CUR[x.market]) + fxSub(x.price, x.market) : ''}</td><td class="r">${num(x.reviews)}</td><td class="r">${x.rating ?? ''}</td><td class="r">${x.bought ? num(x.bought) + '+' : ''}</td>
       <td class="title"><a data-open="${esc(x.url)}">${esc(x.title)}</a><div class="sub">${esc(x.delivery)}</div></td></tr>`).join('')
       : '<tr><td colspan="9" class="empty">No listings match these filters.</td></tr>') + '</tbody>';
 }
@@ -158,12 +175,13 @@ function renderRank() {
   const d = rankData, cur = d.target.currency, c = d.counts;
   $('rankOut').hidden = false;
   $('rankTitle').textContent = MK[d.market] + ' · ' + d.file;
-  $('rankTarget').textContent = `Targets: ${cur} ${d.target.price[0]}–${d.target.price[1]}, at least ${d.target.sales} sales/month, at most ${d.target.reviews} reviews`;
+  const lo = inMine(d.target.price[0], d.market, {d: 0}), hi = inMine(d.target.price[1], d.market, {d: 0});
+  $('rankTarget').textContent = `Targets: ${cur} ${d.target.price[0]}–${d.target.price[1]}${lo ? ` (≈ ${lo}–${hi.replace(/^\S+ /, '')})` : ''}, at least ${d.target.sales} sales/month, at most ${d.target.reviews} reviews`;
   const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
   $('rankKpis').innerHTML = k(num(d.total), 'Products') + k(c['Good pick'] || 0, 'Good picks', 'targets met, no flags') +
     k(c['Check first'] || 0, 'Check first', 'targets met, read the flags') + k(c['Close'] || 0, 'Close', 'almost') + k(c['Skip'] || 0, 'Skip');
   const vc = {'Good pick': ['good', 'ok'], 'Check first': ['warn', 'warn'], 'Close': ['weak', 'dot'], 'Skip': ['bad', 'x']};
-  $('rankTable').innerHTML = `<thead><tr><th class="r">#</th><th>Verdict</th><th>Product</th><th class="r">Price</th><th class="r">Sales/mo</th><th class="r">Revenue/mo</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th class="r">90-day trend</th><th>Local sellers</th><th>Search words</th></tr></thead><tbody>` +
+  $('rankTable').innerHTML = `<thead><tr><th class="r">#</th><th>Verdict</th><th>Product</th><th class="r">Price (${esc(cur)})</th><th class="r">Sales/mo</th><th class="r">Revenue/mo (${esc(cur)})</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th class="r">90-day trend</th><th>Local sellers</th><th>Search words</th></tr></thead><tbody>` +
     shownRows().map(r => {
       const L = local[r.asin], v = vc[r.verdict] || ['weak', 'dot'];
       const lc = !L ? `<button class="btn slim" data-check="${esc(r.asin)}">Check</button>` : L === 'busy' ? '<span class="spin"></span>' : L.error ? `<span class="pill bad" title="${esc(L.error)}">failed</span>` :
@@ -212,7 +230,9 @@ function localPill(L, mk) {
   if (L === 'busy') return `<span class="pill weak"><span class="spin" style="width:11px;height:11px"></span>${name}</span>`;
   if (L.error) return `<span class="pill bad" title="${esc(L.error)}">${icon('x')}${name}: failed</span>`;
   const gap = L.total && L.local <= 4;
-  return `<span class="pill ${gap ? 'good' : LEVEL[L.level] || 'weak'}" title="${esc(L.verdict)} Searched: ${esc(L.keyword)}">${gap ? icon('ok') : '<i></i>'}${name}: ${L.local} local · ${L.overseas} abroad${gap ? ' · gap' : ''}</span>`;
+  const price = L.price_med != null ? curMoney(L.price_med, MK_CUR[mk], 0) : '', mine = price ? inMine(L.price_med, mk, {d: 0}) : '';
+  const tip = (price ? `Median price there ${price}${mine ? ' (≈ ' + mine + ')' : ''}. ` : '') + L.verdict + ' Searched: ' + L.keyword;
+  return `<span class="pill ${gap ? 'good' : LEVEL[L.level] || 'weak'}" title="${esc(tip)}">${gap ? icon('ok') : '<i></i>'}${name}: ${L.local} local · ${L.overseas} abroad${gap ? ' · gap' : ''}${price ? ' · ' + esc(mine ? '≈ ' + mine : price) : ''}</span>`;
 }
 $('btnIdeas').addEventListener('click', () => runIdeas(false));
 $('iCats').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); });
@@ -253,7 +273,7 @@ function renderIdeas() {
   if (f.tech) hidden.push(`${num(f.tech)} phone / computer`);
   $('iSub').textContent = `${d.scanned} products read from ${d.lists} lists · ${boom} booming · ${nw} new releases · scanned ${ago(d.at)}` +
     (hidden.length ? ' · hidden: ' + hidden.join(', ') : '');
-  $('btnIdeasCheck').hidden = d.market !== 'US';
+  $('btnIdeasCheck').textContent = 'Check top 12 in ' + ideaChecks(d.market).map(m => MK_SHORT[m]).join(' & ');
   const lab = {Booming: 'warn', Rising: 'accent', New: 'good', Moving: 'weak'};
   const checks = ideaChecks(d.market);
   $('iGrid').innerHTML = sortedIdeas().map(i => `<div class="panel icard">
@@ -264,7 +284,7 @@ function renderIdeas() {
           ${i.similar ? `<span class="pill accent" title="Other products like this are moving too">+${i.similar} similar</span>` : ''}
           <span class="small muted" style="margin-left:auto">${esc(i.category)}</span></div>
         <a class="clamp2" data-open="${esc(i.url)}" style="cursor:pointer;color:var(--ink);font-weight:550;text-decoration:none">${esc(i.title)}</a>
-        <div class="small">${i.price != null ? money(i.price, cur) : 'no price'} · ${i.rating ? '★ ' + i.rating : 'no rating'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.rank_before ? ` · rank ${num(i.rank_before)} → ${num(i.rank_now)}` : ''}</div>
+        <div class="small">${i.price != null ? money(i.price, cur) + fxSpan(i.price, d.market) : 'no price'} · ${i.rating ? '★ ' + i.rating : 'no rating'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.rank_before ? ` · rank ${num(i.rank_before)} → ${num(i.rank_now)}` : ''}</div>
         ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
       </div>
       <div class="acts">
@@ -335,7 +355,7 @@ function renderNiche() {
     nData.keywords.map((k, i) => `<tr><td><input type="checkbox" data-nsel="${i}" ${k.sel ? 'checked' : ''} aria-label="Select ${esc(k.keyword)}"></td>
       <td><b>${esc(k.keyword)}</b></td>
       <td><div class="bar" style="width:90px" title="${k.hits} suggestion lists"><span style="width:${k.hits / maxHits * 100}%;background:var(--s-demand)"></span></div></td>
-      ${mks.map(m => { const L = nLocal[k.keyword + '|' + m]; return `<td>${L ? localPill(L, m) + (L.total != null ? `<div class="sub">${L.bought_top ? 'demand ' + num(L.bought_top) + '+/mo' : 'no sales badges'} · ${L.fast} fast</div>` : '') : '<span class="muted small">–</span>'}</td>`; }).join('')}
+      ${mks.map(m => { const L = nLocal[k.keyword + '|' + m]; return `<td>${L ? localPill(L, m) + (L.total != null ? `<div class="sub">${L.bought_top ? 'demand ' + num(L.bought_top) + '+/mo' : 'no sales badges'} · ${L.fast} fast${L.price_med != null ? ' · median ' + esc(curMoney(L.price_med, MK_CUR[m], 0)) : ''}</div>` : '') : '<span class="muted small">–</span>'}</td>`; }).join('')}
       <td style="white-space:nowrap"><button class="btn slim" data-ntrend="${i}">Trends${icon('external')}</button> <button class="btn slim" data-nopen="${i}">Open${icon('external')}</button></td></tr>`).join('') + '</tbody>';
 }
 $('nTable').addEventListener('change', e => { const c = e.target.closest('[data-nsel]'); if (c) nData.keywords[+c.dataset.nsel].sel = c.checked; });
@@ -411,16 +431,8 @@ function renderXray(a) {
     <span class="small">${a.points} of 10 points: demand, review barrier, competition spread, newcomers, Amazon, margin</span>
     <div id="xLocal" class="small"></div>`;
   $('xReasons').innerHTML = a.reasons.map(r => `<li class="${r.level}">${esc(r.text)}</li>`).join('');
-  const m = a.metrics, cur = a.currency;
-  const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
-  $('xKpis').innerHTML = k(money(m.total_revenue, cur, 0), 'Revenue / month', m.organic + ' organic listings') +
-    k(num(m.top10_sales_median), 'Top 10 sales / month', 'median, target ' + a.target.sales) +
-    k(m.price_p25 != null ? num(m.price_p25, 0) + '–' + num(m.price_p75, 0) : '–', 'Price (' + cur + ')', 'middle half of listings') +
-    k(num(m.review_barrier), 'Review barrier', 'median reviews, top 10') +
-    k(pct(m.top3_share), 'Top 3 share', m.top_brand ? 'biggest brand ' + esc(m.top_brand) + ' ' + pct(m.top_brand_share) : '') +
-    k(m.new_winners, 'New winners', 'under 1 year, selling ' + a.target.sales + '+') +
-    k(m.beatable, 'Beatable', 'enough sales, few reviews') +
-    k(m.left_median != null ? money(m.left_median, cur) : '–', 'Left per sale', m.left_pct != null ? pct(m.left_pct) + ' of price, after fees' : 'no FBA fee column');
+  renderXKpis();
+  const m = a.metrics;
   const stack = (obj, names) => {
     const parts = catParts(obj, names), tot = parts.reduce((s, p) => s + p.n, 0);
     return tot ? `<div class="stack">${parts.map(p => `<span style="width:${p.n / tot * 100}%;background:${p.color}" title="${esc(p.label)}: ${p.n}"></span>`).join('')}</div>` + legend(parts)
@@ -431,11 +443,24 @@ function renderXray(a) {
   renderXTable();
   go('xray');
 }
+function renderXKpis() {
+  const a = xData, m = a.metrics, cur = a.currency;
+  const k = (v, l, s) => `<div class="kpi"><span class="eyebrow">${l}</span><span class="v">${v}</span>${s ? '<span class="s">' + s + '</span>' : ''}</div>`;
+  $('xKpis').innerHTML = k(money(m.total_revenue, cur, 0), 'Revenue / month', [approx(m.total_revenue, a.market, {short: true}), m.organic + ' organic listings'].filter(Boolean).join(' · ')) +
+    k(num(m.top10_sales_median), 'Top 10 sales / month', 'median, target ' + a.target.sales) +
+    k(m.price_p25 != null ? num(m.price_p25, 0) + '–' + num(m.price_p75, 0) : '–', 'Price (' + cur + ')',
+      m.price_p25 != null && inMine(m.price_p25, a.market) ? '≈ ' + inMine(m.price_p25, a.market, {d: 0}) + '–' + inMine(m.price_p75, a.market, {d: 0}).replace(/^\S+ /, '') + ' · middle half' : 'middle half of listings') +
+    k(num(m.review_barrier), 'Review barrier', 'median reviews, top 10') +
+    k(pct(m.top3_share), 'Top 3 share', m.top_brand ? 'biggest brand ' + esc(m.top_brand) + ' ' + pct(m.top_brand_share) : '') +
+    k(m.new_winners, 'New winners', 'under 1 year, selling ' + a.target.sales + '+') +
+    k(m.beatable, 'Beatable', 'enough sales, few reviews') +
+    k(m.left_median != null ? money(m.left_median, cur) : '–', 'Left per sale', m.left_pct != null ? [approx(m.left_median, a.market), pct(m.left_pct) + ' of price, after fees'].filter(Boolean).join(' · ') : 'no FBA fee column');
+}
 function renderXTable() {
   if (!xData) return;
   const v = segVal($('xShow'));
   const rows = xData.rows.filter(r => v === 'all' || (v === 'beat' && r.beatable) || (v === 'new' && r.new));
-  $('xTable').innerHTML = `<thead><tr><th class="r">#</th><th>Product</th><th class="r">Price</th><th class="r">Sales/mo</th><th class="r">Revenue/mo</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th>Ships</th><th class="r">Left</th><th></th></tr></thead><tbody>` +
+  $('xTable').innerHTML = `<thead><tr><th class="r">#</th><th>Product</th><th class="r">Price (${esc(xData.currency)})</th><th class="r">Sales/mo</th><th class="r">Revenue/mo (${esc(xData.currency)})</th><th class="r">Reviews</th><th class="r">Rating</th><th class="r">Age</th><th>Ships</th><th class="r">Left</th><th></th></tr></thead><tbody>` +
     (rows.length ? rows.map(r => `<tr class="${r.beatable ? 'fast' : ''}"><td class="r">${r.pos}</td>
       <td class="title"><a data-open="${esc(r.url || '')}">${esc(r.title)}</a><div class="sub">${esc(r.brand)}${r.country ? ' · ' + esc(r.country) : ''}${r.size_tier ? ' · ' + esc(r.size_tier) : ''}</div>
       ${r.flags.length ? '<div class="flags">' + r.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}</td>
@@ -536,4 +561,13 @@ onState((s, fresh) => {
   const prof = (s.profiles || []).find(p => p.id === s.settings.profile);
   $('xProf').textContent = prof ? prof.label : 'your default browser';
   if (!settingsFilled) fillSettings();
+});
+
+/* Your currency or your supplier's currency changed: redraw the money in every tool that has results. */
+window.addEventListener('pc:currency', () => {
+  if (checkData) { $('cards').innerHTML = checkData.results.map(card).join(''); $('priceCmp').innerHTML = priceCompare(checkData); renderList(); }
+  if (iData) renderIdeas();
+  if (nData) renderNiche();
+  if (rankData) renderRank();
+  if (xData) renderXKpis();
 });

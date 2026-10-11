@@ -56,16 +56,64 @@ function catParts(obj, names) {
   return parts;
 }
 
-/* ---------- your price range (Product ideas, Trend radar, Settings) ---------- */
+/* ---------- currencies: US$, A$, AED and €. The rates arrive with every status poll (ST.fx). ---------- */
 const CUR_SYM = {USD: 'US$', EUR: '€', AUD: 'A$', AED: 'AED'};
+const CUR_NAME = {USD: 'US dollar', AUD: 'Australian dollar', AED: 'UAE dirham', EUR: 'Euro'};
 const MK_CUR = {US: 'USD', AU: 'AUD', AE: 'AED'};
+const CURRENCIES = ['USD', 'AUD', 'AED', 'EUR'];
+const myCur = () => (ST.settings || {}).price_currency || 'USD';
+const costCur = () => (ST.settings || {}).cost_currency || 'USD';
+function fxRate(from, to) {
+  const p = (ST.fx || {}).per_usd || {};
+  return p[from] && p[to] ? p[to] / p[from] : null;
+}
+function fxConvert(v, from, to) {
+  const r = v == null || v !== v ? null : fxRate(from, to);
+  return r == null ? null : v * r;
+}
+const curMoney = (v, code, d = 2) => v == null ? '' : CUR_SYM[code] + ' ' + num(v, d);
+/* A marketplace price in your currency ("US$ 30"), or '' when it already is your currency. d = fixed decimals. */
+function inMine(v, mk, {short = false, d = null} = {}) {
+  const from = MK_CUR[mk] || mk, to = myCur();
+  if (from === to) return '';
+  const x = fxConvert(v, from, to);
+  return x == null ? '' : CUR_SYM[to] + ' ' + (short ? compact(x) : num(x, d ?? (Math.abs(x) >= 100 ? 0 : 2)));
+}
+const approx = (v, mk, opt) => { const s = inMine(v, mk, opt); return s ? '≈ ' + s : ''; };
+const fxSpan = (v, mk, opt) => { const a = approx(v, mk, opt); return a ? ` <span class="fx" title="${esc(fxNote())}">${esc(a)}</span>` : ''; };
+const fxSub = (v, mk, opt) => { const a = approx(v, mk, opt); return a ? `<div class="sub fx" title="${esc(fxNote())}">${esc(a)}</div>` : ''; };
+const curSeg = (id, cur, label) => `<div class="seg slim"${id ? ` id="${id}"` : ''} role="group" aria-label="${esc(label)}">` +
+  CURRENCIES.map(c => `<button type="button" data-v="${c}" aria-pressed="${c === cur}" title="${CUR_NAME[c]}">${CUR_SYM[c]}</button>`).join('') + '</div>';
+
+/* Supplier prices typed on idea and radar cards, kept across re-renders (key: ASIN). */
+const typedCost = new Map();
+document.addEventListener('input', e => { const k = e.target.dataset && e.target.dataset.cogs; if (k) typedCost.set(k, e.target.value); });
+
+/* Save price_currency (your currency) or cost_currency. Changing your currency converts the price range too,
+   so it still means the same prices. Views redraw their money on the pc:currency event. */
+async function saveCurrency(key, code) {
+  const s = ST.settings || {};
+  if (!CURRENCIES.includes(code) || (s[key] || 'USD') === code) return;
+  const change = {[key]: code};
+  const r = key === 'price_currency' && fxRate(s.price_currency || 'USD', code);
+  const round = x => Math.max(1, x >= 10 ? Math.round(x) : Math.round(x * 10) / 10);
+  if (r && s.price_min != null && s.price_max != null) Object.assign(change, {price_min: round(s.price_min * r), price_max: round(s.price_max * r)});
+  try {
+    const res = await api('/api/settings', change);
+    ST.settings = res.settings; ST.fx = res.fx || ST.fx;
+    if (key === 'cost_currency') typedCost.clear();
+    window.dispatchEvent(new CustomEvent('pc:currency', {detail: {key}}));
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- your price range (Product ideas, Trend radar, Settings) ---------- */
 function rangeText(mk) {
   const r = ((ST.fx || {}).ranges || {})[mk];
   return r ? `${CUR_SYM[MK_CUR[mk]]} ${num(r[0], r[0] < 10 ? 1 : 0)}–${num(r[1], r[1] < 10 ? 1 : 0)}` : '';
 }
 function fxNote() {
   const f = ST.fx || {};
-  return f.source === 'ECB' ? `ECB rates of ${f.as_of}` : 'approximate rates (offline)';
+  return (f.source === 'ECB' ? `ECB rates of ${f.as_of}` : 'approximate rates (offline)') + ', AED fixed at 3.6725 per US$';
 }
 /* Renders min / max / currency and the two filters into el. getMarket() picks which converted range to show.
    onChange() runs after the settings are saved. */
@@ -77,8 +125,8 @@ function priceBar(el, getMarket, onChange) {
       <input type="number" class="pbnum" data-pb="price_min" min="1" step="1" value="${esc(s.price_min ?? 20)}" aria-label="Lowest selling price">
       <span class="small">–</span>
       <input type="number" class="pbnum" data-pb="price_max" min="1" step="1" value="${esc(s.price_max ?? 50)}" aria-label="Highest selling price">
-      <div class="seg slim" data-pbcur><button type="button" data-v="USD" aria-pressed="${cur === 'USD'}">US$</button><button type="button" data-v="EUR" aria-pressed="${cur === 'EUR'}">€</button></div>
-      <span class="small muted" data-pbconv title="${esc(fxNote())}">${mk !== 'US' || cur !== 'USD' ? '= ' + esc(rangeText(mk)) : ''}</span>
+      <span data-pbcur>${curSeg('', cur, 'Your currency')}</span>
+      <span class="small muted" data-pbconv title="${esc(fxNote())}">${MK_CUR[mk] !== cur ? '= ' + esc(rangeText(mk)) : ''}</span>
       <label class="small"><input type="checkbox" data-pb="exclude_tech"${s.exclude_tech !== false ? ' checked' : ''}> No phones / laptops</label>`;
   };
   async function save(change) {
@@ -89,8 +137,10 @@ function priceBar(el, getMarket, onChange) {
     const k = e.target.dataset.pb; if (!k) return;
     save({[k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value});
   });
-  el.addEventListener('click', e => {
-    const b = e.target.closest('[data-pbcur] button'); if (b) save({price_currency: b.dataset.v});
+  el.addEventListener('click', async e => {
+    const b = e.target.closest('[data-pbcur] button'); if (!b || b.dataset.v === (ST.settings || {}).price_currency) return;
+    await saveCurrency('price_currency', b.dataset.v);
+    draw(); if (onChange) onChange();
   });
   // redraw when the settings or rates arrive or change, but never while you are typing in it
   let last = '';
@@ -107,9 +157,9 @@ function priceBar(el, getMarket, onChange) {
 /* ---------- Find on Alibaba + a rough profit check, on idea and radar cards ---------- */
 const alibabaUrl = words => 'https://www.alibaba.com/trade/search?SearchText=' + encodeURIComponent((words || '').trim());
 function sourcingHtml(key) {
-  const cur = (ST.settings || {}).price_currency || 'USD';
+  const c = CUR_SYM[costCur()];
   return `<button class="btn slim" data-alibaba="${esc(key)}" title="Search suppliers for this product on Alibaba">Find on Alibaba${icon('external')}</button>
-    <span class="profit" data-pkey="${esc(key)}"><input type="number" min="0" step="0.01" class="pbnum" data-cogs="${esc(key)}" placeholder="Cost ${CUR_SYM[cur]}" aria-label="Supplier price per piece in ${CUR_SYM[cur]}" title="Supplier price per piece (${CUR_SYM[cur]})">
+    <span class="profit" data-pkey="${esc(key)}"><input type="number" min="0" step="0.01" class="pbnum" data-cogs="${esc(key)}" value="${esc(typedCost.get(key) || '')}" placeholder="Cost" aria-label="Supplier price per piece in ${c}" title="Supplier price per piece in ${c} (change the currency in Settings → Currency)"><span class="small muted">${c}</span>
     <button class="btn slim" data-profit="${esc(key)}">Profit?</button><span class="small" data-pout="${esc(key)}"></span></span>`;
 }
 /* One shared click handler. find(key) -> {market, price, category, search}. */
@@ -123,18 +173,17 @@ function wireSourcing(root, find) {
     if (!it || !out) return;
     if (!(cost >= 0)) { out.textContent = 'Type the supplier price first'; return; }
     if (it.price == null) { out.textContent = 'No Amazon price to compare with'; return; }
-    const s = ST.settings || {}, per = ((ST.fx || {}).per_usd) || {USD: 1, EUR: 0.92};
-    const cogsUsd = cost / (per[s.price_currency || 'USD'] || 1);
+    const s = ST.settings || {};
     out.innerHTML = busy('…');
     try {
-      const r = await api('/api/profit', {market: it.market, price: it.price, category: it.category || '', cogs_usd: cogsUsd,
-                                          registered: !!((s.registered || {})[it.market])});
-      const e2 = r.economics, c = CUR_SYM[MK_CUR[it.market]], m = e2.Margin || 0;
+      const r = await api('/api/profit', {market: it.market, price: it.price, category: it.category || '', cogs: cost,
+                                          cogs_currency: costCur(), registered: !!((s.registered || {})[it.market])});
+      const e2 = r.economics, code = MK_CUR[it.market], c = CUR_SYM[code], m = e2.Margin || 0, mine = inMine(e2.Profit, it.market);
       const fees = e2.Referral + e2.FBA + e2.Storage + e2.Placement + e2.FeeTax;
       const tip = `Rough estimate at ${c} ${num(it.price, 2)}: Amazon fees ${c} ${num(fees, 2)}, product + shipping + duty ${c} ${num(e2.Landed, 2)}, ` +
         `ads ${c} ${num(e2.Ads, 2)}, returns ${c} ${num(e2.Returns, 2)}. Assumes a small standard-size item and sea freight; ` +
         'check the real size and weight before ordering.';
-      out.innerHTML = `<span class="pill ${e2.Profit > 0 && m >= 0.15 ? 'good' : e2.Profit > 0 ? 'warn' : 'bad'}" title="${esc(tip)}">≈ ${c} ${num(e2.Profit, 2)} profit / sale · ${Math.round(m * 100)}% margin</span>`;
+      out.innerHTML = `<span class="pill ${e2.Profit > 0 && m >= 0.15 ? 'good' : e2.Profit > 0 ? 'warn' : 'bad'}" title="${esc(tip)}">≈ ${curMoney(e2.Profit, code)}${mine ? ' (' + esc(mine) + ')' : ''} profit / sale · ${Math.round(m * 100)}% margin</span>`;
     } catch (err) { out.innerHTML = failPill(err.message); }
   });
 }

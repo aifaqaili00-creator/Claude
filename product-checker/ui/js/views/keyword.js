@@ -58,12 +58,12 @@
       </div>
       <div class="kpis">
         ${tile('Units sold / month', last ? fmtU(last.units.v) : '–', last ? (rangeText(last.units) ? rangeText(last.units) + ' · ' : '') + monthName(last.month) : 'no estimate yet', last ? basisPill(last.units) : '')}
-        ${tile('Revenue / month', last && last.revenue && last.revenue.v != null ? esc(cur) + ' ' + compact(last.revenue.v) : '–', last && last.revenue ? rangeText(last.revenue) : '', last && last.revenue ? basisPill(last.revenue) : '')}
+        ${tile('Revenue / month', last && last.revenue && last.revenue.v != null ? esc(cur) + ' ' + compact(last.revenue.v) : '–', last && last.revenue ? [approx(last.revenue.v, d.market, {short: true}), rangeText(last.revenue)].filter(Boolean).join(' · ') : '', last && last.revenue ? basisPill(last.revenue) : '')}
         ${tile('Local sellers', now ? now.local : '–', now ? `${now.fast} fast · ${now.overseas} overseas of ${now.total}` : '')}
         ${tile('Search trend', tr.label ? esc(tr.label) : tr.status === 'low_volume' ? 'Low volume' : '–', tr.score != null ? 'score ' + Math.round(tr.score) + ' of 100' : tr.status === 'none' ? 'not fetched yet' : '')}
         ${tile('Review barrier', comp && comp.review_barrier != null ? num(comp.review_barrier) : '–', 'median reviews, top 10')}
         ${d.demand.volume && d.demand.volume.length ? tile('Searches / month', compact(d.demand.volume[d.demand.volume.length - 1].volume), 'Helium 10 ' + esc(d.demand.volume[d.demand.volume.length - 1].source) + ', ' + esc(d.demand.volume[d.demand.volume.length - 1].month)) : ''}
-        ${tile('Price', comp && comp.prices.length ? esc(cur) + ' ' + num(median(comp.prices), 0) : '–', comp && comp.prices.length ? 'median of ' + comp.prices.length + ' listings' : '')}
+        ${tile('Price', comp && comp.prices.length ? esc(cur) + ' ' + num(median(comp.prices), 0) : '–', comp && comp.prices.length ? [approx(median(comp.prices), d.market, {d: 0}), 'median of ' + comp.prices.length + ' listings'].filter(Boolean).join(' · ') : '')}
       </div>
       <div id="kMoney" class="stackv"></div>
       ${tr.why && tr.why.length ? `<div class="panel"><h3 style="margin-bottom:8px">Why “${esc(tr.label)}”</h3><ul class="reasons">${tr.why.map(w => `<li class="${/Declining|Fad/.test(tr.label) ? 'bad' : /Spike|Mixed|Seasonal/.test(tr.label) ? 'warn' : 'good'}">${esc(w)}</li>`).join('')}</ul></div>` : ''}
@@ -109,6 +109,7 @@
 
   /* ---------- opportunity, profit and launch plan ---------- */
   const LABEL_TONE = {Strong: 'good', 'Worth a look': 'accent', Weak: 'warn', Skip: 'bad'};
+  const pfSaved = new Map();                               // market|keyword -> the profit form as you left it
   async function loadMoney(d) {
     let m;
     try { m = await api('/api/report/money?market=' + d.market + '&kw=' + encodeURIComponent(d.keyword)); }
@@ -118,6 +119,13 @@
     const part = p => `<div class="part"><span class="small">${esc(p.name)}</span><div class="bar" style="height:8px"><span style="width:${Math.round((p.v || 0) * 100)}%;background:var(--s-demand)"></span></div><span class="small tnum">${p.known ? Math.round((p.v || 0) * 100) : '?'}</span><div class="sub" style="grid-column:1/-1">${esc(p.why || '')}</div></div>`;
     const plan = m.plan || {};
     const dates = x => x ? `order by <b>${esc(x.order_by)}</b> · ship by ${esc(x.ship_by)} · in stock by ${esc(x.in_stock_by)}` : '–';
+    // what you typed in the profit calculator survives a refresh or a currency change of this report
+    const pfKey = d.market + '|' + d.kw_norm, saved = pfSaved.get(pfKey) || {};
+    const pfVal = (k, dflt) => esc(saved[k] != null && saved[k] !== '' ? saved[k] : dflt);
+    let cogs = m.cogs_usd != null ? +fxConvert(m.cogs_usd, 'USD', costCur()).toFixed(2) : '';
+    if (saved.cogs != null && saved.cogs !== '') {
+      cogs = saved.cogs_currency && saved.cogs_currency !== costCur() ? +fxConvert(+saved.cogs, saved.cogs_currency, costCur()).toFixed(2) : saved.cogs;
+    }
     $('kMoney').innerHTML = `
       <div class="grid2">
         <div class="panel stackv">
@@ -140,39 +148,50 @@
       <div class="panel stackv" id="kProfit">
         <div class="head"><h3>Profit per sale</h3><span class="small">Fee tables as of ${esc('2026-10-09')}${d.market !== 'US' ? ' (estimates for ' + esc(MK[d.market]) + ': check on Amazon)' : ''}</span></div>
         <form class="row" id="pfForm" style="align-items:end">
-          <div class="field"><label>Price (${esc(cur)})</label><input type="number" step="0.01" name="price" value="${m.price != null ? m.price : ''}"></div>
-          <div class="field"><label>Product cost (US$)</label><input type="number" step="0.01" name="cogs_usd" value="${m.cogs_usd != null ? m.cogs_usd : ''}" placeholder="from supplier"></div>
-          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" name="l" style="width:64px" value="30"><input type="number" name="w" style="width:64px" value="20"><input type="number" name="h" style="width:64px" value="10"></div></div>
-          <div class="field"><label>Weight (kg)</label><input type="number" step="0.01" name="kg" value="0.5"></div>
-          <div class="field"><label>Freight</label><select name="freight_mode"><option value="sea">Sea</option><option value="air">Air</option></select></div>
+          <div class="field"><label for="pfPrice">Price (${esc(cur)})</label><input type="number" step="0.01" id="pfPrice" name="price" value="${pfVal('price', m.price != null ? m.price : '')}"></div>
+          <div class="field"><label for="pfCost">Product cost per piece</label><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="number" step="0.01" min="0" id="pfCost" name="cogs" value="${esc(cogs)}" placeholder="from supplier">
+            <select name="cogs_currency" aria-label="Currency of the product cost" title="The currency your supplier quotes in">${CURRENCIES.map(c => `<option value="${c}" ${c === costCur() ? 'selected' : ''}>${CUR_SYM[c]}</option>`).join('')}</select></div></div>
+          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" name="l" style="width:64px" value="${pfVal('l', 30)}" aria-label="Length (cm)"><input type="number" name="w" style="width:64px" value="${pfVal('w', 20)}" aria-label="Width (cm)"><input type="number" name="h" style="width:64px" value="${pfVal('h', 10)}" aria-label="Height (cm)"></div></div>
+          <div class="field"><label for="pfKg">Weight (kg)</label><input type="number" step="0.01" id="pfKg" name="kg" value="${pfVal('kg', 0.5)}"></div>
+          <div class="field"><label for="pfFreight">Freight</label><select id="pfFreight" name="freight_mode"><option value="sea">Sea</option><option value="air" ${saved.freight_mode === 'air' ? 'selected' : ''}>Air</option></select></div>
           ${d.market !== 'US' ? `<label class="small"><input type="checkbox" name="registered" ${(ST.settings.registered || {})[d.market] ? 'checked' : ''}> Registered for ${d.market === 'AU' ? 'GST' : 'VAT'}</label>` : ''}
           <label class="small"><input type="checkbox" name="save_cogs"> Remember the cost</label>
         </form>
         <div id="pfOut"></div>
       </div>`;
     const form = $('pfForm');
+    const keep = () => pfSaved.set(pfKey, Object.fromEntries(new FormData(form)));
     const run = async () => {
       const f = Object.fromEntries(new FormData(form));
       f.registered = !!form.registered && form.registered.checked;
       f.save_cogs = form.save_cogs.checked;
       Object.assign(f, {market: d.market, kw: d.keyword});
-      try { renderProfit(await api('/api/profit', f), m, cur); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
+      try { renderProfit(await api('/api/profit', f), m, d.market); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
     };
-    form.addEventListener('change', run);
+    form.addEventListener('input', keep);
+    form.addEventListener('change', e => {
+      if (e.target.name === 'cogs_currency') {
+        const was = costCur(), cost = parseFloat(form.cogs.value);
+        if (cost >= 0) form.cogs.value = +fxConvert(cost, was, e.target.value).toFixed(2);   // the same cost, in the other currency
+        keep();
+        saveCurrency('cost_currency', e.target.value);
+      } else keep();
+      run();
+    });
     form.addEventListener('submit', e => { e.preventDefault(); run(); });
-    if (m.price) run();
+    if (form.price.value) run();
   }
 
-  function renderProfit(r, m, cur) {
-    const e = r.economics, mny = v => (v < 0 ? '−' : '') + cur + ' ' + num(Math.abs(v), 2);
+  function renderProfit(r, m, mk) {
+    const e = r.economics, cur = CUR_SYM[MK_CUR[mk]], mny = v => (v < 0 ? '−' : '') + cur + ' ' + num(Math.abs(v), 2);
     const units = m.metrics && m.metrics.units_top10_median;
     $('pfOut').innerHTML = `
       <div class="kpis" style="margin:8px 0">
-        <div class="kpi"><span class="eyebrow">Profit per sale</span><span class="v" style="color:var(--${e.Profit >= 0 ? 'good' : 'bad'}-text)">${mny(e.Profit)}</span><span class="s">${e.Margin != null ? Math.round(e.Margin * 100) + '% margin' : ''}</span></div>
+        <div class="kpi"><span class="eyebrow">Profit per sale</span><span class="v" style="color:var(--${e.Profit >= 0 ? 'good' : 'bad'}-text)">${mny(e.Profit)}</span><span class="s">${[e.Margin != null ? Math.round(e.Margin * 100) + '% margin' : '', approx(e.Profit, mk)].filter(Boolean).join(' · ')}</span></div>
         <div class="kpi"><span class="eyebrow">Return on stock</span><span class="v">${e.ROI != null ? Math.round(e.ROI * 100) + '%' : '–'}</span><span class="s">profit ÷ landed cost</span></div>
         <div class="kpi"><span class="eyebrow">Break-even ad spend</span><span class="v">${e.BreakEvenACoS != null ? Math.round(e.BreakEvenACoS * 100) + '%' : '–'}</span><span class="s">ACoS where profit hits zero</span></div>
-        <div class="kpi"><span class="eyebrow">Highest product cost</span><span class="v">${r.max_cogs_20 != null ? 'US$ ' + num(r.max_cogs_20, 2) : '–'}</span><span class="s">for a 20% margin</span></div>
-        ${units ? `<div class="kpi"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">~${num(units)} sales a month (badge estimate, rough)</span></div>` : ''}
+        <div class="kpi"><span class="eyebrow">Highest product cost</span><span class="v">${r.max_cogs_20_cost != null ? curMoney(r.max_cogs_20_cost, r.cost_currency || 'USD') : '–'}</span><span class="s">for a 20% margin${r.max_cogs_20 != null && r.cost_currency !== 'USD' ? ' · US$ ' + num(r.max_cogs_20, 2) : ''}</span></div>
+        ${units ? `<div class="kpi"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">${[approx(e.Profit * units, mk, {d: 0}), '~' + num(units) + ' sales a month (badge estimate, rough)'].filter(Boolean).join(' · ')}</span></div>` : ''}
       </div>
       <div class="grid2">
         <div><table><tbody>${e.waterfall.map(([k, v]) => `<tr${k === 'Profit' ? ' class="fast"' : ''}><td>${esc({NetSales: e.registered ? 'Price without GST/VAT' : 'Price', Referral: 'Referral fee', FBA: 'FBA fee (' + e.fee_source + ')', Storage: 'Storage', Placement: 'Inbound placement', FeeTax: 'GST/VAT on fees', Landed: 'Product + freight + duty', Ads: 'Ads (12% of sales)', Returns: 'Returns (2.5%)', Other: 'Other', Profit: 'Profit'}[k] || k)}</td><td class="r">${k === 'NetSales' || k === 'Profit' ? mny(v) : '− ' + num(v, 2)}</td></tr>`).join('')}</tbody></table>
@@ -269,16 +288,16 @@
       <div class="tablewrap"><table><thead><tr><th class="r">#</th><th>Product</th><th>Ships from</th><th class="r">Price</th><th class="r">Reviews</th><th class="r">Bought/mo</th></tr></thead><tbody>
       ${c.top.map((r, i) => `<tr><td class="r">${i + 1}</td><td class="title"><a data-open="${esc(r.url)}">${esc(r.title)}</a><div class="sub">${esc(r.asin)} · <a href="#/p/${d.market}/${esc(r.asin)}">product report</a></div></td>
         <td>${r.origin === 'local' ? '<span class="pill line"><span class="swatch" style="background:var(--s-local)"></span>local</span>' : r.origin === 'overseas' ? '<span class="pill line"><span class="swatch" style="background:var(--s-overseas)"></span>overseas</span>' : '<span class="pill weak">unknown</span>'}<div class="sub">${esc(r.why || '')}</div></td>
-        <td class="r">${money(r.price, '')}</td><td class="r">${num(r.reviews)}</td><td class="r">${r.units ? fmtU(r.units.v) + '<div class="sub">' + rangeText(r.units) + '</div>' : ''}</td></tr>`).join('')}
+        <td class="r">${money(r.price, '')}${fxSub(r.price, d.market)}</td><td class="r">${num(r.reviews)}</td><td class="r">${r.units ? fmtU(r.units.v) + '<div class="sub">' + rangeText(r.units) + '</div>' : ''}</td></tr>`).join('')}
       </tbody></table></div><p class="small" style="margin-top:6px">Prices in ${esc(cur)}. Bought/mo is the middle of the badge range.</p>`;
   }
 
   function drawMarkets(d) {
     const rows = Object.entries(d.markets);
-    $('kMarkets').innerHTML = `<div class="tablewrap"><table><thead><tr><th>Market</th><th class="r">Local</th><th class="r">Overseas</th><th class="r">Fast</th><th>Sellers</th><th class="r">Units/mo (page 1)</th><th>Search trend</th><th>Last check</th><th></th></tr></thead><tbody>
+    $('kMarkets').innerHTML = `<div class="tablewrap"><table><thead><tr><th>Market</th><th class="r">Local</th><th class="r">Overseas</th><th class="r">Fast</th><th>Sellers</th><th class="r">Units/mo (page 1)</th><th class="r">Typical price</th><th>Search trend</th><th>Last check</th><th></th></tr></thead><tbody>
       ${rows.map(([m, r]) => `<tr${m === d.market ? ' class="fast"' : ''}><td><b>${MK[m]}</b></td><td class="r">${r.local ?? '–'}</td><td class="r">${r.overseas ?? '–'}</td><td class="r">${r.fast ?? '–'}</td>
         <td>${r.level ? `<span class="pill ${LEVEL[r.level] || 'weak'}"><i></i>${esc({opportunity: 'gap', some: 'some', crowded: 'crowded', none: 'none'}[r.level])}</span>` : '<span class="muted small">not checked</span>'}</td>
-        <td class="r">${r.units ? fmtU(r.units.v) : '–'}</td><td>${r.trend && r.trend.label ? esc(r.trend.label) : r.trend && r.trend.status === 'low_volume' ? '<span class="muted">low volume</span>' : '–'}</td>
+        <td class="r">${r.units ? fmtU(r.units.v) : '–'}</td><td class="r">${r.price_med != null ? curMoney(r.price_med, MK_CUR[m]) + fxSub(r.price_med, m) : '–'}</td><td>${r.trend && r.trend.label ? esc(r.trend.label) : r.trend && r.trend.status === 'low_volume' ? '<span class="muted">low volume</span>' : '–'}</td>
         <td>${r.checked_at ? ago(r.checked_at) : '–'}</td><td><button class="btn slim" data-kmk="${m}">${m === d.market ? 'Shown' : 'Open'}</button></td></tr>`).join('')}
       </tbody></table></div>`;
     $('kMarkets').querySelectorAll('[data-kmk]').forEach(b => b.addEventListener('click', () => go('k', b.dataset.kmk, d.keyword)));
@@ -308,4 +327,5 @@
   }
 
   window.openReport = (market, kw) => go('k', market, kw);
+  window.addEventListener('pc:currency', e => { if (e.detail.key === 'price_currency' && currentView === 'k' && current) render(current); });
 })();

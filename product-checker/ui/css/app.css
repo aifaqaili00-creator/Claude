@@ -57,7 +57,7 @@ main { padding: 22px 28px 64px; width: 100%; max-width: 1440px; }
 .status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
-.stackv { display: grid; gap: 14px; align-content: start; }
+.stackv { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; }
 .field { display: grid; gap: 5px; }
 .field > label, .field > .lbl { font: 500 12.5px/1.3 var(--sans); color: var(--ink-2); }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px 20px;
@@ -107,7 +107,7 @@ label.small { display: inline-flex; gap: 6px; align-items: center; cursor: point
 
 /* ---------- views ---------- */
 section.view { display: none; gap: 16px; align-content: start; }
-section.view.on { display: grid; }
+section.view.on { display: grid; grid-template-columns: minmax(0, 1fr); }   /* wide tables scroll inside .tablewrap */
 .search { display: grid; grid-template-columns: minmax(240px, 1fr) auto auto; gap: 12px; align-items: end; }
 .search input[type="text"] { font-size: 16px; padding: 9px 13px; width: 100%; min-height: 42px; }
 @media (max-width: 900px) { .search { grid-template-columns: 1fr; } }
@@ -303,3 +303,24 @@ h2.section { margin: 10px 0 -4px; font-size: 15px; color: var(--ink-2); }
 .icard input.pbnum[data-cogs] { width: 104px; }
 .seg.slim button { padding: 4px 10px; font-size: 13px; }
 .icard .profit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* currencies: ≈ amounts, the converter, the rates table and the price comparison */
+.fx { color: var(--muted); font-size: 12px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pop { position: absolute; top: calc(100% + 6px); right: 28px; z-index: 30; width: 360px; max-width: calc(100vw - 32px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+  padding: 14px 16px; display: grid; gap: 12px; }
+@media (max-width: 1000px) { .pop { right: 16px; } }
+.fxin { flex-wrap: nowrap; }
+.fxin input { width: 130px; font-size: 16px; min-height: 38px; }
+.fxout { display: grid; gap: 4px; }
+.fxrow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 5px 8px;
+  border-radius: var(--r); background: var(--sunk); }
+.fxcode { font-weight: 600; color: var(--ink-2); }
+.fxval { justify-self: start; display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent;
+  padding: 2px 6px; border-radius: 6px; font: 650 18px/1.2 var(--display); color: var(--ink); }
+.fxval:hover { background: var(--hover); }
+.fxval .icon { opacity: 0; color: var(--muted); }
+.fxval:hover .icon, .fxval:focus-visible .icon { opacity: 1; }
+.fxmatrix th, .fxmatrix td { padding: 7px 10px; }
+.pcmp { display: grid; grid-template-columns: max-content minmax(80px, 1fr) max-content max-content max-content; gap: 8px 14px;
+  align-items: center; }

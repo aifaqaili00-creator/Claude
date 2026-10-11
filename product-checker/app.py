@@ -325,7 +325,7 @@ class State:
                 out[it['key']] = {k: hit.get(k) for k in (
                     'fast', 'slow', 'total', 'level', 'verdict', 'fast_reviews_median', 'bought_top', 'bought_total',
                     'bought_listings', 'search_url', 'keyword', 'location_ok', 'local', 'overseas', 'overseas_intl',
-                    'market', 'fast_price_min', 'fast_price_max', 'status')}
+                    'market', 'fast_price_min', 'fast_price_max', 'price_med', 'status')}
                 progress('"%s": %d fast, %d local, %d overseas of %d' % (kw, hit['fast'], hit['local'], hit['overseas'], hit['total']))
         await asyncio.gather(*(one(i) for i in items))
         n_fail = sum(1 for v in out.values() if 'error' in v)
@@ -980,6 +980,7 @@ def api_report_money(h, q):
 def api_profit(h, q):
     """The profit calculator: unit economics, the price grid with fee steps, and the highest product cost for 20%."""
     from engine import profit as pf
+    fxrates.rates()                                     # the fee tables convert with today's rates too
     d = h._json()
     market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
 
@@ -989,8 +990,11 @@ def api_profit(h, q):
         except (TypeError, ValueError):
             return None
     dims = [num('l'), num('w'), num('h')]
+    cost_cur = d.get('cogs_currency') if d.get('cogs_currency') in fxrates.CURRENCIES else 'USD'
+    cost = num('cogs')
+    cogs_usd = fxrates.convert(cost, cost_cur, 'USD') if cost is not None else (num('cogs_usd') or 0.0)
     inp = {'market': market, 'price': num('price', 0.01), 'category': str(d.get('category') or '')[:80],
-           'dims_cm': dims if all(dims) else None, 'kg': num('kg', 0.001, 500), 'cogs_usd': num('cogs_usd') or 0.0,
+           'dims_cm': dims if all(dims) else None, 'kg': num('kg', 0.001, 500), 'cogs_usd': cogs_usd,
            'freight_mode': 'air' if d.get('freight_mode') == 'air' else 'sea', 'duty_pct': num('duty_pct', 0, 1),
            'tacos_pct': num('tacos_pct', 0, 1), 'registered': bool(d.get('registered')),
            'fba_fee_override': num('fba_fee'), 'date': config.market_today(market).isoformat()}
@@ -1002,7 +1006,9 @@ def api_profit(h, q):
         kw = config.norm_kw(d['kw'])
         S.db.write(lambda c: c.execute("UPDATE watch SET cogs=? WHERE kind='keyword' AND market=? AND target=?",
                                        (inp.get('cogs_usd'), market, kw)))
-    return h._send(200, {'economics': e, 'grid': pf.price_grid(inp), 'max_cogs_20': pf.max_cogs(inp, 0.20)})
+    max_usd = pf.max_cogs(inp, 0.20)
+    return h._send(200, {'economics': e, 'grid': pf.price_grid(inp), 'max_cogs_20': max_usd, 'cost_currency': cost_cur,
+                         'max_cogs_20_cost': round(fxrates.convert(max_usd, 'USD', cost_cur), 2) if max_usd is not None else None})
 
 
 @route('GET', '/api/calibration')

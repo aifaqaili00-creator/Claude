@@ -37,7 +37,7 @@
         <div class="kpi"><span class="eyebrow">Best Sellers Rank</span><span class="v">${now && now.root_rank ? '#' + num(now.root_rank) : '–'}</span><span class="s">${esc(info.root_name || '')}</span></div>
         <div class="kpi"><span class="eyebrow">Units / month now</span><span class="v">${d.units_now ? fmtU(d.units_now.v) : '–'}</span><span class="s">${d.units_now ? range(d.units_now) + ' · from the sales rank' : 'needs a rank and a curve'}</span></div>
         <div class="kpi"><span class="eyebrow">Revenue, ${last ? esc(last.month) : 'this month'}</span><span class="v">${last && last.revenue ? esc(cur) + ' ' + compact(last.revenue.v) : '–'}</span><span class="s">${last && last.revenue ? range(last.revenue) : ''}</span></div>
-        <div class="kpi"><span class="eyebrow">Price</span><span class="v">${now && now.price ? esc(cur) + ' ' + num(now.price, 2) : '–'}</span><span class="s">${now && now.badge_low ? num(now.badge_low) + '+ bought last month' : 'no sales badge'}</span></div>
+        <div class="kpi"><span class="eyebrow">Price</span><span class="v">${now && now.price ? esc(cur) + ' ' + num(now.price, 2) : '–'}</span><span class="s">${[now && now.price ? approx(now.price, d.market) : '', now && now.badge_low ? num(now.badge_low) + '+ bought last month' : 'no sales badge'].filter(Boolean).join(' · ')}</span></div>
         <div class="kpi"><span class="eyebrow">Reviews</span><span class="v">${now && now.reviews != null ? num(now.reviews) : '–'}</span><span class="s">${now && now.rating ? '★ ' + now.rating : ''}</span></div>
         <div class="kpi"><span class="eyebrow">Sellers</span><span class="v">${now && now.offers != null ? now.offers : '–'}</span><span class="s">${now ? esc(now.buybox_seller || '') + (now.sold_by_amazon ? ' · Amazon sells it' : '') : ''}</span></div>
       </div>
@@ -46,7 +46,7 @@
       <div class="grid2"><div class="panel" id="pPrice"></div><div class="panel" id="pReviews"></div></div>
       <h2 class="section">Other markets</h2>
       <div class="tablewrap"><table><thead><tr><th>Market</th><th class="r">Rank</th><th class="r">Price</th><th class="r">Sellers</th><th>Ships from</th><th>Read</th><th></th></tr></thead><tbody>
-        ${Object.entries(d.other_markets).map(([m, r]) => `<tr><td><b>${MK[m]}</b></td><td class="r">${r && r.root_rank ? '#' + num(r.root_rank) : '–'}</td><td class="r">${r && r.price ? num(r.price, 2) : '–'}</td>
+        ${Object.entries(d.other_markets).map(([m, r]) => `<tr><td><b>${MK[m]}</b></td><td class="r">${r && r.root_rank ? '#' + num(r.root_rank) : '–'}</td><td class="r">${r && r.price ? curMoney(r.price, MK_CUR[m]) + fxSub(r.price, m) : '–'}</td>
           <td class="r">${r && r.offers != null ? r.offers : '–'}</td><td>${r ? esc(r.origin || '') : '<span class="muted small">not read</span>'}</td><td>${r ? ago(r.ts) : '–'}</td>
           <td><a class="btn slim" href="#/p/${m}/${d.asin}">Open</a></td></tr>`).join('')}
       </tbody></table></div>
@@ -86,4 +86,5 @@
       render(await waitJob(job, l => { $('pProg').innerHTML = busy(l); }));
     } catch (e) { $('pProg').innerHTML = failPill(e.message); $('pRefresh').disabled = false; }
   }
+  window.addEventListener('pc:currency', e => { if (e.detail.key === 'price_currency' && currentView === 'p') route(); });
 })();

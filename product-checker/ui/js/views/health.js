@@ -67,15 +67,41 @@
   onState(() => fill());
   priceBar($('sPrice'), () => 'AU', () => fxLine());
   function fxLine() {
-    const f = ST.fx || {}, s = ST.settings || {};
+    const f = ST.fx || {}, s = ST.settings || {}, cur = s.price_currency || 'USD';
     if (!f.ranges) return;
-    $('fxLine').textContent = `${num(s.price_min)}–${num(s.price_max)} ${CUR_SYM[s.price_currency || 'USD']} = ${rangeText('AU')} · ${rangeText('AE')}` +
-      (s.price_currency === 'EUR' ? ' · ' + rangeText('US') : '') + ` (${fxNote()})`;
+    $('fxLine').textContent = `${num(s.price_min)}–${num(s.price_max)} ${CUR_SYM[cur]} = ` +
+      Object.keys(MK_CUR).filter(m => MK_CUR[m] !== cur).map(rangeText).join(' · ');
   }
   onState(fxLine);
+  window.addEventListener('pc:currency', fxLine);
+
+  /* Settings: Currency panel (your currency, your supplier's currency, today's rates) */
+  let curKey = '';
+  function drawCurrency(force) {
+    const s = ST.settings || {}, f = ST.fx || {};
+    if (!s.price_currency || !f.per_usd) return;
+    const k = JSON.stringify([s.price_currency, s.cost_currency, f.per_usd, f.as_of, f.source]);
+    if (k === curKey && !force) return;
+    curKey = k;
+    $('sMyCur').innerHTML = curSeg('', s.price_currency, 'Your currency');
+    $('sCostCur').innerHTML = curSeg('', s.cost_currency || 'USD', 'Your supplier quotes in');
+    $('fxMatrix').innerHTML = `<thead><tr><th></th>${CURRENCIES.map(c => `<th class="r" title="${CUR_NAME[c]}">${CUR_SYM[c]}</th>`).join('')}</tr></thead><tbody>` +
+      CURRENCIES.map(a => `<tr${a === s.price_currency ? ' class="fast"' : ''}><td><b>1 ${CUR_SYM[a]}</b> <span class="muted small">${CUR_NAME[a]}</span></td>` +
+        CURRENCIES.map(b => { const r = fxRate(a, b); return `<td class="r${a === b ? ' muted' : ''}">${a === b ? '1' : r == null ? '–' : num(r, 4)}</td>`; }).join('') + '</tr>').join('') + '</tbody>';
+    $('fxAsOf').textContent = (f.source === 'ECB' ? `European Central Bank rates of ${f.as_of}` : 'Approximate rates: the ECB could not be reached yet') +
+      ' · the dirham is fixed at 3.6725 per US$';
+  }
+  onState(() => drawCurrency());
+  window.addEventListener('pc:currency', () => drawCurrency(true));
+  $('sMyCur').addEventListener('click', e => { const b = e.target.closest('button'); if (b) saveCurrency('price_currency', b.dataset.v); });
+  $('sCostCur').addEventListener('click', async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    await saveCurrency('cost_currency', b.dataset.v);
+    toast('Supplier prices are now typed in ' + CUR_SYM[costCur()], 2000);
+  });
   $('btnFx').addEventListener('click', async () => {
     $('btnFx').disabled = true;
-    try { ST.fx = await api('/api/fx/refresh', {}); fxLine(); toast(ST.fx.source === 'ECB' ? 'Rates updated' : 'Could not reach the ECB; using saved rates', 2500); }
+    try { ST.fx = await api('/api/fx/refresh', {}); fxLine(); drawCurrency(true); toast(ST.fx.source === 'ECB' ? 'Rates updated' : 'Could not reach the ECB; using saved rates', 2500); }
     catch (e) { toast(e.message); }
     $('btnFx').disabled = false;
   });
