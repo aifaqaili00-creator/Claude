@@ -2,13 +2,15 @@
 
 A small Windows app that runs on your own PC, in its own window.
 
-1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**.
+1. **Check a product:** type a product, for example `moving bags`. The app searches amazon.com.au, amazon.ae and amazon.com at the same time and reads every listing's delivery date. It then shows how many listings arrive **fast** (stock already in that country) and how many come **slowly from overseas**. If only 3–4 are fast, it marks the search as an **opportunity**. **Price across markets** puts the typical page-1 price of each country side by side, converted to your currency, so you see at once where the product sells higher.
 2. **Product ideas:** one click finds products that are **booming** or **brand new** on Amazon USA (or AU / UAE), then checks whether they have reached Australia and the UAE yet.
    **Niche keywords** shows what shoppers type for a niche and how each keyword does in every country.
 3. **Xray analysis:** run Helium 10 Xray on an Amazon search in your own Chrome and export it. The app picks the file up from Downloads and tells you whether the market is **Promising**, **Possible** or **Hard**, and why.
 4. **Rank a file:** drop in any Helium 10 Black Box or Xray export (`.csv` or `.xlsx`). The app ranks every product and shows the best ones with price, sales, revenue, reviews, age, trend and warning flags. One click then checks the local sellers for all of them.
 5. **History:** past checks open again instantly, without a new search.
-6. **Settings:** theme (light, dark, or the same as Windows), your Chrome profile, delivery locations and how checks run.
+6. **Settings:** theme (light, dark, or the same as Windows), your currency, your Chrome profile, delivery locations and how checks run.
+   - **Currency:** choose **your currency** (US$, A$, AED or €). Prices from the other marketplaces then also show “≈” in it, for example `AED 116 ≈ US$ 32`, and tables that mix marketplaces sort by the converted price. Choose separately the currency **your supplier quotes in**, used by **Profit?** and the profit calculator. Settings shows today's rates between all four currencies.
+   - **Currency** in the top bar opens a converter between US$, A$, AED and € from any screen; click a result to copy it.
 
 7. **Keyword report** (press **Open report** after a check, or open a keyword in the Library):
    - search interest over 5 years (Google Trends) and the seasonal pattern;
@@ -29,7 +31,7 @@ A small Windows app that runs on your own PC, in its own window.
 
 11. **Money and decisions** (in every keyword report):
     - **Opportunity score** (0–100, Strong / Worth a look / Weak / Skip), built from demand, momentum, competition, the local gap and margin, with a reason for each part. Risky product types lower it.
-    - **Profit per sale**: Amazon's referral, FBA, storage and placement fees for that marketplace, GST/VAT (set whether you are registered under Settings), freight by sea or air, duty, ads and returns. It also gives return on stock, break-even ad spend, the highest product cost for a 20% margin, and a price grid that marks fee steps.
+    - **Profit per sale**: Amazon's referral, FBA, storage and placement fees for that marketplace, GST/VAT (set whether you are registered under Settings), freight by sea or air, duty, ads and returns. Type the product cost in US$, A$, AED or €. It also gives return on stock, break-even ad spend, the highest product cost for a 20% margin (in your supplier's currency), and a price grid that marks fee steps. What you type stays there when the report refreshes.
     - **Launch plan**: from the seasonal pattern, the dates to order, ship and be in stock before demand rises, by sea and by air. Home reminds you two weeks before an order-by date.
     - For US keywords, **Bring it from the USA?** scores how well the product would travel to Australia and the UAE.
     - Fee tables are dated 2026-10-09 and include links to check them; the Australian and UAE tables are estimates. US duty changed several times in 2026, so check it before ordering.
@@ -88,7 +90,7 @@ A market is most interesting when it has **real demand, few fast local listings,
 
 The app starts with the safe categories (Home & Kitchen, Kitchen & Dining, Garden, Pets, Sports, Office, Tools, Crafts). Categories with extra rules or big brands, such as Electronics, Toys, Beauty, Health and Appliances, have a dashed outline; click one to include it. **Hide risky products** hides electrical, kids, chemical and medical products. Untick it to see everything, for example tower fans, which count as electrical.
 
-**Your price range:** by default only products that **sell on Amazon for 20–50 US$** are shown. Change the numbers, or switch to **€**, right above the categories (or in Settings). The range is converted automatically: about A$31–78 in Australia and AED 73–184 in the UAE, with the European Central Bank's daily rates (the dirham is fixed to the dollar). Untick **Amazon price** to see every price. The line under the title says how many products the range hid. Changing the range never re-reads Amazon.
+**Your price range:** by default only products that **sell on Amazon for 20–50 US$** are shown. Change the numbers, or switch the currency to **A$**, **AED** or **€**, right above the categories (or in Settings); switching converts the numbers, so the range keeps meaning the same prices. The range is converted for each marketplace automatically: about A$31–78 in Australia and AED 73–184 in the UAE, with the European Central Bank's daily rates (the dirham is fixed to the dollar). Untick **Amazon price** to see every price. The line under the title says how many products the range hid. Changing the range never re-reads Amazon.
 
 **No phones / laptops** (on by default) leaves out phones, tablets, laptops, computers and their accessories: cases, chargers, cables, screen protectors, stands, keyboards, computer mice and earbuds. A mouse trap or a paper notebook stays.
 
@@ -104,7 +106,7 @@ A scan you start yourself reads up to 16 categories (the automatic refresh reads
 - **Xray:** jumps to the Xray tab with the keyword filled in.
 - **Click the title:** opens the product in your Chrome profile.
 - **Find on Alibaba:** opens an Alibaba search for the product in your Chrome, so you can compare supplier prices.
-- **Profit?:** type the supplier price per piece (in your US$ or €) and press **Profit?**. You get a rough profit per sale and margin in A$, AED or US$, after Amazon's fees, sea freight, duty, GST/VAT, 12% ads and returns. It assumes a small standard-size item; hover over the result to see the breakdown, and check the real size and weight before ordering.
+- **Profit?:** type the supplier price per piece (in the currency your supplier quotes in: Settings → Currency) and press **Profit?**. You get a rough profit per sale and margin in A$, AED or US$ (and ≈ in your currency), after Amazon's fees, sea freight, duty, GST/VAT, 12% ads and returns. It assumes a small standard-size item; hover over the result to see the breakdown, and check the real size and weight before ordering.
 
 The words used to search the other countries are shown in a box on each card, and you can edit them.
 

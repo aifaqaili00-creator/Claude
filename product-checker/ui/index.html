@@ -46,6 +46,8 @@
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-fx" viewBox="0 0 24 24"><path d="M4 8h14M15 4l4 4-4 4M20 16H6M9 12l-4 4 4 4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
 </svg>
 
 <div class="app">
@@ -86,8 +88,18 @@
       <div class="ttl"><h1 id="pageTitle">Check sellers</h1><div class="small" id="pageSub"></div></div>
       <div class="status" id="status"></div>
       <div class="row">
+        <button class="btn ghost" id="btnFxPop" aria-haspopup="dialog" aria-expanded="false" aria-controls="fxPop" title="Convert between US$, A$, AED and €"><svg class="icon sm"><use href="#i-fx"/></svg>Currency</button>
         <button class="btn ghost" id="btnShow" title="Show the background browser that runs the checks"><svg class="icon sm"><use href="#i-browser"/></svg>Checker browser</button>
         <button class="btn primary" id="btnH10" title="Opens in your own Chrome profile">Open Helium 10<svg class="icon sm"><use href="#i-external"/></svg></button>
+      </div>
+      <div class="pop" id="fxPop" hidden role="dialog" aria-labelledby="fxPopTitle">
+        <div class="head"><h3 id="fxPopTitle">Currency converter</h3>
+          <button type="button" class="btn ghost slim" id="fxClose" title="Close (Esc)" aria-label="Close"><svg class="icon sm"><use href="#i-x"/></svg></button></div>
+        <div class="row fxin"><input type="number" id="fxAmt" value="100" min="0" step="any" aria-label="Amount to convert"><span id="fxFromWrap"></span></div>
+        <div class="fxout" id="fxOut" aria-live="polite"></div>
+        <div class="row" style="justify-content:space-between"><span class="small muted" id="fxSrc"></span><button type="button" class="btn slim" id="fxRefresh">Refresh rates</button></div>
+        <div class="divider"></div>
+        <div class="field"><span class="lbl">Your currency: the price range is typed in it, other markets' prices show ≈ in it</span><span id="fxMineWrap"></span></div>
       </div>
     </header>
 
@@ -157,6 +169,7 @@
             </div>
           </div>
           <div class="cards" id="cards"></div>
+          <div id="priceCmp" style="margin-top:14px"></div>
         </div>
 
         <div id="listOut" hidden>
@@ -429,12 +442,21 @@
             <div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
             The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div>
           </div>
+          <div class="panel stackv" id="curPanel">
+            <h2>Currency</h2>
+            <div class="field"><span class="lbl">Your currency</span><span id="sMyCur"></span>
+              <div class="small">Your price range is typed in it, and prices from the other marketplaces also show ≈ in it.</div></div>
+            <div class="field"><span class="lbl">Your supplier quotes in</span><span id="sCostCur"></span>
+              <div class="small">Used by <b>Profit?</b> on idea and radar cards and by the profit calculator in keyword reports.</div></div>
+            <div class="tablewrap" style="box-shadow:none"><table class="fxmatrix" id="fxMatrix" aria-label="Exchange rates"></table></div>
+            <div class="row" style="justify-content:space-between"><span class="small" id="fxAsOf"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
+          </div>
           <div class="panel stackv">
             <h2>Price range for product ideas</h2>
             <div class="pricebar" id="sPrice"></div>
-            <div class="row"><span class="small" id="fxLine"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
+            <div class="small" id="fxLine"></div>
             <div class="note">Product ideas and the Trend radar show only products that sell on Amazon within this range.
-            It is converted to Australian dollars and UAE dirhams automatically with the European Central Bank's daily rates
+            It is converted to US dollars, Australian dollars and UAE dirhams automatically with the European Central Bank's daily rates
             (the dirham is fixed to the US dollar at 3.6725).</div>
           </div>
           <div class="panel stackv">

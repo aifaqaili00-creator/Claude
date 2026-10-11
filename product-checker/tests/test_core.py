@@ -84,6 +84,13 @@ def test_summarize_opportunity():
     assert (s['local'], s['local_other'], s['overseas'], s['origin_unknown']) == (3, 1, 2, 1)
 
 
+def test_summary_has_the_median_page_price_without_ads():
+    rows = [{'sponsored': False, 'days': 2, 'delivery': 'x', 'reviews': 1, 'bought': None, 'price': p} for p in (10.0, 20.0, 30.0, 40.0, None)]
+    rows.append({'sponsored': True, 'days': 2, 'delivery': 'x', 'reviews': 1, 'bought': None, 'price': 999.0})
+    assert ac.summarize('AU', 'x', 'Sydney 2000', rows)['price_med'] == 25.0
+    assert ac.summarize('AU', 'x', 'Sydney 2000', rows[4:])['price_med'] is None
+
+
 def test_search_words():
     assert fr.search_words('Warmi 5 Pack Extra Large Heavy Duty Moving Bags, with Zippers', 'Warmi') == 'Moving Bags'
     assert fr.search_words('[20 Pack] STEUGO 3 Compartment Meal Prep Containers (39 oz)', 'STEUGO') == 'Compartment Meal Prep Containers'

@@ -213,6 +213,7 @@ def market_glance(conn, kw, settings):
             'checked_at': s['checked_at'] if s else None, 'total': s['total'] if s else None,
             'local': s['local'] if s else None, 'fast': s['fast'] if s else None, 'overseas': s['overseas'] if s else None,
             'level': s['level'] if s else None, 'units': last_month['units'] if last_month else None,
+            'price_med': s.get('price_med') if s else None,
             'trend': {'label': tf.get('label'), 'score': tf.get('score'), 'status': tf.get('status')} if tf else None,
             'n_snapshots': len(snaps),
         }

@@ -199,3 +199,18 @@ def test_opportunity_map_route(server):
     st, _, raw = call(server, 'GET', '/api/opportunity_map?market=AE')
     d = json.loads(raw)
     assert st == 200 and d['market'] == 'AE' and isinstance(d['points'], list) and d['local_line'] == 4.5
+
+
+def test_profit_takes_the_supplier_cost_in_any_currency(server):
+    import fxrates
+    base = {'market': 'AU', 'price': 49.99, 'l': 30, 'w': 20, 'h': 10, 'kg': 0.5}
+    st, _, raw = call(server, 'POST', '/api/profit', {**base, 'cogs_usd': 5})
+    usd = json.loads(raw)
+    aed = fxrates.convert(5, 'USD', 'AED')
+    st2, _, raw = call(server, 'POST', '/api/profit', {**base, 'cogs': aed, 'cogs_currency': 'AED'})
+    d = json.loads(raw)
+    assert st == st2 == 200 and d['economics']['COGS'] == pytest.approx(usd['economics']['COGS'], abs=0.01)
+    assert d['cost_currency'] == 'AED'
+    assert d['max_cogs_20_cost'] == pytest.approx(fxrates.convert(usd['max_cogs_20'], 'USD', 'AED'), abs=0.02)
+    st, _, raw = call(server, 'POST', '/api/profit', {**base, 'cogs': 5, 'cogs_currency': 'XYZ'})
+    assert json.loads(raw)['cost_currency'] == 'USD'                       # unknown currency: read as US$

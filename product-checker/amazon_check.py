@@ -12,6 +12,7 @@ import contextvars
 import datetime as dt
 import os
 import re
+import statistics
 import time
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse
@@ -726,6 +727,7 @@ def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_D
     intl = [r for r in abroad if r['intl']]
     bought = [r['bought'] for r in organic if r['bought']]
     prices = [r['price'] for r in fast if r['price']]
+    page_prices = [r['price'] for r in organic if r.get('price')]
     abroad_txt = ' %d of %d ship from overseas.' % (len(abroad), len(organic)) if abroad else ''
     level = level_for(len(fast), len(organic))
     if level == 'none':
@@ -751,6 +753,7 @@ def summarize(code, keyword, location, rows, fast_days=3, local_days=LOCAL_MAX_D
         'local_share': len(local) / len(organic) if organic else None,
         'fast_reviews_median': _median([r['reviews'] or 0 for r in fast]),
         'fast_price_min': min(prices) if prices else None, 'fast_price_max': max(prices) if prices else None,
+        'price_med': round(statistics.median(page_prices), 2) if page_prices else None,
         'bought_listings': len(bought), 'bought_top': max(bought) if bought else None,
         'bought_total': sum(bought) if bought else None,
         'level': level, 'verdict': text, 'checked_at': checked_at or time.time(), 'rows': rows,

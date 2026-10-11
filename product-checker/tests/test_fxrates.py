@@ -72,8 +72,47 @@ def test_profit_maths_follows_the_new_rates():
 
 
 def test_settings_accept_the_price_range():
-    s, err = config.validate({'price_min': '25.5', 'price_max': 9999, 'price_currency': 'EUR', 'exclude_tech': 'false'})
-    assert not err and s['price_min'] == 25.5 and s['price_max'] == 5000 and s['price_currency'] == 'EUR'
+    s, err = config.validate({'price_min': '25.5', 'price_max': 99999, 'price_currency': 'EUR', 'exclude_tech': 'false'})
+    assert not err and s['price_min'] == 25.5 and s['price_max'] == 20000 and s['price_currency'] == 'EUR'
     assert s['exclude_tech'] is False
     s, err = config.validate({'price_currency': 'GBP', 'price_min': 'cheap'})
     assert len(err) == 2
+
+
+def test_your_currency_and_the_supplier_currency_can_be_aud_or_aed():
+    s, err = config.validate({'price_currency': 'AED', 'cost_currency': 'AUD'})
+    assert not err and s['price_currency'] == 'AED' and s['cost_currency'] == 'AUD'
+    assert config.defaults()['cost_currency'] == 'USD'
+    s, err = config.validate({'cost_currency': 'CNY'})
+    assert err and s['cost_currency'] == 'USD'
+
+
+def test_ranges_typed_in_aed_or_aud():
+    fxrates.refresh(fetch=lambda: XML, now=1)
+    r = fxrates.ranges({**config.defaults(), 'price_currency': 'AED', 'price_min': 73.45, 'price_max': 183.63})
+    assert r == {'US': (20, 50), 'AU': (30, 76), 'AE': (73, 184)}
+    r = fxrates.ranges({**config.defaults(), 'price_currency': 'AUD', 'price_min': 30.4, 'price_max': 76})
+    assert r['US'] == (20, 50) and r['AU'] == (30, 76)
+    assert fxrates.convert(100, 'AUD', 'AED') == pytest.approx(100 / 1.52 * 3.6725, rel=1e-3)
+    assert fxrates.convert(fxrates.convert(42, 'AED', 'EUR'), 'EUR', 'AED') == pytest.approx(42)
+
+
+def test_summary_lists_every_currency():
+    s = fxrates.summary(config.defaults())
+    assert s['currencies'] == ['USD', 'AUD', 'AED', 'EUR'] and set(s['per_usd']) == set(s['currencies'])
+
+
+def test_offline_is_not_retried_on_every_poll(monkeypatch):
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise OSError('no internet')
+    monkeypatch.setattr(fxrates, '_fetch', broken)
+    monkeypatch.setattr(fxrates, '_last_try', 0.0)
+    monkeypatch.delenv('PC_FX_OFFLINE', raising=False)
+    assert fxrates.due()
+    fxrates.refresh()                                                       # what refresh_soon runs in its thread
+    assert calls == [1] and fxrates.rates()['source'] == 'fixed'
+    assert not fxrates.due() and not fxrates.refresh_soon()                 # the next polls wait
+    assert fxrates.due(now=fxrates._last_try + fxrates.RETRY_AFTER + 1)     # and try again half an hour later

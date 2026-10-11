@@ -108,6 +108,66 @@ async function poll() {
 $('btnShow').addEventListener('click', () => api('/api/browser', {action: 'show'}).catch(e => toast(e.message)));
 $('btnH10').addEventListener('click', () => openUrl('https://members.helium10.com/'));
 
+/* ---------- currency converter (top bar) ---------- */
+let fxFrom = 'USD';
+try { fxFrom = localStorage.getItem('pcFxFrom') || 'USD'; } catch (e) {}
+const fxOpen = () => !$('fxPop').hidden;
+function drawFxOut() {
+  const a = parseFloat($('fxAmt').value), amt = a >= 0 ? a : 0;
+  $('fxOut').innerHTML = CURRENCIES.filter(c => c !== fxFrom).map(c => {
+    const r = fxRate(fxFrom, c), v = r == null ? null : amt * r;
+    return `<div class="fxrow"><span class="fxcode" title="${CUR_NAME[c]}">${CUR_SYM[c]}</span>
+      <button type="button" class="fxval tnum" data-copy="${v == null ? '' : v.toFixed(2)}" title="Copy">${v == null ? '–' : num(v, 2)}${icon('copy')}</button>
+      <span class="small muted tnum">1 ${CUR_SYM[fxFrom]} = ${r == null ? '–' : num(r, 4)}</span></div>`;
+  }).join('');
+  $('fxSrc').textContent = fxNote();
+}
+function drawConverter() {
+  if (!CURRENCIES.includes(fxFrom)) fxFrom = 'USD';
+  $('fxFromWrap').innerHTML = curSeg('fxFrom', fxFrom, 'Convert from');
+  $('fxMineWrap').innerHTML = curSeg('fxMine', myCur(), 'Your currency');
+  drawFxOut();
+}
+function showConverter(open) {
+  $('fxPop').hidden = !open;
+  $('btnFxPop').setAttribute('aria-expanded', String(open));
+  if (open) { drawConverter(); $('fxAmt').focus(); $('fxAmt').select(); }
+}
+$('btnFxPop').addEventListener('click', () => showConverter(!fxOpen()));
+$('fxClose').addEventListener('click', () => { showConverter(false); $('btnFxPop').focus(); });
+$('fxAmt').addEventListener('input', drawFxOut);
+$('fxFromWrap').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  fxFrom = b.dataset.v;
+  try { localStorage.setItem('pcFxFrom', fxFrom); } catch (err) {}
+  drawConverter();
+});
+$('fxMineWrap').addEventListener('click', e => { const b = e.target.closest('button'); if (b) saveCurrency('price_currency', b.dataset.v); });
+$('fxOut').addEventListener('click', e => {
+  const b = e.target.closest('[data-copy]'); if (!b || !b.dataset.copy) return;
+  navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Copied ' + b.dataset.copy, 1500), () => toast('Could not copy'));
+});
+$('fxRefresh').addEventListener('click', async () => {
+  $('fxRefresh').disabled = true;
+  try { ST.fx = await api('/api/fx/refresh', {}); drawFxOut(); toast(ST.fx.source === 'ECB' ? 'Rates updated' : 'Could not reach the ECB; using saved rates', 2500); }
+  catch (e) { toast(e.message); }
+  $('fxRefresh').disabled = false;
+});
+document.addEventListener('click', e => {
+  const path = e.composedPath();                       // still right when a click redrew the button it landed on
+  if (fxOpen() && !path.includes($('fxPop')) && !path.includes($('btnFxPop'))) showConverter(false);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && fxOpen()) { showConverter(false); $('btnFxPop').focus(); } });
+window.addEventListener('pc:currency', () => { if (fxOpen()) drawConverter(); });
+let fxKey = '';
+onState(s => {
+  const f = s.fx || {}, k = JSON.stringify([f.per_usd, f.as_of, f.source]);
+  if (k === fxKey) return;
+  fxKey = k;
+  if (f.per_usd) $('btnFxPop').title = `1 US$ = A$ ${num(f.per_usd.AUD, 4)} = AED ${num(f.per_usd.AED, 4)} = € ${num(f.per_usd.EUR, 4)} (${fxNote()}). Click to convert.`;
+  if (fxOpen()) drawFxOut();
+});
+
 /* Views register themselves in the scripts that follow; start routing once everything is loaded. */
 window.addEventListener('DOMContentLoaded', () => {
   if (!location.hash) {

@@ -47,7 +47,7 @@
           <div class="row" style="gap:6px"><span class="pill ${LAB[i.label] || 'weak'}">${esc(i.label)}</span><span class="pill line" title="Surge score: on the list often, climbing fast">surge ${Math.round(i.surge || 0)}</span>
             ${i.pct ? `<span class="small">+${num(i.pct)}%</span>` : ''}<span class="small muted" style="margin-left:auto">${esc(i.category)}</span></div>
           <a class="clamp2" data-open="${esc(i.url)}" style="cursor:pointer;color:var(--ink);font-weight:550;text-decoration:none">${esc(i.title)}</a>
-          <div class="small">${i.price != null ? money(i.price, cur) : 'no price'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.streak_days ? ' · on the list ' + i.streak_days + ' days running' : ''}
+          <div class="small">${i.price != null ? money(i.price, cur) + fxSpan(i.price, d.market) : 'no price'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.streak_days ? ' · on the list ' + i.streak_days + ' days running' : ''}
             ${i.spark.length > 1 ? Charts.spark(i.spark.map(r => -r), {label: 'sales rank, higher is better'}) : ''}</div>
           ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
         </div>
@@ -69,6 +69,7 @@
     const i = data && data.items.find(x => x.asin === asin);
     return i && {market: data.market, price: i.price, category: i.category, search: i.search};
   });
+  window.addEventListener('pc:currency', () => { if (data) render(); });
   $('radarOut').addEventListener('click', async e => {
     const c = e.target.closest('[data-rcheck]'), r = e.target.closest('[data-rrep]'), w = e.target.closest('[data-rwatch]');
     if (r) go('k', data.market, r.dataset.rrep);
