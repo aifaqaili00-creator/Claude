@@ -553,6 +553,12 @@ def test_the_board_routes_check_their_input_and_never_show_the_password(server, 
     assert st == 400 and 'sea or air' in json.loads(raw)['error']
     assert call(server, 'POST', '/api/board/line', {'id': cid, 'n': 1, 'market': 'US', 'set': {'units': -5}})[0] == 400
     assert call(server, 'POST', '/api/board/move', {'id': cid, 'stage': 'reorder'})[0] == 400
+    items = json.loads(call(server, 'GET', '/api/board/card?id=%d' % cid)[2])['card']['approval']['items']
+    assert call(server, 'POST', '/api/board/check', {'id': cid, 'add': ''})[0] == 400
+    for it in items:                                                        # approve it: every check ticked
+        st, _, raw = call(server, 'POST', '/api/board/check', {'id': cid, 'item': it['id'], 'done': True})
+        assert st == 200
+    assert json.loads(raw)['trophies'] == ['Approved']
     assert call(server, 'GET', '/api/board/card?id=999')[0] == 404
     ppl = json.loads(call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'Sara', 'email': 'sara@example.com'}})[2])
     assert call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'x', 'email': 'nope'}})[0] == 400

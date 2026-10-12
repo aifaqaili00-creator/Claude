@@ -4,8 +4,17 @@ and totals in US$ through `per_usd` ({'USD': 1, 'AUD': 1.55, ...})."""
 import datetime as dt
 import math
 
-STAGES = ('sourcing', 'launch', 'reorder')
-STAGE_NAMES = {'sourcing': 'Sourcing & PO', 'launch': 'Launch & strategy', 'reorder': 'Re-order'}
+STAGES = ('approval', 'sourcing', 'launch', 'reorder')
+STAGE_NAMES = {'approval': 'Approval', 'sourcing': 'Sourcing & PO', 'launch': 'Launch & strategy', 'reorder': 'Re-order'}
+# what a new product is checked against before money goes into it; each card can add its own or remove some
+APPROVAL_CHECKS = (
+    'Demand checked: enough buyers a month in the target market',
+    'Few local sellers: a real gap in Australia or the UAE',
+    'Profit checked: margin is good after fees, shipping and ads',
+    'Supplier found on Alibaba with a sample price',
+    'Not restricted: no hazmat, brand gating or certificates needed',
+    'Size and weight are fine for FBA',
+)
 MODES = ('sea', 'air')
 HANDLED = ('done', 'adjusted', 'skip')
 MARKET_NAMES = {'US': 'USA', 'AU': 'Australia', 'AE': 'UAE'}
@@ -108,10 +117,22 @@ def launch_status(hints, live):
             'progress': round((done + (1 if on else 0)) / (total + 1), 3)}
 
 
+def approval_status(items):
+    """The approval checklist: approved when every check is ticked (and there is at least one)."""
+    items = items or []
+    done = sum(1 for i in items if i.get('done'))
+    total = len(items)
+    return {'complete': bool(total) and done == total, 'done': done, 'total': total,
+            'missing': [i['text'] for i in items if not i.get('done')],
+            'progress': round(done / total, 3) if total else 0.0}
+
+
 def unlocked(milestones):
-    """The stages a card may be in: Launch after 'Order ready', Re-order after 'Launched'."""
+    """The stages a card may be in: Sourcing after 'Approved', Launch after 'Order ready', Re-order after
+    'Launched'."""
     ms = milestones or {}
-    return ['sourcing'] + (['launch'] if ms.get('order_ready') else []) + (['reorder'] if ms.get('launched') else [])
+    return ['approval'] + (['sourcing'] if ms.get('approved') else []) + \
+        (['launch'] if ms.get('order_ready') else []) + (['reorder'] if ms.get('launched') else [])
 
 
 def sell_rate(counts, sent=None, arrived=None):

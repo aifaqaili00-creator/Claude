@@ -48,9 +48,10 @@ def test_launch_needs_every_hint_handled_and_a_live_day():
 
 
 def test_stages_unlock_in_order():
-    assert rules.unlocked({}) == ['sourcing']
-    assert rules.unlocked({'order_ready': 1}) == ['sourcing', 'launch']
-    assert rules.unlocked({'order_ready': 1, 'launched': 2}) == ['sourcing', 'launch', 'reorder']
+    assert rules.unlocked({}) == ['approval']
+    assert rules.unlocked({'approved': 1}) == ['approval', 'sourcing']
+    assert rules.unlocked({'approved': 1, 'order_ready': 1}) == ['approval', 'sourcing', 'launch']
+    assert rules.unlocked({'approved': 1, 'order_ready': 1, 'launched': 2}) == ['approval', 'sourcing', 'launch', 'reorder']
 
 
 def test_sell_rate_from_counts_or_from_the_arrival():

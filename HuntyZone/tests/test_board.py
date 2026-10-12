@@ -40,8 +40,19 @@ def search(db, rows=ROWS, at_=NOW - DAY, kw='calming dog bed', market='US'):
     db.write(storage.save_serp, s, 'qualify', None, 1, None)
 
 
-def add(db, **kw):
-    return db.write(board.add_card, {'title': 'Calming Dog Bed', 'market': 'US', 'kw': 'calming dog bed', **kw}, S, NOW)['id']
+def approve(db, cid, now=NOW):
+    """Tick every approval check, so the product moves on to Sourcing & PO."""
+    out = {}
+    for item in detail(db, cid)['card']['approval']['items']:
+        out = db.write(board.set_check, cid, item['id'], True, S, now)
+    return out
+
+
+def add(db, approved=True, **kw):
+    cid = db.write(board.add_card, {'title': 'Calming Dog Bed', 'market': 'US', 'kw': 'calming dog bed', **kw}, S, NOW)['id']
+    if approved:
+        approve(db, cid)
+    return cid
 
 
 def order(db, cid, markets=('US',)):
@@ -73,12 +84,16 @@ def test_a_product_goes_on_the_board_once_and_is_watched(db):
         {'id': cid, 'exists': True}
     d = detail(db, cid)
     c, o = d['card'], d['orders'][0]
-    assert c['stage'] == 'sourcing' and c['key'] == 'PB-%d' % cid and c['kw'] == 'calming dog bed' and c['asin'] == 'B0DOGBED01'
-    assert c['image'] == 'https://m.media-amazon.com/images/I/x.jpg' and c['unlocked'] == ['sourcing']
+    assert c['stage'] == 'approval' and c['key'] == 'PB-%d' % cid and c['kw'] == 'calming dog bed' and c['asin'] == 'B0DOGBED01'
+    assert c['image'] == 'https://m.media-amazon.com/images/I/x.jpg' and c['unlocked'] == ['approval']
     assert o['cost_cur'] == 'AUD' and o['unit_cost'] == round(fxrates.convert(5.0, 'USD', 'AUD'), 2)
     assert [ln['market'] for ln in o['lines']] == ['US'] and o['status']['missing'][0] == 'units for USA'
     w = db.read(storage.watches)
-    assert [(x['kind'], x['market'], x['target'], x['stage']) for x in w] == [('keyword', 'US', 'calming dog bed', 'sourcing')]
+    assert [(x['kind'], x['market'], x['target'], x['stage']) for x in w] == [('keyword', 'US', 'calming dog bed', 'researching')]
+    assert approve(db, cid)['trophies'] == ['Approved']
+    c = detail(db, cid)['card']
+    assert c['stage'] == 'sourcing' and c['unlocked'] == ['approval', 'sourcing']
+    assert [x['stage'] for x in db.read(storage.watches)] == ['sourcing']
     other = db.write(board.add_card, {'title': 'Lick Mat', 'market': 'AU', 'image': 'javascript:alert(1)'}, S, NOW)
     assert db.read(board._card, other['id'])['image'] is None and db.read(board._card, other['id'])['kw'] == 'lick mat'
     for bad in ({'title': 'x', 'market': 'XX'}, {'title': '  ', 'market': 'US'}):
@@ -98,7 +113,7 @@ def test_a_complete_order_wins_a_trophy_and_opens_launch(db):
     out = db.write(board.set_line, cid, 1, 'AU', {'ship_cost': 300, 'ship_cur': 'USD', 'ship_mode': 'air'}, S, NOW)
     assert out['trophies'] == ['Order ready']
     d = detail(db, cid)
-    assert d['card']['stage'] == 'launch' and d['card']['unlocked'] == ['sourcing', 'launch']
+    assert d['card']['stage'] == 'launch' and d['card']['unlocked'] == ['approval', 'sourcing', 'launch']
     assert d['card']['invested_usd'] == 300 * 6 + 450 + 200 * 6 + 300 and d['card']['milestones']['order_ready'] == NOW
     assert d['tasks']['sourcing']['done_at'] == NOW and {m['status'] for m in d['tasks']['sourcing']['mails']} == {'cancelled'}
     assert d['events'][0]['kind'] == 'trophy' and d['events'][0]['text'] == 'Order ready'
@@ -153,7 +168,7 @@ def test_launch_needs_every_hint_handled_and_a_live_day(db):
     assert db.write(board.update_card, cid, {'live': {'US': '2026-10-10'}}, S, NOW)['trophies'] == []
     assert db.write(board.set_hint, own['id'], 'done', 'ordered', S, NOW)['trophies'] == ['Launched']
     d = detail(db, cid)
-    assert d['card']['stage'] == 'reorder' and d['card']['unlocked'] == ['sourcing', 'launch', 'reorder']
+    assert d['card']['stage'] == 'reorder' and d['card']['unlocked'] == ['approval', 'sourcing', 'launch', 'reorder']
     assert d['data']['live'] == {'US': '2026-10-10'} and db.read(storage.watches)[0]['stage'] == 'launched'
     with pytest.raises(board.BoardError, match='your own'):
         db.write(board.remove_hint, hs[0]['id'])
@@ -288,10 +303,10 @@ def test_the_board_state_summary_and_refresh_after_runs(db):
     order(db, cid)
     st = board.state(db, S, NOW)
     json.dumps(st, allow_nan=False)
-    assert st['cards'][0]['stage'] == 'launch' and st['trophies'] == 1 and st['invested_usd'] == 2250
+    assert st['cards'][0]['stage'] == 'launch' and st['trophies'] == 2 and st['invested_usd'] == 2250
     assert st['recent'][0]['kind'] == 'trophy' and st['rev'] == board.rev()
     text = board.summary_text(db, S, NOW)
-    assert 'Launch & strategy (1)' in text and 'Trophies this week: Order ready (Calming Dog Bed)' in text
+    assert 'Launch & strategy (1)' in text and 'Trophies this week: Approved (Calming Dog Bed); Order ready (Calming Dog Bed)' in text
     assert 'Invested so far: US$ 2,250' in text and 'Sourcing & PO (0)' in text
     assert board.refresh_for(db, S, [{'kind': 'watch_kw', 'market': 'US', 'target': 'Calming Dog Bed'}], NOW) == 1
     assert board.refresh_for(db, S, [{'kind': 'lists', 'market': 'US', 'target': 'all'}], NOW) == 0
@@ -432,3 +447,39 @@ def test_notifiers(db):
             db.write(board.add_notifier, 'x', bad, NOW)
     assert db.write(board.remove_notifier, out[0]['id'], NOW) == []
     assert db.write(board.add_notifier, '', 'sara@example.com', NOW)[0]['name'] == 'sara'
+
+
+def test_approval_needs_every_check_ticked(db):
+    cid = add(db, approved=False)
+    c = detail(db, cid)['card']
+    items = c['approval']['items']
+    assert c['stage'] == 'approval' and len(items) == 6 and c['approval']['done'] == 0 and c['progress']['approval'] == 0
+    with pytest.raises(board.BoardError, match='Approval'):
+        db.write(board.move_card, cid, 'sourcing', None, NOW)               # locked until approved
+    for it in items[:-1]:
+        assert db.write(board.set_check, cid, it['id'], True, S, NOW)['trophies'] == []
+    db.write(board.set_check, cid, items[0]['id'], False, S, NOW)            # untick one again
+    db.write(board.add_check, cid, 'Sample arrived and looks good', NOW)
+    c = detail(db, cid)['card']
+    assert c['approval']['total'] == 7 and c['approval']['done'] == 4 and c['stage'] == 'approval'
+    assert 'Sample arrived and looks good' in c['approval']['missing']
+    db.write(board.remove_check, cid, items[0]['id'], NOW)                   # this check does not apply
+    last = [i for i in detail(db, cid)['card']['approval']['items'] if not i['done']]
+    out = {}
+    for it in last:
+        out = db.write(board.set_check, cid, it['id'], True, S, NOW + 60)
+    c = detail(db, cid)['card']
+    assert out['trophies'] == ['Approved'] and c['stage'] == 'sourcing' and c['milestones']['approved'] == NOW + 60
+    assert c['progress']['approval'] == 1.0
+    with pytest.raises(board.BoardError, match='already approved'):
+        db.write(board.set_check, cid, items[1]['id'], False, S, NOW)
+    for bad in ('', '   '):
+        with pytest.raises(board.BoardError):
+            db.write(board.add_check, add(db, approved=False, title='Lick Mat', kw='lick mat'), bad, NOW)
+
+
+def test_products_already_on_the_board_count_as_approved(db):
+    cid = add(db, approved=False)
+    db.write(lambda c: c.execute("UPDATE board_card SET stage='sourcing', data_json='{}' WHERE id=?", (cid,)))
+    c = detail(db, cid)['card']
+    assert c['stage'] == 'sourcing' and 'sourcing' in c['unlocked'] and c['milestones']['approved']

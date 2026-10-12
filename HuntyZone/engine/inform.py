@@ -12,7 +12,7 @@ from engine import board as rules
 from engine import remind
 
 ALIBABA_SEARCH = 'https://www.alibaba.com/trade/search?SearchText='
-STAGE_COLORS = {'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
+STAGE_COLORS = {'approval': '#d97706', 'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
 MARK = {'new': ('NEW', '#ecfdf3', '#067647'), 'changed': ('CHANGED', '#fffaeb', '#b54708')}
 
 

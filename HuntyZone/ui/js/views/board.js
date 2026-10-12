@@ -2,7 +2,7 @@
 /* Product board (#/board, #/board/<id>): your products from Sourcing & PO to Launch & strategy to Re-order, with
    trophies, deadlines and the reminder emails they send. Also binds Settings, Email for reminders. */
 (() => {
-  const STAGES = [['sourcing', 'Sourcing & PO'], ['launch', 'Launch & strategy'], ['reorder', 'Re-order']];
+  const STAGES = [['approval', 'Approval'], ['sourcing', 'Sourcing & PO'], ['launch', 'Launch & strategy'], ['reorder', 'Re-order']];
   const STAGE = Object.fromEntries(STAGES);
   const COLORS = ['blue', 'violet', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'gray'];
   const STATUS = [['todo', 'To check'], ['done', 'Done'], ['adjusted', 'Changed'], ['skip', 'Not relevant']];
@@ -10,9 +10,10 @@
   const CAT = {price: 'Price', money: 'Profit', reviews: 'Reviews', competition: 'Competition', product: 'Product',
     listing: 'Listing', timing: 'Timing', sales: 'Sales target', trend: 'Search trend', search: 'Research', own: 'Your own'};
   const STEP = [['deposit', 'Deposit paid'], ['produced', 'Produced'], ['shipped', 'Shipped'], ['arrived', 'Arrived']];
-  const EMPTY = {sourcing: 'Use Add product, or Add to board on the Trend radar or in a report.',
+  const EMPTY = {approval: 'New products start here. Use Add product, or Add to board on the Trend radar or in a report.',
+    sourcing: 'Products move here once every approval check is ticked.',
     launch: 'Products move here when their order is complete.', reorder: 'Products move here once they are live on Amazon.'};
-  const LOCKED = {launch: 'Locked: finish Sourcing & PO first', reorder: 'Locked: launch it first'};
+  const LOCKED = {sourcing: 'Locked: tick every approval check first', launch: 'Locked: finish Sourcing & PO first', reorder: 'Locked: launch it first'};
   const EV = {trophy: 'trophy', mail: 'mail', task: 'clock', stock: 'box', arrived: 'box', moved: 'board', created: 'plus',
     note: 'file', reorder: 'refresh', live: 'ok', hint: 'ok', po: 'file', edit: 'file', archived: 'trash', restored: 'plus'};
   const CONF = ['#2f6fd6', '#7a5af8', '#0e9384', '#f5b700', '#f04438', '#17b26a'];
@@ -104,12 +105,15 @@
 
   function cardHtml(c) {
     const ms = c.milestones, t = c.task, won = (ms.order_ready ? 1 : 0) + (ms.launched ? 1 : 0) + (ms.reorders || 0);
+    const appr = c.stage === 'approval' && c.approval && c.approval.total
+      ? [`<span class="bchip" title="Approval checks ticked">${icon('ok')}${c.approval.done}/${c.approval.total} checks</span>`] : [];
     const chips = c.markets.map(m => {
       const s = m.stock, lv = s && s.level !== 'unknown' ? ' lv-' + s.level : '';
       const tip = MK[m.market] + (m.units ? ': ' + num(m.units) + ' units in the first order' : '') + (s && s.pct != null ? ', ' + Math.round(s.pct) + '% left' : '');
       return `<span class="bchip${lv}" title="${esc(tip)}">${cflag(m.market, '')}${s && s.pct != null ? Math.round(s.pct) + '% left' : m.units ? num(m.units) : '–'}</span>` +
         (s && s.order_now ? `<span class="bchip lv-red" title="Re-order by ${esc(niceDay(s.reorder_by))}">${icon('warn')}Order now</span>` : '');
     });
+    chips.unshift(...appr);
     if (t && t.due) chips.push(`<span class="bchip due-${t.due}" title="${esc(STAGE[c.stage])} due ${esc(niceDay(t.due_day))}">${icon('clock')}${t.due === 'late' ? 'Late' : 'Due'} ${esc(niceDay(t.due_day))}</span>`);
     if (t && t.next_mail) chips.push(`<span class="bchip" title="${esc(KIND[t.next_mail.kind])}: ${esc(niceTime(t.next_mail.send_at))}">${icon('mail')}${esc(niceDay(isoOf(t.next_mail.send_at)))}</span>`);
     if (c.stage === 'launch' && c.hints.total) chips.push(`<span class="bchip">${icon('ok')}${c.hints.done}/${c.hints.total}</span>`);
@@ -254,14 +258,14 @@
       </div>
       <div class="bd-colors" role="group" aria-label="Colour">${COLORS.map(k => `<button type="button" class="c-${k}" data-color="${k}" aria-pressed="${c.color === k}" title="${k}" aria-label="${k}"></button>`).join('')}</div>
       <ol class="bstep">${STAGES.map(([k, name], i) => {
-        const done = k === 'sourcing' ? ms.order_ready : k === 'launch' ? ms.launched : (ms.reorders || 0);
+        const done = k === 'approval' ? ms.approved : k === 'sourcing' ? ms.order_ready : k === 'launch' ? ms.launched : (ms.reorders || 0);
         const locked = !un.includes(k), now = c.stage === k;
-        const sub = done ? (k === 'reorder' ? `${done} re-order${done > 1 ? 's' : ''}` : (k === 'sourcing' ? 'Order ready ' : 'Launched ') + niceDay(isoOf(done)))
+        const sub = done ? (k === 'reorder' ? `${done} re-order${done > 1 ? 's' : ''}` : ({approval: 'Approved ', sourcing: 'Order ready '}[k] || 'Launched ') + niceDay(isoOf(done)))
           : locked ? 'locked' : now ? 'in progress' : '';
         return `<li class="st-${k}${done ? ' done' : ''}${locked ? ' locked' : ''}${now ? ' now' : ''}"><span class="bs-ic">${done ? icon('trophy') : locked ? icon('lock') : i + 1}</span><b>${esc(name)}</b><span class="small">${esc(sub)}</span></li>`;
       }).join('')}</ol>
       <div class="bd-tabs" role="tablist">${[...STAGES, ['notes', 'Notes & history']].map(([k, name]) => `<button type="button" role="tab" class="st-${k}" data-tab="${k}" aria-selected="${tab === k}">${k !== 'notes' && !un.includes(k) ? icon('lock') : ''}${esc(name)}</button>`).join('')}</div>
-      <div class="bd-body">${tab === 'sourcing' ? sourcingTab() : tab === 'launch' ? launchTab() : tab === 'reorder' ? reorderTab() : notesTab()}</div>`;
+      <div class="bd-body">${tab === 'approval' ? approvalTab() : tab === 'sourcing' ? sourcingTab() : tab === 'launch' ? launchTab() : tab === 'reorder' ? reorderTab() : notesTab()}</div>`;
   }
 
   /* Deadline & reminders: a short summary (due day, who gets the emails, when each goes out) and, to set or change
@@ -272,7 +276,7 @@
     if (dlOpen !== stage) {
       if (t && t.done_at) return `<div class="bdead bdead-min">${head}<span class="pill good">${icon('ok')}Done ${esc(niceDay(isoOf(t.done_at)))}</span><span class="small muted">it was due ${esc(niceDay(t.due_day))}</span></div></div>`;
       if (!active) {
-        if (stage === 'sourcing' ? ms.order_ready : stage === 'launch' ? ms.launched : false) return '';
+        if (stage === 'approval' ? ms.approved : stage === 'sourcing' ? ms.order_ready : stage === 'launch' ? ms.launched : false) return '';
         return `<div class="bdead bdead-min">${head}<span class="small muted">No deadline yet.</span><button type="button" class="btn slim" data-dlopen="${stage}">${icon('plus')}Set a deadline</button></div></div>`;
       }
       const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -302,14 +306,42 @@
     </div>`;
   }
 
-  const lockNote = stage => `<div class="verdict some">${icon('lock')}<span>${stage === 'launch'
+  const lockNote = stage => `<div class="verdict some">${icon('lock')}<span>${stage === 'sourcing'
+    ? 'Opens when every approval check is ticked' + (D.card.approval.missing.length ? ': still to check ' + esc(D.card.approval.missing.slice(0, 3).join('; ')) + (D.card.approval.missing.length > 3 ? ' and more' : '') : '') + '. You can fill in the order already.'
+    : stage === 'launch'
     ? 'Opens when Sourcing & PO is complete' + (D.card.missing.length ? ': still needs ' + esc(D.card.missing.join(', ')) : '') + '.'
     : 'Opens once the product is live on Amazon and every launch hint is checked.'} You can set its deadline already.</span></div>`;
   const sumOf = (st, k) => { const v = Object.values(st.markets).map(m => m[k]).filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
 
+  /* Approval: the checklist a product must pass before money goes into it. Every check ticked = approved, and the
+     product moves on to Sourcing & PO by itself. */
+  function approvalTab() {
+    const a = D.card.approval, ok = D.card.milestones.approved, pct = a.total ? Math.round(a.done / a.total * 100) : 100;
+    const when = ok ? niceDay(isoOf(ok)) : '';
+    return `${deadline('approval')}
+      <div class="bappr">
+        <div class="head"><h3>Approval checklist</h3><span class="small muted">${a.done} of ${a.total} ticked</span></div>
+        <div class="bappr-bar" role="img" aria-label="${pct}% checked"><span style="width:${pct}%"></span></div>
+        ${ok ? `<div class="verdict opportunity">${icon('trophy')}<span><b>Approved${when ? ' ' + esc(when) : ''}.</b> Sourcing & PO is open.</span></div>`
+          : '<div class="small muted">Tick each check once you have looked at it. When every check is ticked the product is approved and moves to Sourcing & PO.</div>'}
+        ${a.items.length ? `<ul class="bchecks">${a.items.map(i => `<li class="${i.done ? 'done' : ''}">
+          <label><input type="checkbox" data-chk="${i.id}"${i.done ? ' checked' : ''}${ok ? ' disabled' : ''}><span>${esc(i.text)}</span></label>
+          ${i.done ? `<span class="small muted">${esc(niceDay(isoOf(i.done)))}</span>` : ''}
+          ${ok ? '' : `<button type="button" class="btn slim ghost" data-chkrm="${i.id}" title="This check does not apply to this product" aria-label="Remove this check">${icon('x')}</button>`}</li>`).join('')}</ul>`
+          : '<div class="small muted">This product was on the board before the approval checklist, so it counts as approved.</div>'}
+        ${ok ? '' : `<div class="row"><input type="text" id="bChkText" data-fk="chk-new" maxlength="160" placeholder="Add your own check, e.g. Sample arrived and looks good" style="flex:1;min-width:0">
+          <button type="button" class="btn slim" data-chkadd>${icon('plus')}Add check</button></div>`}
+      </div>`;
+  }
+
   function sourcingTab() {
     const o = D.orders.find(x => x.n === orderN) || D.orders[0];
     if (!o) return '<div class="empty">No order yet.</div>';
+    if (!D.card.unlocked.includes('sourcing')) return lockNote('sourcing') + sourcingForm(o);
+    return sourcingForm(o);
+  }
+
+  function sourcingForm(o) {
     const st = o.status, on = new Set(o.lines.map(l => l.market));
     return `${deadline('sourcing')}
       ${D.orders.length > 1 ? `<div class="seg slim" role="group" aria-label="Order">${D.orders.map(x => `<button type="button" data-order="${x.n}" aria-pressed="${x.n === o.n}">${x.n === 1 ? 'First order' : 'Re-order #' + x.n}${x.ready_at ? ' ✓' : ''}</button>`).join('')}</div>` : ''}
@@ -460,6 +492,11 @@
       if (!el.checked && ln && (ln.units || ln.ship_cost != null) && !confirm(`Take ${MK[m]} out of this order?`)) { el.checked = true; return; }
       return change('/api/board/line', el.checked ? {id, n, market: m, set: {}} : {id, n, market: m, remove: true});
     }
+    if (el.dataset.chk) {
+      const r = await change('/api/board/check', {id, item: +el.dataset.chk, done: el.checked});
+      if (r && r.trophies && r.trophies.includes('Approved')) { tab = 'sourcing'; drawCard(); }
+      return;
+    }
     if (f === 'title') return change('/api/board/card', {id, set: {title: v}});
     if (f === 'asin' || f === 'alibaba') return change('/api/board/card', {id, set: {[f]: v.trim()}});
     if (f === 'unit_cost' || f === 'cost_cur') return change('/api/board/order', {id, n, set: {[f]: v}});
@@ -473,6 +510,9 @@
     }
   });
 
+  $('bDlg').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.id === 'bChkText') { e.preventDefault(); $('bDlg').querySelector('[data-chkadd]').click(); }
+  });
   $('bDlg').addEventListener('click', async e => {
     const t = e.target, dlg = $('bDlg'), id = openId;
     if (t === dlg) { const r = dlg.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right) dlg.close(); return; }
@@ -494,6 +534,13 @@
       const note = dlg.querySelector(`[data-f="hnote"][data-hid="${hs.dataset.hid}"]`);
       if (hs.dataset.hst === 'adjusted' && !note.value.trim()) { note.focus(); toast('Say what you do differently, then press Changed.'); return; }
       return change('/api/board/hint', {hint_id: +hs.dataset.hid, status: hs.dataset.hst, note: note.value});
+    }
+    const cr = t.closest('[data-chkrm]');
+    if (cr) return change('/api/board/check', {id, remove: +cr.dataset.chkrm});
+    if (t.closest('[data-chkadd]')) {
+      const text = $('bChkText').value.trim();
+      if (!text) { $('bChkText').focus(); return; }
+      return change('/api/board/check', {id, add: text});
     }
     const hr = t.closest('[data-hrm]');
     if (hr) return change('/api/board/hint', {remove: +hr.dataset.hrm});

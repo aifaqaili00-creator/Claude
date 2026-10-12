@@ -1622,6 +1622,18 @@ def api_board_hint(h, q):
     return board_change(h, board.set_hint, _int_arg(d.get('hint_id')), d.get('status'), d.get('note'), S.settings)
 
 
+@route('POST', '/api/board/check')
+def api_board_check(h, q):
+    """The approval checklist: {id, item, done}, {id, add: text} or {id, remove: item}."""
+    d = h._json()
+    cid = _int_arg(d.get('id'))
+    if d.get('add') is not None:
+        return board_change(h, board.add_check, cid, d.get('add'))
+    if d.get('remove') is not None:
+        return board_change(h, board.remove_check, cid, _int_arg(d.get('remove')))
+    return board_change(h, board.set_check, cid, _int_arg(d.get('item')), bool(d.get('done')), S.settings)
+
+
 @route('POST', '/api/board/hints/refresh')
 def api_board_hints_refresh(h, q):
     d = h._json()

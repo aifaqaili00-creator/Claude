@@ -100,6 +100,9 @@ def _card(conn, card_id):
     c['data'] = json.loads(c.pop('data_json') or '{}')
     for k in ('milestones', 'targets', 'live'):
         c['data'].setdefault(k, {})
+    if 'approval' not in c['data']:                     # on the board before the Approval step: counts as approved
+        c['data']['approval'] = {'items': []}
+        c['data']['milestones'].setdefault('approved', c.get('created_at') or 1)
     return c
 
 
@@ -175,7 +178,7 @@ def _name(mk):
 
 # ---------- cards ----------
 def add_card(conn, d, settings, now=None):
-    """Put a product on the board in Sourcing & PO: order #1 for its own market (your saved supplier price filled
+    """Put a product on the board in Approval (a checklist; once every check is ticked it moves to Sourcing & PO): order #1 for its own market (your saved supplier price filled
     in) and a watch on its keyword. The same product twice returns the card already there."""
     now = int(now or time.time())
     market = _market(d.get('market'))
@@ -193,11 +196,12 @@ def add_card(conn, d, settings, now=None):
                         ('asin=?' if asin else 'asin IS NULL AND kw=?'), (market, asin or kw)).fetchone()
     if same:
         return {'id': same[0], 'exists': True}
-    pos = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='sourcing'").fetchone()[0]
-    data = {'milestones': {}, 'targets': {}, 'live': {}}
+    pos = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='approval'").fetchone()[0]
+    data = {'milestones': {}, 'targets': {}, 'live': {},
+            'approval': {'items': [{'id': i + 1, 'text': t, 'done': None} for i, t in enumerate(rules.APPROVAL_CHECKS)]}}
     cid = conn.execute('INSERT INTO board_card(title, market, asin, kw, image, color, stage, pos, data_json, created_at, '
                        'updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                       (title, market, asin, kw, image, 'blue', 'sourcing', pos, json.dumps(data), now, now)).lastrowid
+                       (title, market, asin, kw, image, 'blue', 'approval', pos, json.dumps(data), now, now)).lastrowid
     cost_cur = settings.get('cost_currency') or 'USD'
     unit = None
     if asin:
@@ -206,8 +210,8 @@ def add_card(conn, d, settings, now=None):
     oid = conn.execute('INSERT INTO board_order(card_id, n, unit_cost, cost_cur, created_at) VALUES (?,?,?,?,?)',
                        (cid, 1, unit, cost_cur, now)).lastrowid
     conn.execute("INSERT INTO board_line(order_id, market, ship_cur, steps_json) VALUES (?,?,'USD','{}')", (oid, market))
-    _watch(conn, kw, market, 'sourcing', now)
-    _event(conn, cid, 'created', 'Added to the board', now)
+    _watch(conn, kw, market, 'researching', now)
+    _event(conn, cid, 'created', 'Added to the board, waiting for approval', now)
     return {'id': cid, 'exists': False}
 
 
@@ -276,7 +280,8 @@ def move_card(conn, card_id, stage, pos=None, now=None):
     if stage not in rules.STAGES:
         raise BoardError('Unknown stage.')
     if stage not in rules.unlocked(c['data']['milestones']):
-        raise BoardError('Finish %s first.' % ('Sourcing & PO' if stage == 'launch' else 'Launch & strategy'))
+        raise BoardError('Finish %s first.' % {'sourcing': 'Approval: tick every check', 'launch': 'Sourcing & PO'}
+                         .get(stage, 'Launch & strategy'))
     p = _number(pos, -1e9, 1e9, 'Position')
     if p is None:
         p = conn.execute('SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage=?', (stage,)).fetchone()[0]
@@ -495,6 +500,72 @@ def _stock_alerts(conn, c, s, now):
                               % (remind.nice_day(s['sellout']), s['lead_days']),
                       'data': {'card_id': c['id']}, 'dedupe_key': 'board_reorder|%d' % s['line_id'], 'ts': now})
     return [a for a in found if storage.add_alerts(conn, [a])]
+
+
+# ---------- approval ----------
+def _approval(c):
+    return c['data'].setdefault('approval', {'items': []})
+
+
+def set_check(conn, card_id, item_id, done, settings=None, now=None):
+    """Tick or untick one approval check. When every check is ticked the product is approved: a trophy, and it moves on
+    to Sourcing & PO. After approval the checklist stays as it was."""
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    if c['data']['milestones'].get('approved'):
+        raise BoardError('This product is already approved.')
+    item = next((i for i in _approval(c)['items'] if i['id'] == item_id), None)
+    if not item:
+        raise BoardError('That check is not on this product.')
+    item['done'] = now if done else None
+    _save(conn, c, now)
+    return {'id': card_id, **_approve_if_done(conn, card_id, now)}
+
+
+def add_check(conn, card_id, text, now=None):
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    if c['data']['milestones'].get('approved'):
+        raise BoardError('This product is already approved.')
+    text = _text(text, 160)
+    if not text:
+        raise BoardError('Write what should be checked.')
+    items = _approval(c)['items']
+    if len(items) >= 20:
+        raise BoardError('At most 20 checks.')
+    items.append({'id': max([i['id'] for i in items] or [0]) + 1, 'text': text, 'done': None})
+    _save(conn, c, now)
+    return {'id': card_id}
+
+
+def remove_check(conn, card_id, item_id, now=None):
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    if c['data']['milestones'].get('approved'):
+        raise BoardError('This product is already approved.')
+    a = _approval(c)
+    if len(a['items']) <= 1:
+        raise BoardError('Keep at least one check.')
+    a['items'] = [i for i in a['items'] if i['id'] != item_id]
+    _save(conn, c, now)
+    return {'id': card_id, **_approve_if_done(conn, card_id, now)}
+
+
+def _approve_if_done(conn, card_id, now):
+    c = _card(conn, card_id)
+    ms = c['data']['milestones']
+    if ms.get('approved') or not rules.approval_status(_approval(c)['items'])['complete']:
+        return {'trophies': []}
+    ms['approved'] = now
+    _finish(conn, card_id, 'approval', now)
+    if c['stage'] == 'approval':
+        c['stage'] = 'sourcing'
+        c['pos'] = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='sourcing'").fetchone()[0]
+    _save(conn, c, now)
+    _event(conn, card_id, 'trophy', 'Approved', now)
+    for mk in {c['market']} | {ln['market'] for o in _orders(conn, card_id) for ln in o['lines']}:
+        _watch(conn, c['kw'], mk, 'sourcing', now)
+    return {'trophies': ['Approved']}
 
 
 # ---------- milestones ----------
@@ -1116,7 +1187,10 @@ def _summary(conn, c, settings, per_usd, now):
             'created_at': c['created_at'], 'updated_at': c['updated_at'], 'archived_at': c['archived_at'],
             'milestones': ms, 'unlocked': rules.unlocked(ms), 'markets': markets,
             'invested_usd': round(sum(rules.sourcing_status(o, o['lines'], per_usd)['known_usd'] for o in orders), 2),
-            'progress': {'sourcing': 1.0 if ms.get('order_ready') else first['progress'] if first else 0.0,
+            'approval': {**rules.approval_status(c['data']['approval']['items']), 'items': c['data']['approval']['items']},
+            'progress': {'approval': 1.0 if ms.get('approved') else
+                         rules.approval_status(c['data']['approval']['items'])['progress'],
+                         'sourcing': 1.0 if ms.get('order_ready') else first['progress'] if first else 0.0,
                          'launch': 1.0 if ms.get('launched') else ls['progress'] if ms.get('order_ready') else 0.0,
                          'reorder': min(1.0, int(ms.get('reorders') or 0) / 1.0) if ms.get('launched') else 0.0},
             'hints': {'done': ls['done'], 'total': ls['total'], 'moved': sum(1 for h in hs if h['moved'])},
@@ -1232,7 +1306,10 @@ def summary_text(db, settings, now=None):
         lines.append('%s (%d)' % (rules.STAGE_NAMES[stage], len(cards)))
         for c in cards:
             bits = []
-            if stage == 'sourcing':
+            if stage == 'approval':
+                a = c['approval']
+                bits.append('%d of %d checks ticked' % (a['done'], a['total']))
+            elif stage == 'sourcing':
                 bits.append('ready' if c['milestones'].get('order_ready') else
                             'still needs ' + ', '.join(c['missing'][:3]) + (' and more' if len(c['missing']) > 3 else ''))
             elif stage == 'launch':
