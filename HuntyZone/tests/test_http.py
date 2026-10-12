@@ -542,6 +542,7 @@ def test_the_board_routes_check_their_input_and_never_show_the_password(server, 
     monkeypatch.setattr(winsys, 'unprotect', lambda b: b[1:][::-1])
     sent = []
     monkeypatch.setattr(mailer, '_smtp', lambda acct, password, msg: sent.append((password, msg)))
+    monkeypatch.setitem(server.settings, 'mail_method', 'smtp')         # these check the Gmail way
     mailer._sent.clear()
     assert call(server, 'GET', '/api/board', token=False)[0] == 403
     st, _, raw = call(server, 'POST', '/api/board/add', {'title': 'Dog Bed', 'market': 'US', 'kw': 'dog bed'})
@@ -607,6 +608,7 @@ def test_inform_attendees_previews_and_sends_the_product_update(server, monkeypa
     monkeypatch.setattr(winsys, 'unprotect', lambda b: b[1:][::-1])
     sent = []
     monkeypatch.setattr(mailer, '_smtp', lambda acct, password, msg: sent.append(msg))
+    monkeypatch.setitem(server.settings, 'mail_method', 'smtp')         # these check the Gmail way
     mailer._sent.clear()
     cid = json.loads(call(server, 'POST', '/api/board/add', {'title': 'Yoga Mat', 'market': 'AU', 'kw': 'yoga mat'})[2])['id']
     st, _, raw = call(server, 'POST', '/api/board/card', {'id': cid, 'set': {'alibaba': 'javascript:alert(1)'}})

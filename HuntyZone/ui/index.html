@@ -564,18 +564,44 @@
           </div>
           <div class="panel stackv" id="mailPanel">
             <h2>Email for reminders</h2>
-            <div class="small">Board deadlines email the people you pick: a start email, a reminder and an invitation to an update meeting on the due day. They are sent from your Gmail.</div>
-            <div class="field"><label for="mailAddr">Your Gmail address</label><input type="text" id="mailAddr" data-set="mail_address" placeholder="you@gmail.com" autocomplete="email" spellcheck="false"></div>
+            <div class="small">Board deadlines email the people you pick: a start email, a reminder and an invitation to an update meeting on the due day.</div>
+            <div class="field"><label for="mailMethod">How emails are sent</label>
+              <select id="mailMethod" data-set="mail_method">
+                <option value="browser">Open each email ready to send in my browser (no password needed)</option>
+                <option value="smtp">Send them by themselves from Gmail (needs an app password)</option>
+              </select></div>
+            <div class="field"><label for="mailAddr">Your email address</label><input type="text" id="mailAddr" data-set="mail_address" placeholder="you@gmail.com or you@outlook.com" autocomplete="email" spellcheck="false"></div>
             <div class="field"><label for="mailName">Your name in the emails</label><input type="text" id="mailName" data-set="mail_from_name" maxlength="80"></div>
-            <div class="field"><label for="mailPass">Gmail app password</label>
-              <div class="row"><input type="password" id="mailPass" autocomplete="new-password" placeholder="16 letters" style="flex:1;min-width:0">
-                <button class="btn" id="mailPassSave">Save</button><button class="btn ghost" id="mailPassForget" hidden>Forget</button></div>
-              <div class="small" id="mailState"></div></div>
-            <ol class="small steps">
-              <li>Turn on 2-Step Verification for your Google account.</li>
-              <li>Open <a data-open="https://myaccount.google.com/apppasswords">Google app passwords</a> and create one named Product Checker.</li>
-              <li>Paste the 16 letters above and press Save. It is kept encrypted for your Windows user on this PC.</li>
-            </ol>
+            <div class="stackv" id="mailBrowser">
+              <div class="field"><label for="mailProfile">Open emails in</label><select id="mailProfile" data-set="mail_profile"></select></div>
+              <div class="field"><label for="mailWeb">Email website</label>
+                <select id="mailWeb" data-set="mail_web">
+                  <option value="auto">Find it from my email address</option>
+                  <option value="gmail">Gmail</option>
+                  <option value="outlook">Outlook.com / Hotmail / Live</option>
+                  <option value="office">Outlook for work or school (Microsoft 365)</option>
+                </select></div>
+              <div class="small" id="mailWhere"></div>
+              <div class="note">When an email is due, it opens filled in, in the browser profile above, where you are already signed in. Check it and press <b>Send</b>. The meeting time and link are in the text; a calendar invite can only be attached when Gmail sends by itself.</div>
+            </div>
+            <div class="stackv" id="mailSmtp">
+              <div class="field"><label for="mailPass">Gmail app password</label>
+                <div class="row"><input type="password" id="mailPass" autocomplete="new-password" placeholder="16 letters" style="flex:1;min-width:0">
+                  <button class="btn" id="mailPassSave">Save</button><button class="btn ghost" id="mailPassForget" hidden>Forget</button></div>
+                <div class="small" id="mailState"></div></div>
+              <ol class="small steps">
+                <li>Turn on 2-Step Verification for your Google account.</li>
+                <li>Open <a data-open="https://myaccount.google.com/apppasswords">Google app passwords</a> and create one named Product Checker.</li>
+                <li>Paste the 16 letters above and press Save. It is kept encrypted for your Windows user on this PC.</li>
+              </ol>
+              <label class="small"><input type="checkbox" data-set="mail_copy_me"> Send me a copy of every email</label>
+              <details class="small"><summary>Another email server</summary>
+                <div class="row" style="margin-top:8px">
+                  <div class="field"><label for="mailHost">Server</label><input type="text" id="mailHost" data-set="mail_host" spellcheck="false"></div>
+                  <div class="field"><label for="mailPort">Port</label><input type="number" id="mailPort" data-set="mail_port" min="1" max="65535"></div>
+                  <div class="field"><label for="mailSec">Security</label><select id="mailSec" data-set="mail_security"><option value="ssl">SSL (465)</option><option value="starttls">STARTTLS (587)</option></select></div>
+                </div></details>
+            </div>
             <div class="row"><button class="btn" id="mailTest">Send me a test email</button><span class="small" id="mailTestOut" role="status"></span></div>
             <div class="row">
               <div class="field"><label for="mailHour">Send at (hour)</label><input type="number" id="mailHour" data-set="mail_send_hour" min="0" max="23"></div>
@@ -584,14 +610,7 @@
               <div class="field"><label for="mailMins">Minutes</label><input type="number" id="mailMins" data-set="mail_meet_minutes" min="15" max="180" step="5"></div>
             </div>
             <div class="field"><label for="mailLink">Meeting link (optional: Zoom, Meet or Teams)</label><input type="text" id="mailLink" data-set="mail_meet_link" placeholder="https://"></div>
-            <label class="small"><input type="checkbox" data-set="mail_copy_me"> Send me a copy of every email</label>
             <label class="small"><input type="checkbox" data-set="mail_start_email"> Email the people as soon as I set a deadline</label>
-            <details class="small"><summary>Another email server</summary>
-              <div class="row" style="margin-top:8px">
-                <div class="field"><label for="mailHost">Server</label><input type="text" id="mailHost" data-set="mail_host" spellcheck="false"></div>
-                <div class="field"><label for="mailPort">Port</label><input type="number" id="mailPort" data-set="mail_port" min="1" max="65535"></div>
-                <div class="field"><label for="mailSec">Security</label><select id="mailSec" data-set="mail_security"><option value="ssl">SSL (465)</option><option value="starttls">STARTTLS (587)</option></select></div>
-              </div></details>
             <div class="note">Emails go out only while Product Checker runs. It keeps running in the background while emails are waiting; turn on <b>Start with Windows</b> so it starts again after a restart.</div>
           </div>
           <div class="panel stackv" id="boardPanel">

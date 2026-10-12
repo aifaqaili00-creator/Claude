@@ -50,6 +50,9 @@ SCHEMA = {
     'board_notify': (bool, True, None),                 # Windows notification when stock turns red or a re-order is due
     'board_inform_auto': (bool, True, None),            # email the Notifiers a product update when products are added or changed
     'board_inform_wait': (int, 15, (5, 240)),           # ... once nothing changed for this many minutes
+    'mail_method': (str, 'browser', ('browser', 'smtp')),  # browser: emails open ready to send in Gmail / Outlook
+    'mail_profile': (str, '', None),                    # ... in this Edge or Chrome profile ('' = the one for links)
+    'mail_web': (str, 'auto', ('auto', 'gmail', 'outlook', 'office')),
     'mail_address': (str, '', None),                    # board reminders are sent from this address (Gmail)
     'mail_from_name': (str, '', None),
     'mail_host': (str, 'smtp.gmail.com', None),

@@ -1710,7 +1710,8 @@ def api_board_notifiers(h, q):
 def api_mail(h, q):
     ok, why = mailer.ready(S.settings, MAIL_SECRET)
     return h._send(200, {'ready': ok, 'why': why, 'has_password': mailer.has_password(MAIL_SECRET),
-                         'pending': board.pending_mail(S.db)})
+                         'pending': board.pending_mail(S.db), 'method': mailer.method(S.settings),
+                         'where': mailer.where(S.settings, S.profiles)})
 
 
 @route('POST', '/api/mail')
@@ -1730,14 +1731,17 @@ def api_mail_set(h, q):
 @route('POST', '/api/mail/test')
 def api_mail_test(h, q):
     """Send a test email to your own address."""
-    me = S.settings.get('mail_address') or ''
+    me = S.settings.get('mail_address') or (mailer.mail_profile(S.settings, S.profiles).get('email') or '')
+    browser = mailer.method(S.settings) == 'browser'
+    if not config.EMAIL_RX.match(me):
+        return h._send(400, {'error': 'Add your email address in Settings, Email for reminders, so the test can go to you.'})
     try:
         mailer.deliver(S.settings, MAIL_SECRET, [(S.settings.get('mail_from_name') or '', me)],
                        'Product Checker: test email',
-                       'This is a test from Product Checker. Board reminders will be sent from this address.\n')
+                       'This is a test from Product Checker. Board reminders will be sent like this.\n')
     except mailer.MailError as e:
         return h._send(400, {'error': str(e)})
-    return h._send(200, {'ok': True, 'to': me})
+    return h._send(200, {'ok': True, 'to': me, 'opened': browser, 'where': mailer.where(S.settings, S.profiles)})
 
 
 def board_send(to, subject, text, html, ics):

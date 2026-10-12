@@ -693,9 +693,20 @@
   });
 
   /* ---------- Settings: Email for reminders ---------- */
+  function mailProfiles() {
+    const want = (ST.settings || {}).mail_profile || '';
+    const opts = [{id: '', label: 'Same as “Open links in this Chrome profile” above'}].concat(ST.profiles || []);
+    $('mailProfile').innerHTML = opts.map(p => `<option value="${esc(p.id)}" ${p.id === want ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
+  }
   async function mailState() {
     try {
       const m = await api('/api/mail');
+      if (!$('mailPanel').contains(document.activeElement)) mailProfiles();
+      $('mailMethod').value = m.method;
+      $('mailBrowser').hidden = m.method !== 'browser';
+      $('mailSmtp').hidden = m.method === 'browser';
+      $('mailWhere').innerHTML = `Emails will open in <b>${esc(m.where)}</b>.`;
+      $('mailTest').textContent = m.method === 'browser' ? 'Open a test email' : 'Send me a test email';
       $('mailState').innerHTML = (m.has_password ? `<span class="pill good">${icon('ok')}App password saved</span>` : '<span class="pill weak">No app password yet</span>') +
         (m.pending ? ` <span class="small muted">${m.pending} email${m.pending === 1 ? '' : 's'} waiting to go out</span>` : '');
       $('mailPassForget').hidden = !m.has_password;
@@ -715,9 +726,16 @@
   $('mailTest').addEventListener('click', async () => {
     $('mailTest').disabled = true;
     $('mailTestOut').innerHTML = busy('Sending…');
-    try { const r = await api('/api/mail/test', {}); $('mailTestOut').innerHTML = `<span class="pill good">${icon('ok')}Sent to ${esc(r.to)}: check your inbox</span>`; }
+    try {
+      const r = await api('/api/mail/test', {});
+      $('mailTestOut').innerHTML = r.opened ? `<span class="pill good">${icon('ok')}Opened in ${esc(r.where)}: press Send there</span>`
+        : `<span class="pill good">${icon('ok')}Sent to ${esc(r.to)}: check your inbox</span>`;
+    }
     catch (e) { $('mailTestOut').innerHTML = failPill(e.message); }
     $('mailTest').disabled = false;
+  });
+  $('mailPanel').addEventListener('change', e => {         // the setting is saved first (Settings), then shown here
+    if (/^mail_(method|profile|web|address)$/.test(e.target.dataset.set || '')) setTimeout(mailState, 600);
   });
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#/settings')) mailState(); });
   mailState();

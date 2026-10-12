@@ -524,3 +524,7 @@ html.print tr { break-inside: avoid; }
 html.print section.view.on, html.print .stackv, html.print .grid2 { display: block; }
 html.print section.view.on > * + *, html.print .stackv > * + *, html.print .grid2 > * + * { margin-top: 14px; }
 html.print .rsec[hidden] { display: none !important; }
+
+/* email settings: long choices fit the panel */
+#mailPanel select { width: 100%; max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+#mailPanel .pill { white-space: normal; height: auto; }
