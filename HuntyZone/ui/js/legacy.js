@@ -329,6 +329,7 @@ $('btnExportRank').addEventListener('click', () => rankData && download({kind: '
 
 /* ---------- Product ideas ---------- */
 let iData = null, iLocal = {};
+const iOpen = new Set();
 $('iKinds').dataset.multi = '1';
 const iPrice = priceBar($('iPrice'), () => segVal($('iMk')), () => { if (iData) runIdeas(false); });
 seg($('iMk'), () => { $('iCatsWrap').hidden = true; $('iCats').innerHTML = ''; iPrice.draw(); });
@@ -373,10 +374,11 @@ async function runIdeas(refresh) {
   $('btnIdeas').disabled = true;
   $('iProg').innerHTML = busy('Starting…');
   try {
-    const {job} = await api('/api/ideas', {market: segVal($('iMk')), kinds, slugs, hide_risky: $('iHide').checked, refresh});
+    const {job} = await api('/api/ideas', {market: segVal($('iMk')), kinds, slugs, hide_risky: $('iHide').checked, refresh,
+                                           phrases: ideaPhrases()});
     const prevMarket = iData && iData.market;
     iData = await waitJob(job, line => { $('iProg').innerHTML = busy(line); });
-    if (iData.market !== prevMarket) iLocal = {};
+    if (iData.market !== prevMarket) { iLocal = {}; iOpen.clear(); }
     $('iProg').textContent = '';
     renderIdeas();
   } catch (e) { $('iProg').innerHTML = failPill(e.message); }
@@ -384,13 +386,17 @@ async function runIdeas(refresh) {
 }
 function sortedIdeas() {
   const s = $('iSort').value, list = [...(iData.ideas || [])];
-  const k = {score: x => -x.score, pct: x => -(x.pct || 0), new: x => x.new_rank || 999, reviews: x => x.reviews ?? 1e9}[s];
+  const k = mtxSort(s) || {score: x => -x.score, pct: x => -(x.pct || 0), new: x => x.new_rank || 999,
+                           reviews: x => x.reviews ?? 1e9}[s] || mtxSort('opp');
   return list.sort((a, b) => k(a) - k(b));
 }
+/* The search words you typed for ideas, sent along so the scores and market gaps use them: {asin: words}. */
+const ideaPhrases = () => Object.fromEntries([...editedSearch].filter(([k, v]) => k.startsWith('idea:') && v.trim())
+  .map(([k, v]) => [k.slice(5), v.trim()]));
 const ideaChecks = mk => mk === 'US' ? ['AU', 'AE'] : [mk === 'AU' ? 'AE' : 'AU'];
 function renderIdeas() {
   if (!iData) return;
-  const d = iData, cur = (ST.markets[d.market] || {}).currency || '';
+  const d = iData;
   $('iEmpty').hidden = true;
   $('iCatsWrap').hidden = false;
   $('iCats').innerHTML = d.all_categories.map(c => `<button type="button" class="chip${c.risky ? ' risky' : ''}" data-slug="${esc(c.slug)}" aria-pressed="${c.on}" title="${c.risky ? 'Category with extra rules or big brands' : ''}">${esc(c.name)}</button>`).join('');
@@ -404,48 +410,98 @@ function renderIdeas() {
     (hidden.length ? ' · hidden: ' + hidden.join(', ') : '');
   $('btnIdeasCheck').textContent = 'Check top 12 in ' + ideaChecks(d.market).map(m => MK_SHORT[m]).join(' & ');
   const lab = {Booming: 'warn', Rising: 'accent', New: 'good', Moving: 'weak'};
-  const checks = ideaChecks(d.market);
-  $('iGrid').innerHTML = sortedIdeas().map(i => `<div class="panel icard">
-      <div class="pic">${i.image ? `<img src="${esc(i.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</div>
-      <div class="body">
-        <div class="row" style="gap:6px"><span class="pill ${lab[i.label] || 'weak'}">${esc(i.label)}${i.pct ? ' +' + num(i.pct) + '%' : ''}</span>
-          ${i.lists.includes('new') ? `<span class="pill good">New #${i.new_rank}</span>` : ''}
-          ${i.similar ? `<span class="pill accent" title="Other products like this are moving too">+${i.similar} similar</span>` : ''}
-          <span class="small muted" style="margin-left:auto">${esc(i.category)}</span></div>
-        <a class="clamp2" data-open="${esc(i.url)}" style="cursor:pointer;color:var(--ink);font-weight:550;text-decoration:none">${esc(i.title)}</a>
-        <div class="small">${i.price != null ? money(i.price, cur) + fxSpan(i.price, d.market) : 'no price'} · ${i.rating ? '★ ' + i.rating : 'no rating'} · ${i.reviews != null ? num(i.reviews) + ' reviews' : 'no reviews yet'}${i.rank_before ? ` · rank ${num(i.rank_before)} → ${num(i.rank_now)}` : ''}</div>
-        ${i.flags.length ? '<div class="flags">' + i.flags.map(f => '<span class="flag">' + esc(f) + '</span>').join('') + '</div>' : ''}
+  const checks = d.targets || ideaChecks(d.market);
+  syncGapSorts($('iSort'), checks);
+  const list = sortedIdeas();
+  $('iGrid').innerHTML = hiddenHtml(d.hidden, 'ideas') + (list.length ? `<div class="mtx-bar">${coverageHtml(d.coverage)}<button class="btn slim" data-dqual-top title="${esc(QUAL_TIP)} (the top 12 rows that miss something)">${icon('search')}Qualify top 12</button></div>
+    <div class="tablewrap mtxwrap"><table class="mtx">${mtxHead(checks.map(m => MK_SHORT[m]).join(' & '))}<tbody>${list.map(i => ideaRow(i, checks, lab)).join('')}</tbody></table></div>`
+    : '<div class="panel empty">No ideas left after the filters. Widen your price range, untick “Hide risky products”, or choose other categories.</div>');
+}
+function ideaRow(i, checks, lab) {
+  const key = i.asin, isOpen = iOpen.has(key), mk = iData.market;
+  const pills = `<span class="pill ${lab[i.label] || 'weak'}">${esc(i.label)}${i.pct ? ' +' + num(i.pct) + '%' : ''}</span>` +
+    (i.lists.includes('new') ? `<span class="pill good">New #${i.new_rank}</span>` : '') +
+    (i.similar ? `<span class="pill accent sim" title="${esc(i.similar + ' similar listings are grouped into this row: see More')}">+${i.similar} similar</span>` : '') + fitPill(i);
+  const acts = `<button class="btn slim" data-irep="${esc(key)}">${icon('chart')}Report</button>${prefActs(i)}${moreBtn(key, isOpen)}`;
+  return `<tr>${prodCell(i, pills, acts)}${oppCell(i)}${SIG_KEYS.map(k => sigCell(i, k, mk, iData.presence_days)).join('')}
+    ${marketsCell({...i, search: ideaSearch(i)}, checks, iLocal, 'data-icheck')}</tr>
+    <tr class="mtx-more" data-detail="${esc(key)}"${isOpen ? '' : ' hidden'}><td colspan="${MTX_COLS}"><div class="mtx-detail">
+      <div class="stackv">${oppReasons(i)}${gapReasons(i)}</div>
+      <div class="stackv">
+        ${phraseHtml(i)}
+        <label class="field"><span class="lbl">Search words for the other Amazon sites, the report, Xray and Alibaba</span>
+          <input type="text" class="kwin" value="${esc(ideaSearch(i))}" data-kw="${esc(key)}"></label>
+        <div class="row tight">
+          <a class="btn slim" href="#/p/${esc(mk)}/${esc(key)}">Product</a>
+          <button class="btn slim" data-iwatch="${esc(key)}">${icon('eye')}Watch</button>
+          <button class="btn slim" data-trend="${esc(key)}" title="Google Trends, last 5 years">Trends${icon('external')}</button>
+          <button class="btn slim" data-ixray="${esc(key)}">Xray</button>
+          ${i.trend ? `<a class="btn slim" href="#/k/${esc(mk)}/${encodeURIComponent(i.trend.term)}" title="Keyword report for “${esc(i.trend.term)}”">${icon('chart')}${esc(i.trend.term)}</a>` : ''}
+        </div>
+        <div class="row tight">${sourcingHtml(key, (i.buy || {}).cost_usd)}</div>
+        <div class="row tight"><button class="btn slim" data-dlaunch="${esc(key)}" title="Compare its own market and the ones it could sell in next, at your supplier price">Where to launch?</button>
+          <button class="btn slim" data-dvar="${esc(key)}" title="Search the longer phrases Amazon suggests for it in the other markets and rank them by gap">Find the underserved version</button>
+          <button class="btn slim" data-dboard="${esc(key)}" title="Start sourcing it: the board tracks the order, the launch and re-orders">${icon('board')}Add to board</button></div>
+        ${groupHtml(i, mk)}
+        ${dvsHtml(checks.map(m => [m, iLocal[key + ':' + m]]))}
       </div>
-      ${dvsHtml(checks.map(mk => [mk, iLocal[i.asin + ':' + mk]]))}
-      <div class="acts">
-        <input type="text" class="kwin" value="${esc(ideaSearch(i))}" data-kw="${esc(i.asin)}" title="Words used to search the other Amazon sites" aria-label="Search words">
-        ${checks.map(mk => localPill(iLocal[i.asin + ':' + mk], mk)).join('')}
-        <button class="btn slim" data-icheck="${esc(i.asin)}">Check ${checks.map(m => MK_SHORT[m]).join(' & ')}</button>
-        <button class="btn slim" data-trend="${esc(i.asin)}" title="Google Trends, last 5 years">Trends${icon('external')}</button>
-        <button class="btn slim" data-ixray="${esc(i.asin)}">Xray</button>
-        ${sourcingHtml(i.asin)}
-      </div></div>`).join('') || '<div class="panel empty">No ideas left after the filters. Widen your price range, untick “Hide risky products”, or choose other categories.</div>';
+      <div class="mtx-wide" data-launch="${esc(key)}">${launchOut.get(mk + '|' + key) || ''}</div>
+      <div class="mtx-wide" data-var="${esc(key)}">${varOut.get(mk + '|' + key) || ''}</div></div></td></tr>`;
 }
 $('iSort').addEventListener('change', renderIdeas);
 wireSourcing($('iGrid'), asin => {
   const i = iData && (iData.ideas || []).find(x => x.asin === asin);
   return i && {market: iData.market, price: i.price, category: i.category, search: ideaSearch(i)};
-});
+}, () => runIdeas(false));
 const ideaKw = asin => {
   const i = (iData.ideas || []).find(x => x.asin === asin);
   return (i ? ideaSearch(i) : '').trim();
 };
-$('iGrid').addEventListener('click', e => {
+$('iGrid').addEventListener('click', async e => {
+  const uv = e.target.closest('[data-usevar]');
+  if (uv) editedSearch.delete('idea:' + uv.dataset.asin);                // the phrase you pick replaces the typed words
+  if (await prefClick(e, iData.market, () => runIdeas(false))) return;
   const c = e.target.closest('[data-icheck]'), t = e.target.closest('[data-trend]'), x = e.target.closest('[data-ixray]');
+  const m = e.target.closest('[data-more]'), q = e.target.closest('[data-dqual]'), top = e.target.closest('[data-dqual-top]');
+  const r = e.target.closest('[data-irep]'), w = e.target.closest('[data-iwatch]');
   if (c) ideaCheck([c.dataset.icheck]);
   if (t) openUrl(trends(ideaKw(t.dataset.trend), iData.market));
   if (x) { $('xkw').value = ideaKw(x.dataset.ixray); setSeg($('xMk'), iData.market); go('xray'); }
+  if (m) toggleMore(m, iOpen);
+  const L = e.target.closest('[data-dlaunch]'), V = e.target.closest('[data-dvar]'), bd = e.target.closest('[data-dboard]');
+  if (bd) {
+    const it = (iData.ideas || []).find(i => i.asin === bd.dataset.dboard);
+    if (it) addToBoard({title: it.title, market: iData.market, asin: it.asin, kw: ideaSearch(it), image: it.image});
+  }
+  if (L) {
+    const it = (iData.ideas || []).find(i => i.asin === L.dataset.dlaunch);
+    if (it) launchRow(iData.market, it, ideaSearch(it), $('iGrid').querySelector(`[data-launch="${CSS.escape(it.asin)}"]`));
+  }
+  if (V) {
+    const it = (iData.ideas || []).find(i => i.asin === V.dataset.dvar);
+    if (it) { V.disabled = true; variantsRow(iData.market, it, ideaSearch(it), $('iGrid').querySelector(`[data-var="${CSS.escape(it.asin)}"]`)).finally(() => { V.disabled = false; }); }
+  }
+  if (r && ideaKw(r.dataset.irep)) go('k', iData.market, ideaKw(r.dataset.irep));
+  if (q) { q.disabled = true; ideaQualify([q.dataset.dqual]); }
+  if (top) { top.disabled = true; ideaQualify(sortedIdeas().filter(needsQualify).slice(0, 12).map(i => i.asin)); }
+  if (w && ideaKw(w.dataset.iwatch)) {
+    const kw = ideaKw(w.dataset.iwatch);
+    try { await api('/api/watch', {kind: 'keyword', target: kw, markets: ['US', 'AU', 'AE']}); toast('Watching “' + kw + '” in all three markets'); }
+    catch (err) { toast(err.message); }
+  }
 });
+/* Qualify some ideas (with the search words you typed), then score the ideas again (a scan from the last few hours
+   is reused). */
+async function ideaQualify(asins) {
+  if (await qualifyRows(iData.market, asins, $('iCheckProg'), ideaPhrases())) runIdeas(false);
+  else renderIdeas();
+}
 seg($('iMapMk'), v => drawOppMap($('iMapChart'), v));
 $('btnIdeasCheck').addEventListener('click', () => ideaCheck(sortedIdeas().slice(0, 12).map(i => i.asin)));
 async function ideaCheck(asins) {
-  const checks = ideaChecks(iData.market);
-  const items = asins.flatMap(a => checks.map(mk => ({key: a + ':' + mk, market: mk, search: ideaKw(a)})))
+  const checks = iData.targets || ideaChecks(iData.market);
+  const gapOf = a => ((iData.ideas || []).find(x => x.asin === a) || {}).gap || {};
+  const items = asins.flatMap(a => checks.filter(mk => !gapOf(a)[mk]).map(mk => ({key: a + ':' + mk, market: mk, search: ideaKw(a)})))
     .filter(i => i.search && !(iLocal[i.key] && iLocal[i.key].total != null));
   if (!items.length) return toast('Already checked');
   items.forEach(i => { iLocal[i.key] = 'busy'; }); renderIdeas();
@@ -460,6 +516,7 @@ async function ideaCheck(asins) {
   } catch (e) { $('iCheckProg').innerHTML = failPill(e.message); }
   items.forEach(i => { if (iLocal[i.key] === 'busy') iLocal[i.key] = {error: 'no result'}; });
   renderIdeas();
+  runIdeas(false);                                         // the searches give the ideas their market gap scores
 }
 
 /* ---------- Niche keywords ---------- */

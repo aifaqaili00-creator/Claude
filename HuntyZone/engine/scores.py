@@ -619,21 +619,23 @@ def opportunity(m):
 # ---------- arbitrage ----------
 
 def _boom(us):
-    """(B 0..1, why, conf, known) = max(US trend score, US cluster surge) / 100."""
+    """(B 0..1, why, conf, known) = max(trend score, cluster surge) / 100 on the market where the boom is (us['market'],
+    the US when not given)."""
     us = us if isinstance(us, dict) else {}
+    src = {'AU': 'Australia', 'AE': 'UAE'}.get(_market(us), 'US')
     ts = _val(_get(us, 'trend_score', 'ts', 'TS'))
     cs = _val(_get(us, 'cluster_surge', 'cs', 'CS', 'surge'))
     mo = _val(us.get('momentum'))
     vals = []
     if ts is not None:
-        vals.append(('US searches score %d/100' % round(clip(ts, 0.0, 100.0)), clip(ts / 100.0)))
+        vals.append(('%s searches score %d/100' % (src, round(clip(ts, 0.0, 100.0))), clip(ts / 100.0)))
     if cs is not None:
-        vals.append(('US Amazon lists surge %d/100' % round(clip(cs, 0.0, 100.0)), clip(cs / 100.0)))
+        vals.append(('%s Amazon lists surge %d/100' % (src, round(clip(cs, 0.0, 100.0))), clip(cs / 100.0)))
     if not vals and mo is not None:
         mo = mo / 100.0 if 1.0 < mo <= 100.0 else mo
-        vals.append(('US momentum %d/100' % round(100 * clip(mo)), clip(mo)))
+        vals.append(('%s momentum %d/100' % (src, round(100 * clip(mo))), clip(mo)))
     if not vals:
-        return THRESH['neutral'], 'US boom strength unknown (counted as neutral)', 'low', False
+        return THRESH['neutral'], '%s boom strength unknown (counted as neutral)' % src, 'low', False
     why, b = max(vals, key=lambda t: t[1])
     return b, why, _conf_word(us.get('conf')) or 'high', True
 

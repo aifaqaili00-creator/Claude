@@ -331,7 +331,16 @@ def rank_history(history, asin):
     a = _asin(asin)
     if not a:
         return []
-    apps = _appearances(_scans(history)).get(a, [])
+    return _trail(_appearances(_scans(history)).get(a, []))
+
+
+def rank_histories(history, asins):
+    """{asin: rank_history(history, asin)} for several ASINs, reading the history only once."""
+    apps = _appearances(_scans(history))
+    return {a: _trail(apps.get(_asin(a), [])) for a in _as_list(asins)}
+
+
+def _trail(apps):
     main = _main_slug(apps)
     if main is None:
         return []

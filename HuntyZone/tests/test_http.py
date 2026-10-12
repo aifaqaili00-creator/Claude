@@ -433,3 +433,202 @@ def test_negative_reviews_are_read_from_amazon(server, monkeypatch):
         asyncio.run(server.read_reviews('US', ['M3']))
     assert call(server, 'POST', '/api/report/reviews', {'market': 'US', 'asin': 'B0-1'})[0] == 400
     assert call(server, 'GET', '/api/report/reviews?market=US&kw=%20')[0] == 400
+
+
+def test_qualify_checks_its_input_and_takes_at_most_12(server, monkeypatch):
+    import asyncio
+    got, calls = [], []
+    monkeypatch.setattr(server, 'new_job', lambda kind, fn: got.append((kind, fn)) or 'qjob')
+
+    async def qualify(market, asins, progress=None, checks=0, pages=12, phrases=None):
+        calls.append((market, asins, checks, phrases))
+        return {'status': 'ok', 'note': '12 products: 3 trends', 'counts': {}}
+    monkeypatch.setattr(server.collectors, 'qualify_products', qualify)
+    assert call(server, 'POST', '/api/discovery/qualify', {'market': 'AU', 'asins': []})[0] == 400
+    assert call(server, 'POST', '/api/discovery/qualify', {'market': 'AU', 'asins': 'B0ABCDEFGH'})[0] == 400
+    assert call(server, 'POST', '/api/discovery/qualify', {'market': 'AU', 'asins': ['B0-1', 'x' * 11]})[0] == 400
+    asins = ['b0abcdefgh', 'B0ABCDEFGH', 'bad', None, 5] + ['B0%08d' % i for i in range(20)]
+    body = {'market': 'AU', 'asins': asins, 'phrases': {'B0ABCDEFGH': '  Tower  FAN ', 'bad': 'x', 'B000000001': 7}}
+    st, _, raw = call(server, 'POST', '/api/discovery/qualify', body)
+    assert st == 200 and json.loads(raw)['job'] == 'qjob' and got[0][0] == 'qualify'
+    out = asyncio.run(got[0][1](lambda m: None))
+    market, todo, checks, phrases = calls[0]
+    assert market == 'AU' and len(todo) == 12 and todo[0] == 'B0ABCDEFGH' and checks == 0   # never searches other markets
+    assert phrases == {'B0ABCDEFGH': 'tower fan'} and out['skipped'] == 9 and out['note'] == '12 products: 3 trends'
+
+
+def test_your_choices_per_product_are_checked_and_saved(server):
+    pref = lambda s, asin='B0ABCDEFGH', mk='US': call(server, 'POST', '/api/pref', {'market': mk, 'asin': asin, 'set': s})  # noqa: E731
+    assert pref({'liked': True}, asin='bad')[0] == 400 and pref({'liked': True}, mk='XX')[0] == 400
+    assert pref({})[0] == 400 and pref({'cost': 'abc'})[0] == 400 and pref({'cost': -2})[0] == 400
+    st, _, raw = pref({'cost': 36.725, 'cost_currency': 'AED', 'phrase': '  Tower  FAN ', 'liked': 1}, asin='b0abcdefgh')
+    p = json.loads(raw)['pref']
+    assert st == 200 and p['asin'] == 'B0ABCDEFGH' and p['cogs_usd'] == pytest.approx(10.0, abs=0.01)
+    assert p['phrase'] == 'tower fan' and p['liked_at']
+    p = json.loads(pref({'cost': '', 'phrase': '', 'liked': False})[2])['pref']
+    assert p['cogs_usd'] is None and p['phrase'] is None and p['liked_at'] is None
+
+
+def test_find_the_underserved_version_checks_its_input(server, monkeypatch):
+    import asyncio
+    got, calls = [], []
+    monkeypatch.setattr(server, 'new_job', lambda kind, fn: got.append((kind, fn)) or 'vjob')
+
+    async def underserved(market, phrase, boom=None, progress=None, n=4):
+        calls.append((market, phrase, boom))
+        return {'phrase': phrase, 'variants': []}
+    monkeypatch.setattr(server.collectors, 'underserved', underserved)
+    assert call(server, 'POST', '/api/discovery/variants', {'market': 'AU', 'phrase': '  '})[0] == 400
+    body = {'market': 'AU', 'phrase': ' Tower  FAN ', 'boom': {'trend_score': 250, 'cluster_surge': 'x'}}
+    st, _, raw = call(server, 'POST', '/api/discovery/variants', body)
+    assert st == 200 and json.loads(raw)['job'] == 'vjob' and got[0][0] == 'variants'
+    asyncio.run(got[0][1](lambda m: None))
+    assert calls == [('AU', 'tower fan', {'trend_score': 100.0, 'cluster_surge': None})]
+
+
+def test_where_to_launch_checks_its_input(server):
+    assert call(server, 'POST', '/api/launch', {'market': 'US', 'kw': ' '})[0] == 400
+    st, _, raw = call(server, 'POST', '/api/launch', {'market': 'US', 'kw': 'zzz nothing here', 'cogs': 'x', 'units': -5, 'l': 10})
+    r = json.loads(raw)
+    assert st == 200 and r['units'] == 1 and r['cost_usd'] is None and r['markets']['US'] == {'searched': False}
+
+
+def test_your_ideas_scan_joins_the_list_history_and_is_scored(server, monkeypatch):
+    import asyncio
+
+    import ideas
+    cats = [{'slug': 'kitchen', 'name': 'Kitchen', 'risky': False}]
+    items = [{'asin': 'B0K%07d' % i, 'title': 'Bamboo Utensil Holder %s' % 'abcdefghijklmnopqrstuvwxyzabcdefghi'[i],
+              'image': '', 'market': 'AU', 'url': '', 'category': 'Kitchen', 'kind': 'movers', 'slug': 'kitchen', 'deal': False,
+              'rank': i + 1, 'pct': 100, 'rank_now': 500 + i, 'rank_before': 1000, 'rating': 4.5, 'reviews': 12, 'price': 30.0}
+             for i in range(35)]
+    scans = []
+
+    async def categories(checker, code):
+        return cats
+
+    async def scan(checker, code, chosen, kinds, hide, progress):
+        scans.append(code)
+        return {'market': code, 'scanned': len(items), 'lists': 1, 'categories': chosen, 'items': [dict(i) for i in items]}
+    monkeypatch.setattr(ideas, 'categories', categories)
+    monkeypatch.setattr(ideas, 'scan', scan)
+    monkeypatch.setitem(server.settings, 'price_filter', False)
+    server.idea_cache.clear()
+    server.idea_cats.clear()
+    count = "SELECT COUNT(*) AS n FROM list_snapshot WHERE market='AU' AND slug='kitchen'"
+    before = server.db.one(count)['n']
+    out = asyncio.run(server.find_ideas('AU', [], ['movers'], True, False, lambda m: None))
+    asyncio.run(server.find_ideas('AU', [], ['movers'], True, False, lambda m: None))     # the same scan, from the cache
+    assert scans == ['AU'] and server.db.one(count)['n'] == before + 1
+    snap = server.db.one("SELECT status, n FROM list_snapshot WHERE market='AU' AND slug='kitchen' ORDER BY id DESC LIMIT 1")
+    assert snap['status'] == 'ok' and snap['n'] == 35
+    json.dumps(app.clean(out), allow_nan=False)
+    idea = out['ideas'][0]
+    assert idea['opportunity']['score'] is not None and idea['presence'][-1] == 1 and idea['score'] is not None
+    assert next(p for p in idea['opportunity']['parts'] if p['key'] == 'A')['src'] == 'lists'
+    assert out['coverage']['n'] == len(out['ideas']) and len(out['presence_days']) == 14
+    st, _, raw = call(server, 'GET', '/api/radar?market=AU')                         # the radar sees your scan too
+    r = json.loads(raw)
+    shown = {i['asin'] for i in r['items']} | {m['asin'] for i in r['items'] for m in i['members']}
+    assert st == 200 and idea['asin'] in shown and r['coverage']['n'] == len(r['items'])
+    assert idea['similar'] == 34 and len(idea['members']) == 34                     # 35 utensil holders: one idea
+
+
+def test_the_board_routes_check_their_input_and_never_show_the_password(server, monkeypatch, tmp_path):
+    import mailer
+    import winsys
+    monkeypatch.setattr(app, 'MAIL_SECRET', tmp_path / 'mail.secret')
+    monkeypatch.setattr(winsys, 'protect', lambda b: b'X' + b[::-1])
+    monkeypatch.setattr(winsys, 'unprotect', lambda b: b[1:][::-1])
+    sent = []
+    monkeypatch.setattr(mailer, '_smtp', lambda acct, password, msg: sent.append((password, msg)))
+    mailer._sent.clear()
+    assert call(server, 'GET', '/api/board', token=False)[0] == 403
+    st, _, raw = call(server, 'POST', '/api/board/add', {'title': 'Dog Bed', 'market': 'US', 'kw': 'dog bed'})
+    cid = json.loads(raw)['id']
+    b = json.loads(call(server, 'GET', '/api/board')[2])
+    assert st == 200 and b['cards'][0]['id'] == cid and b['mail']['ready'] is False
+    st, _, raw = call(server, 'POST', '/api/board/line', {'id': cid, 'n': 1, 'market': 'US', 'set': {'ship_mode': 'boat'}})
+    assert st == 400 and 'sea or air' in json.loads(raw)['error']
+    assert call(server, 'POST', '/api/board/line', {'id': cid, 'n': 1, 'market': 'US', 'set': {'units': -5}})[0] == 400
+    assert call(server, 'POST', '/api/board/move', {'id': cid, 'stage': 'reorder'})[0] == 400
+    assert call(server, 'GET', '/api/board/card?id=999')[0] == 404
+    ppl = json.loads(call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'Sara', 'email': 'sara@example.com'}})[2])
+    assert call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'x', 'email': 'nope'}})[0] == 400
+    task = {'id': cid, 'stage': 'sourcing', 'days': 7, 'notify': [ppl['notifiers'][0]['id']]}
+    st, _, raw = call(server, 'POST', '/api/board/task', task)
+    assert st == 400 and 'Gmail' in json.loads(raw)['error']
+    st, _, raw = call(server, 'POST', '/api/mail', {'password': 'abcd efgh ijkl mnop'})
+    assert st == 200 and json.loads(raw)['has_password'] is True and b'abcd' not in raw
+    assert b'abcd' not in call(server, 'GET', '/api/state')[2] and b'"board_rev"' in call(server, 'GET', '/api/state')[2]
+    assert call(server, 'POST', '/api/settings', {'mail_address': 'not an email'})[0] == 400
+    call(server, 'POST', '/api/settings', {'mail_address': 'me@gmail.com', 'mail_from_name': 'Ali'})
+    try:
+        st, _, raw = call(server, 'POST', '/api/board/task', task)
+        t = json.loads(raw)
+        assert st == 200 and t['mails'] == 3 and t['due_day']
+        mails = json.loads(call(server, 'GET', '/api/board/preview?task=%d' % t['task_id'])[2])['mails']
+        assert [m['kind'] for m in mails] == ['start', 'reminder', 'meeting']
+        assert mails[0]['subject'].startswith('New task: Sourcing & PO for Dog Bed') and 'Hi Sara,' in mails[0]['text']
+        st, _, raw = call(server, 'POST', '/api/mail/test', {})
+        assert st == 200 and json.loads(raw)['to'] == 'me@gmail.com'
+        assert sent[0][0] == 'abcdefghijklmnop' and sent[0][1]['To'] == 'Ali <me@gmail.com>'
+        summary = json.loads(call(server, 'GET', '/api/board/summary')[2])['text']
+        assert 'Dog Bed (USA)' in summary and 'due ' in summary
+        st, _, raw = call(server, 'GET', '/api/mail')
+        assert json.loads(raw)['pending'] == 3 and json.loads(raw)['ready'] is True
+        assert call(server, 'POST', '/api/mail', {'forget': True})[0] == 200 and not (tmp_path / 'mail.secret').exists()
+    finally:
+        call(server, 'POST', '/api/settings', {'mail_address': '', 'mail_from_name': ''})
+        call(server, 'POST', '/api/board/archive', {'id': cid, 'archived': True})
+
+
+def test_notes_counts_and_products_can_be_removed(server):
+    cid = json.loads(call(server, 'POST', '/api/board/add', {'title': 'Lick Mat', 'market': 'US', 'kw': 'lick mat'})[2])['id']
+    assert call(server, 'POST', '/api/board/note', {'id': cid, 'text': 'Ask for samples'})[0] == 200
+    card = json.loads(call(server, 'GET', '/api/board/card?id=%d' % cid)[2])
+    note = next(e['id'] for e in card['events'] if e['kind'] == 'note')
+    assert call(server, 'POST', '/api/board/note', {'remove': note})[0] == 200
+    assert call(server, 'POST', '/api/board/note', {'remove': note})[0] == 400
+    assert call(server, 'POST', '/api/board/stock', {'remove': 99999})[0] == 400
+    assert call(server, 'POST', '/api/board/archive', {'id': cid, 'archived': True})[0] == 200
+    assert any(a['id'] == cid for a in json.loads(call(server, 'GET', '/api/board')[2])['archived'])
+    assert call(server, 'POST', '/api/board/delete', {'id': cid})[0] == 200
+    assert call(server, 'GET', '/api/board/card?id=%d' % cid)[0] == 404
+    assert all(a['id'] != cid for a in json.loads(call(server, 'GET', '/api/board')[2])['archived'])
+    assert call(server, 'POST', '/api/board/delete', {'id': 'x'})[0] == 400
+
+
+def test_inform_attendees_previews_and_sends_the_product_update(server, monkeypatch, tmp_path):
+    import mailer
+    import winsys
+    monkeypatch.setattr(app, 'MAIL_SECRET', tmp_path / 'mail.secret')
+    monkeypatch.setattr(winsys, 'protect', lambda b: b'X' + b[::-1])
+    monkeypatch.setattr(winsys, 'unprotect', lambda b: b[1:][::-1])
+    sent = []
+    monkeypatch.setattr(mailer, '_smtp', lambda acct, password, msg: sent.append(msg))
+    mailer._sent.clear()
+    cid = json.loads(call(server, 'POST', '/api/board/add', {'title': 'Yoga Mat', 'market': 'AU', 'kw': 'yoga mat'})[2])['id']
+    st, _, raw = call(server, 'POST', '/api/board/card', {'id': cid, 'set': {'alibaba': 'javascript:alert(1)'}})
+    assert st == 400 and 'https://' in json.loads(raw)['error']
+    people = json.loads(call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'Li Wei', 'email': 'li@example.com'}})[2])
+    li = next(p['id'] for p in people['notifiers'] if p['email'] == 'li@example.com')
+    view = json.loads(call(server, 'GET', '/api/board/inform?to=%d&message=Hello' % li)[2])
+    assert view['to'] == ['Li Wei'] and view['subject'].startswith('Product update, ') and 'Yoga Mat' in view['text']
+    assert 'Hello' in view['text'] and view['mail']['ready'] is False and '<html>' in view['html']
+    assert json.loads(call(server, 'GET', '/api/board/inform?to=0')[2])['to'] == []
+    assert call(server, 'POST', '/api/board/inform', {'to': [li]})[0] == 400                # no Gmail yet
+    call(server, 'POST', '/api/mail', {'password': 'abcd efgh ijkl mnop'})
+    call(server, 'POST', '/api/settings', {'mail_address': 'me@gmail.com', 'mail_from_name': 'Ali'})
+    try:
+        st, _, raw = call(server, 'POST', '/api/board/inform', {'to': [li], 'message': 'Quotes by Friday'})
+        assert st == 200 and json.loads(raw)['to'] == ['Li Wei'] and sent[-1]['To'] == 'Li Wei <li@example.com>'
+        body = sent[-1].get_body(('plain',)).get_content()
+        assert 'Yoga Mat' in body and 'Quotes by Friday' in body and 'Search on Alibaba' in body
+        st, _, raw = call(server, 'POST', '/api/board/inform', {'to': []})
+        assert st == 400 and 'Pick who' in json.loads(raw)['error']
+        assert json.loads(call(server, 'GET', '/api/board')[2])['inform']['to'] == ['Li Wei']
+    finally:
+        call(server, 'POST', '/api/settings', {'mail_address': '', 'mail_from_name': ''})
+        call(server, 'POST', '/api/mail', {'forget': True})
+        call(server, 'POST', '/api/board/archive', {'id': cid, 'archived': True})

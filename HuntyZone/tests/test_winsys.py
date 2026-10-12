@@ -3,6 +3,8 @@ import socket
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import notify  # noqa: E402
@@ -10,6 +12,14 @@ import singleton  # noqa: E402
 import winsys  # noqa: E402
 
 SETTINGS = {'quiet_start': 22, 'quiet_end': 7, 'toast_min_severity': 2}
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows DPAPI')
+def test_secrets_are_readable_only_through_windows():
+    blob = winsys.protect(b'abcdefghijklmnop')
+    assert b'abcdefghijklmnop' not in blob and winsys.unprotect(blob) == b'abcdefghijklmnop'
+    with pytest.raises(OSError):
+        winsys.unprotect(b'not a protected blob')
 
 
 def test_quiet_hours():

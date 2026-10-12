@@ -59,7 +59,7 @@
     if (filled || s.auto_refresh === undefined) return;
     filled = true;
     $('regAU').checked = !!(s.registered || {}).AU; $('regAE').checked = !!(s.registered || {}).AE;
-    document.querySelectorAll('#autoPanel [data-set]').forEach(el => {
+    document.querySelectorAll('#autoPanel [data-set], #curPanel [data-set], #mailPanel [data-set], #boardPanel [data-set]').forEach(el => {
       const v = s[el.dataset.set];
       if (el.type === 'checkbox') el.checked = !!v; else el.value = v == null ? '' : v;
     });
@@ -111,11 +111,17 @@
       catch (err) { toast(err.message); }
       return;
     }
+    saveSetting(e);
+  });
+  $('curPanel').addEventListener('change', saveSetting);
+  $('mailPanel').addEventListener('change', saveSetting);
+  $('boardPanel').addEventListener('change', saveSetting);
+  async function saveSetting(e) {
     const el = e.target.closest('[data-set]'); if (!el) return;
     const v = el.type === 'checkbox' ? el.checked : el.value;
     try { const r = await api('/api/settings', {[el.dataset.set]: v}); ST.settings = r.settings; toast('Saved', 1500); }
     catch (err) { toast(err.message); filled = false; fill(); }
-  });
+  }
   $('btnQuit').addEventListener('click', async () => {
     if (!confirm('Stop Product Checker completely, including the background refresh?')) return;
     await api('/api/quit', {}).catch(() => {});

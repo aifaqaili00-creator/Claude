@@ -52,6 +52,8 @@ def test_fresh_database_has_the_schema(db):
     assert list(v.values())[0] == storage.SCHEMA_VERSION
     names = {r['name'] for r in db.all("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {'serp_snapshot', 'serp_item', 'trends_sample', 'h10_row', 'alert', 'watch', 'curve'} <= names
+    assert {'board_card', 'board_order', 'board_line', 'board_stock', 'board_hint', 'board_event', 'board_task',
+            'board_notifier', 'board_mail'} <= names
     assert db.one('PRAGMA journal_mode')['journal_mode'] == 'wal'
 
 
@@ -194,6 +196,59 @@ def test_retention_keeps_one_old_snapshot_per_month(db):
     assert out['serp_items_dropped'] == 2 * len(ROWS)
     left = db.all('SELECT snapshot_id, COUNT(*) AS n FROM serp_item GROUP BY snapshot_id')
     assert len(left) == 2
+
+
+def kws(*words):
+    return [{'keyword': w, 'hits': 1, 'best': n} for n, w in enumerate(words, 1)]
+
+
+def test_suggestions_read_the_newest_readable_answer_per_seed(db):
+    now = time.time()
+    db.write(storage.save_suggest, 'US', 'Tower Fan', kws('tower fan', 'tower fans'), 1, 0, 'ok', None, now - 3 * DAY)
+    db.write(storage.save_suggest, 'US', 'tower fan', kws('tower fan quiet', 'tower fan'), 1, 0, 'ok', None, now - DAY)
+    db.write(storage.save_suggest, 'US', 'tower fan', [], 1, 1, 'blocked', None, now)        # a failed call says nothing
+    db.write(storage.save_suggest, 'US', 'dog bed', [], 1, 0, 'empty', None, now)           # asked: Amazon had none
+    db.write(storage.save_suggest, 'AU', 'sauna hat', kws('sauna hat'), 1, 0, 'ok', None, now)
+    got = db.read(storage.suggestions, 'US', ['Tower  Fan', 'dog bed', 'sauna hat', ''])
+    assert got['tower fan'] == {'ts': pytest.approx(now - DAY), 'keywords': ['tower fan quiet', 'tower fan']}
+    assert got['dog bed']['keywords'] == [] and 'sauna hat' not in got
+    assert db.read(storage.suggestions, 'US', ['tower fan'], now - DAY / 2) == {}           # none since then
+
+
+def test_retention_keeps_the_newest_suggestions_of_each_seed(db):
+    old = time.time() - 200 * DAY
+    db.write(storage.save_suggest, 'US', 'tower fan', kws('a'), 1, 0, 'ok', None, old - DAY)
+    db.write(storage.save_suggest, 'US', 'tower fan', kws('b'), 1, 0, 'ok', None, old)
+    db.write(storage.save_suggest, 'US', 'tower fan', [], 1, 1, 'blocked', None, old + DAY)
+    db.write(storage.save_suggest, 'US', 'dog bed', kws('c'), 1, 0, 'ok', None, time.time())
+    out = db.write(storage.retention)
+    assert out['suggest_snapshots_dropped'] == 2 and out['suggest_items_dropped'] == 1
+    got = db.read(storage.suggestions, 'US', ['tower fan', 'dog bed'])
+    assert got['tower fan']['keywords'] == ['b'] and got['dog bed']['keywords'] == ['c']
+
+
+def test_suggestion_history_keeps_every_readable_answer(db):
+    now = time.time()
+    db.write(storage.save_suggest, 'AU', 'tower fan', kws('desk fan'), 1, 0, 'ok', None, now - 9 * DAY)
+    db.write(storage.save_suggest, 'AU', 'tower fan', [], 1, 1, 'blocked', None, now - 5 * DAY)
+    db.write(storage.save_suggest, 'AU', 'tower fan', kws('tower fan', 'tower fans'), 1, 0, 'ok', None, now - DAY)
+    h = db.read(storage.suggest_history, 'AU', ['Tower Fan', 'dog bed'])
+    assert list(h) == ['tower fan'] and [k for _, k in h['tower fan']] == [['desk fan'], ['tower fan', 'tower fans']]
+    assert h['tower fan'][0][0] == pytest.approx(now - 9 * DAY)
+
+
+def test_your_choices_per_product(db):
+    db.write(storage.upsert_asins, 'US', [{'asin': 'B0ABCDEFGH', 'title': 'Tower Fan', 'image': 'i.jpg'}])
+    row = db.write(storage.set_pref, 'US', 'B0ABCDEFGH', cogs_usd=4.2, phrase='tower fan', liked=True)
+    assert row['cogs_usd'] == 4.2 and row['phrase'] == 'tower fan' and row['liked_at'] and row['hidden_at'] is None
+    row = db.write(storage.set_pref, 'US', 'B0ABCDEFGH', hidden=True, liked=False, cogs_usd=None)
+    assert row['liked_at'] is None and row['cogs_usd'] is None and row['cogs_at'] is None and row['phrase'] == 'tower fan'
+    assert db.read(storage.prefs, 'US', ['B0ABCDEFGH', 'B0NOTHERE1'])['B0ABCDEFGH']['hidden_at']
+    assert db.read(storage.prefs, 'AU') == {}
+    hid = db.read(storage.hidden_products, 'US')
+    assert [(h['asin'], h['title'], h['image']) for h in hid] == [('B0ABCDEFGH', 'Tower Fan', 'i.jpg')]
+    db.write(storage.set_pref, 'US', 'B0ABCDEFGH', hidden=False)
+    assert db.read(storage.hidden_products, 'US') == []
 
 
 def test_concurrent_writers_and_readers(db):

@@ -7,7 +7,8 @@
     competition_arriving: 'Competition', price_war: 'Price war', new_mover: 'New mover', persistent_riser: 'Riser',
     cluster_surge: 'Surge', trend_label_change: 'Trend', trends_breakout: 'Breakout', confirmed_trend: 'Confirmed trend',
     captcha_needed: 'Captcha', source_paused: 'Paused', stale_data: 'Stale data', layout_drift: 'Page changed',
-    fees_stale: 'Fees', rerun_xray: 'Re-run Xray', order_by: 'Order by'};
+    fees_stale: 'Fees', rerun_xray: 'Re-run Xray', order_by: 'Order by', board_stock_low: 'Low stock', board_reorder: 'Re-order',
+    board_mail_failed: 'Email not sent', board_mail_missed: 'Email missed', board_inform_failed: 'Update not sent'};
   let data = null;
 
   async function load(markSeen) {
@@ -54,11 +55,12 @@
       ${d.gaps.length ? `<div class="panel"><h3 style="margin-bottom:8px">Gaps in Australia and the UAE (watched keywords)</h3><div class="row">${d.gaps.map(g => `<a class="pill good" href="#/k/${g.market}/${encodeURIComponent(g.kw)}">${icon('ok')}${esc(g.kw)} · ${MK_SHORT[g.market]} · ${g.fast} fast${g.units ? ' · ~' + compact(g.units) + '/mo' : ''}</a>`).join('')}</div></div>` : ''}
       <h2 class="section">Alerts</h2>
       ${Object.keys(days).length ? Object.entries(days).map(([day, list]) => `<div class="panel stackv"><h3>${esc(day === new Date().toDateString() ? 'Today' : day)}</h3>
-        ${list.map(a => { const s = SEV[a.severity] || SEV[1]; const isKw = a.market && a.target && !['search', 'lists', 'db'].includes(a.target) && !/^B0[A-Z0-9]{8}$/.test(a.target);
+        ${list.map(a => { const s = SEV[a.severity] || SEV[1]; const isKw = a.market && a.target && !['search', 'lists', 'db', 'board'].includes(a.target) && !/^B0[A-Z0-9]{8}$/.test(a.target);
           return `<div class="alert-row${a.seen_at ? '' : ' unseen'}"><span class="pill ${s[0]}">${icon(s[1])}${esc(RULE[a.rule] || a.rule)}</span>
             <div class="alert-body"><b>${esc(a.title)}</b><div class="small">${esc(a.body || '')}</div></div>
             <div class="row" style="gap:6px">${a.market ? `<span class="pill line">${esc(MK_SHORT[a.market] || a.market)}</span>` : ''}
               ${isKw ? `<a class="btn slim" href="#/k/${a.market}/${encodeURIComponent(a.target)}">Report</a>` : ''}
+              ${a.target === 'board' ? `<a class="btn slim" href="#/board${a.data && a.data.card_id ? '/' + (+a.data.card_id) : ''}">${icon('board')}Board</a>` : ''}
               ${a.data && a.data.asin ? `<button class="btn slim" data-open="${esc((ST.markets[a.market] || {}).site + '/dp/' + a.data.asin)}">Amazon</button>` : ''}
               <button class="btn slim ghost" data-dismiss="${a.id}" title="Dismiss">${icon('x')}</button></div></div>`; }).join('')}</div>`).join('')
         : '<div class="panel empty"><h2>No alerts yet</h2><p>Watch a few keywords and leave automatic refresh on. New trends, gaps and changes appear here.</p></div>'}`;

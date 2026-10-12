@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import amazon_check as ac
 import analysis
+import board
 import chrome_profiles as cp
 import collectors
 import config
@@ -30,6 +31,7 @@ import file_rank as fr
 import fxrates
 import ideas
 import importer
+import mailer
 import product
 import reports
 import scheduler
@@ -48,8 +50,12 @@ SETTINGS_FILE = APP_DIR / 'settings.json'
 HISTORY_FILE = APP_DIR / 'history.json'                       # v5 only: imported into market.db on first start
 DB_FILE = APP_DIR / 'market.db'
 PORT_FILE = APP_DIR / 'port.txt'
+MAIL_SECRET = APP_DIR / 'mail.secret'                        # the email app password, encrypted for this Windows user
+BOARD_WAKE = threading.Event()                               # wakes the reminder sender early ("Send reminder now")
 HELIUM10 = 'https://members.helium10.com/'
 VERSION = config.VERSION
+QUALIFY_MAX = 12                                             # products per Qualify press on the radar / ideas
+ASIN_RX = re.compile(r'[A-Z0-9]{10}')
 DEFAULT_EXPECT = {c: tuple(m['expect']) for c, m in ac.MARKETS.items()}   # e.g. AU: ('2000', 'sydney')
 MIME = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
         '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json; charset=utf-8',
@@ -239,6 +245,10 @@ class State:
         if fresh:
             self.say('%d new alert%s on Home.' % (len(fresh), '' if len(fresh) == 1 else 's'))
             await asyncio.to_thread(analysis.notify_new, self, fresh)
+        try:
+            await asyncio.to_thread(board.refresh_for, self.db, self.settings, results)
+        except Exception:                                           # noqa: BLE001 - the board catches up next time
+            log.exception('board hints refresh')
 
     async def refit_curve(self, market):
         """Fit the market's BSR -> units curve in a separate process, so the browser loop never stalls."""
@@ -279,12 +289,12 @@ class State:
             self.say('Imported %d Helium 10 export%s into your history.' % (n, '' if n == 1 else 's'))
         return out
 
-    async def refresh_trends(self, kw, geo, progress=None, force=False):
+    async def refresh_trends(self, kw, geo, progress=None, force=False, related=True):
         """Google Trends for one term and country. Google refusing pauses Trends; that is reported, not raised."""
         try:
             if progress:
                 progress('Google Trends: %s in %s...' % (kw, ac.MARKETS[geo]['name']))
-            return await trends.refresh(self.db, self.trends, kw, geo, force=force, with_related=True)
+            return await trends.refresh(self.db, self.trends, kw, geo, force=force, with_related=related)
         except trends.TrendsError as e:
             if progress:
                 progress('Google Trends: %s' % e)
@@ -515,7 +525,7 @@ class State:
         await self.db.awrite(storage.finish_run, run_id, 'done', len(out) - n_fail, n_fail)
         return out
 
-    async def find_ideas(self, code, slugs, kinds, hide, refresh, progress):
+    async def find_ideas(self, code, slugs, kinds, hide, refresh, progress, phrases=None):
         menu = self.idea_cats.get(code)
         if refresh or not menu or time.time() - menu['at'] > 24 * 3600:
             progress('Reading the %s category list...' % ac.MARKETS[code]['name'])
@@ -549,15 +559,32 @@ class State:
             if menu and any(c.get('default') and c['slug'] not in found for c in chosen):
                 menu['cats'] = [c for c in menu['cats'] if not c.get('default') or c['slug'] in found] or menu['cats']
             self.idea_cache[key] = raw
+            await self.keep_lists(code, raw['items'], raw['at'])
         # "hide risky" is applied when reading, so switching it never re-scrapes
         prange = fxrates.ranges(self.settings)[code] if self.settings.get('price_filter', True) else None
         stats = {}
         scored = await asyncio.to_thread(ideas.score_ideas, raw['items'], code, hide, prange,
                                          self.settings.get('exclude_tech', True), stats)
+        disc = await asyncio.to_thread(reports.ideas_discovery, self.db, code, scored, self.settings, None, phrases)
         chosen_slugs = {c['slug'] for c in chosen}
-        return {**{k: v for k, v in raw.items() if k != 'items'}, 'ideas': scored, 'filtered': stats,
+        return {**{k: v for k, v in raw.items() if k != 'items'}, 'filtered': stats,
                 'price_range': prange, 'all_categories': [{**c, 'on': c['slug'] in chosen_slugs} for c in cats],
-                'kinds': kinds}
+                'kinds': kinds, **disc}
+
+    async def keep_lists(self, market, items, ts):
+        """Keep a list scan you ran yourself in the list history, one snapshot per list, so the radar and the scores
+        see it too. A database problem is logged, never shown as a failed scan."""
+        lists = {}
+        for it in items:
+            lists.setdefault((it['kind'], it['slug']), (it.get('category'), []))[1].append(it)
+
+        def fn(conn):
+            for (kind, slug), (category, got) in lists.items():
+                storage.save_list(conn, market, kind, slug, category, got, 'ok' if len(got) >= 30 else 'partial', None, ts)
+        try:
+            await self.db.awrite(fn)
+        except Exception:                                           # noqa: BLE001
+            log.exception('could not keep the list scan')
 
 
 S = None
@@ -784,6 +811,7 @@ def api_state(h, q):
         'alerts_unseen': (S.db.one('SELECT COUNT(*) AS n FROM alert WHERE seen_at IS NULL AND dismissed_at IS NULL') or {}).get('n', 0),
         'messages': [m for m in S.messages if m['t'] > since],
         'fx': fxrates.summary(S.settings),
+        'board_rev': board.rev(),
     })
 
 
@@ -1023,9 +1051,20 @@ def api_ideas(h, q):
     code = d.get('market') if d.get('market') in ac.MARKETS else 'US'
     kinds = [k for k in d.get('kinds', ['movers', 'new']) if k in ideas.LISTS] or ['movers', 'new']
     slugs = [str(s) for s in d.get('slugs') or []][:20]
+    phrases = typed_phrases(d)
     jid = S.new_job('ideas', lambda p: S.find_ideas(code, slugs, kinds, d.get('hide_risky', True) is not False,
-                                                    bool(d.get('refresh')), p))
+                                                    bool(d.get('refresh')), p, phrases))
     return h._send(200, {'job': jid})
+
+
+def typed_phrases(d):
+    """The search words you typed for products: {asin: words} from the request's 'phrases'."""
+    out = {}
+    for a, words in list((d.get('phrases') if isinstance(d.get('phrases'), dict) else {}).items())[:500]:
+        k = config.norm_kw(words)[:120] if isinstance(words, str) else ''
+        if k and ASIN_RX.fullmatch(str(a)):
+            out[a] = k
+    return out
 
 
 @route('POST', '/api/niche')
@@ -1160,13 +1199,8 @@ def api_home(h, q):
 @route('GET', '/api/radar')
 def api_radar(h, q):
     market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
-    return h._send(200, {**reports.radar(S.db, market, **radar_filters(market)), 'trends': reports.search_trends(S.db)})
-
-
-def radar_filters(market):
-    """Your price range (in the marketplace's money) and the phone / laptop filter, from settings."""
-    return {'price_range': fxrates.ranges(S.settings)[market] if S.settings.get('price_filter', True) else None,
-            'exclude_tech': bool(S.settings.get('exclude_tech', True))}
+    return h._send(200, {**reports.radar(S.db, market, settings=S.settings, **reports.radar_filters(S.settings, market)),
+                         'trends': reports.search_trends(S.db), 'rising': reports.google_rising(S.db, market, S.settings)})
 
 
 @route('GET', '/api/opportunity_map')
@@ -1347,10 +1381,385 @@ def api_radar_scan(h, q):
         out = await S.collectors.lists({'kind': 'lists', 'market': market, 'target': 'all'}, progress)
         progress((out.get('note') or '') + ' · grouping similar products…')
         await asyncio.to_thread(analysis.run, S, [])
-        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market, **radar_filters(market)),
+        return await asyncio.to_thread(lambda: {**reports.radar(S.db, market, settings=S.settings,
+                                                                **reports.radar_filters(S.settings, market)),
                                                 'trends': reports.search_trends(S.db),
+                                                'rising': reports.google_rising(S.db, market, S.settings),
                                                 'scan_note': out.get('note') or ''})
     return h._send(200, {'job': S.new_job('radar', work)})
+
+
+@route('POST', '/api/discovery/qualify')
+def api_discovery_qualify(h, q):
+    """Read what the opportunity score misses for a few radar or idea products (at most QUALIFY_MAX): the phrase
+    shoppers type, its Google trend, whether the markets it could sell in next know the phrase, and the product page.
+    Your own job: no daily budget, but a source that is pausing is skipped. Searching the other markets is the Check
+    button's job."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    asins = []
+    for a in d.get('asins') if isinstance(d.get('asins'), list) else []:
+        a = str(a).strip().upper()
+        if ASIN_RX.fullmatch(a) and a not in asins:
+            asins.append(a)
+    if not asins:
+        return h._send(400, {'error': 'Which products?'})
+    todo = asins[:QUALIFY_MAX]
+    phrases = typed_phrases(d)
+
+    async def work(progress):
+        out = await S.collectors.qualify_products(market, todo, progress, phrases=phrases)
+        return {**out, 'market': market, 'asins': todo, 'skipped': len(asins) - len(todo)}
+    return h._send(200, {'job': S.new_job('qualify', work)})
+
+
+@route('POST', '/api/pref')
+def api_pref(h, q):
+    """Your choices for one product: your supplier price, your search phrase, a star, or Not for me."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else None
+    asin = str(d.get('asin') or '').strip().upper()
+    s = d.get('set') if isinstance(d.get('set'), dict) else {}
+    if not market or not ASIN_RX.fullmatch(asin):
+        return h._send(400, {'error': 'Which product?'})
+    fields = {}
+    if 'cost' in s:
+        try:
+            cost = float(s['cost']) if s['cost'] not in (None, '') else None
+        except (TypeError, ValueError):
+            cost = -1.0
+        if cost is not None and not 0 <= cost <= 100000:
+            return h._send(400, {'error': 'Type the supplier price per piece as a number.'})
+        cur = s.get('cost_currency') if s.get('cost_currency') in fxrates.CURRENCIES else 'USD'
+        fields['cogs_usd'] = round(fxrates.convert(cost, cur, 'USD'), 4) if cost is not None else None
+    if 'phrase' in s:
+        fields['phrase'] = config.norm_kw(s['phrase'])[:120] if isinstance(s['phrase'], str) else None
+    for k in ('liked', 'hidden'):
+        if k in s:
+            fields[k] = bool(s[k])
+    if not fields:
+        return h._send(400, {'error': 'Nothing to change.'})
+    return h._send(200, {'ok': True, 'pref': S.db.write(storage.set_pref, market, asin, **fields)})
+
+
+def boom_arg(d):
+    """The request's boom {'trend_score', 'cluster_surge'}, each clipped to 0-100 or None."""
+    b = d.get('boom') if isinstance(d.get('boom'), dict) else {}
+    boom = {}
+    for k in ('trend_score', 'cluster_surge'):
+        try:
+            boom[k] = max(0.0, min(100.0, float(b[k]))) if b.get(k) is not None else None
+        except (TypeError, ValueError):
+            boom[k] = None
+    return boom
+
+
+@route('POST', '/api/discovery/variants')
+def api_discovery_variants(h, q):
+    """Find the underserved version of a product's phrase: Amazon's longer suggestions for it, searched in the
+    markets it could sell in next and ranked by their gap score (your own job)."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    phrase = config.norm_kw(d.get('phrase') if isinstance(d.get('phrase'), str) else '')[:120]
+    if not phrase:
+        return h._send(400, {'error': 'Which search phrase?'})
+    boom = boom_arg(d)
+    return h._send(200, {'job': S.new_job('variants', lambda p: S.collectors.underserved(market, phrase, boom, p))})
+
+
+@route('POST', '/api/launch')
+def api_launch(h, q):
+    """Where to launch: the same product, supplier price and first order compared across the markets searched."""
+    d = h._json()
+    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    kw = ' '.join(str(d.get('kw') or '').split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+
+    def num(k, lo, hi):
+        try:
+            return max(lo, min(hi, float(d[k]))) if d.get(k) not in (None, '') else None
+        except (TypeError, ValueError):
+            return None
+    fxrates.rates()
+    cost = num('cogs', 0.0, 100000.0)
+    cur = d.get('cogs_currency') if d.get('cogs_currency') in fxrates.CURRENCIES else 'USD'
+    dims = [num(k, 0.1, 500.0) for k in ('l', 'w', 'h')]
+    return h._send(200, reports.launch(S.db, market, kw, S.settings,
+                                       fxrates.convert(cost, cur, 'USD') if cost else None, int(num('units', 1, 100000) or 300),
+                                       dims if all(dims) else None, num('kg', 0.001, 500.0),
+                                       'air' if d.get('freight_mode') == 'air' else 'sea',
+                                       boom_arg(d) if isinstance(d.get('boom'), dict) else None))
+
+
+# ---------------- product board ----------------
+def _int_arg(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def board_change(h, fn, *args, card=None, refresh=False, **kw):
+    """Run one board change. Bad input answers 400 with the reason. New stock alerts become a Windows notification;
+    refresh rebuilds the card's hints after the change (costs and markets feed them)."""
+    try:
+        out = S.db.write(fn, *args, **kw)
+        if refresh or out.get('watched'):
+            more = board.refresh_hints(S.db, out.get('id') or card, S.settings)
+            out['trophies'] = (out.get('trophies') or []) + more.get('trophies', [])
+    except board.BoardError as e:
+        return h._send(400, {'error': str(e)})
+    board.bump()
+    BOARD_WAKE.set()                                                # the product update's waiting time starts now
+    if out.pop('watched', False):
+        S.sync_tasks()
+    alerts = out.pop('alerts', None)
+    if alerts and S.settings.get('board_notify', True):
+        threading.Thread(target=analysis.notify_new, args=(S, alerts), daemon=True).start()
+    return h._send(200, out)
+
+
+@route('GET', '/api/board')
+def api_board(h, q):
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    return h._send(200, {**board.state(S.db, S.settings), 'mail': {'ready': ok, 'why': why}})
+
+
+@route('GET', '/api/board/card')
+def api_board_card(h, q):
+    try:
+        return h._send(200, board.card_detail(S.db, _int_arg(q.get('id')), S.settings))
+    except board.BoardError as e:
+        return h._send(404, {'error': str(e)})
+
+
+@route('POST', '/api/board/add')
+def api_board_add(h, q):
+    """Put a product on the board: {title, market, asin, kw, image}."""
+    d = h._json()
+    return board_change(h, lambda c: {**board.add_card(c, d, S.settings), 'watched': True})
+
+
+@route('POST', '/api/board/card')
+def api_board_card_set(h, q):
+    d = h._json()
+    s = d.get('set') if isinstance(d.get('set'), dict) else {}
+    return board_change(h, board.update_card, _int_arg(d.get('id')), s, S.settings)
+
+
+@route('POST', '/api/board/move')
+def api_board_move(h, q):
+    d = h._json()
+    return board_change(h, board.move_card, _int_arg(d.get('id')), d.get('stage'), d.get('pos'))
+
+
+@route('POST', '/api/board/archive')
+def api_board_archive(h, q):
+    d = h._json()
+    return board_change(h, board.archive_card, _int_arg(d.get('id')), bool(d.get('archived', True)))
+
+
+@route('POST', '/api/board/delete')
+def api_board_delete(h, q):
+    """{id}: delete a product and everything on its card for good."""
+    d = h._json()
+    return board_change(h, board.delete_card, _int_arg(d.get('id')))
+
+
+@route('POST', '/api/board/note')
+def api_board_note(h, q):
+    """{id, text} or {remove: note id}."""
+    d = h._json()
+    if d.get('remove') is not None:
+        return board_change(h, board.remove_note, _int_arg(d.get('remove')))
+    return board_change(h, board.add_note, _int_arg(d.get('id')), d.get('text'))
+
+
+@route('POST', '/api/board/order')
+def api_board_order(h, q):
+    """{id, n, set: {unit_cost, cost_cur}}."""
+    d = h._json()
+    s = d.get('set') if isinstance(d.get('set'), dict) else {}
+    return board_change(h, board.set_order, _int_arg(d.get('id')), _int_arg(d.get('n')) or 1, s, S.settings, refresh=True)
+
+
+@route('POST', '/api/board/line')
+def api_board_line(h, q):
+    """{id, n, market, set: {units, ship_cost, ship_cur, ship_mode, steps, arrived_units}} or {..., remove: true}."""
+    d = h._json()
+    cid, n, mk = _int_arg(d.get('id')), _int_arg(d.get('n')) or 1, d.get('market')
+    if d.get('remove'):
+        return board_change(h, board.remove_line, cid, n, mk, S.settings, refresh=True)
+    s = d.get('set') if isinstance(d.get('set'), dict) else {}
+    return board_change(h, board.set_line, cid, n, mk, s, S.settings, refresh=True)
+
+
+@route('POST', '/api/board/reorder')
+def api_board_reorder(h, q):
+    d = h._json()
+    return board_change(h, board.start_reorder, _int_arg(d.get('id')), d.get('market'), S.settings)
+
+
+@route('POST', '/api/board/stock')
+def api_board_stock(h, q):
+    """{line_id, left}: units left of a shipment; or {remove: count id}."""
+    d = h._json()
+    if d.get('remove') is not None:
+        return board_change(h, board.remove_count, _int_arg(d.get('remove')))
+    return board_change(h, board.add_count, _int_arg(d.get('line_id')), d.get('left'), S.settings)
+
+
+@route('POST', '/api/board/hint')
+def api_board_hint(h, q):
+    """{hint_id, status, note}, {add: {id, market, text}} or {remove: hint_id}."""
+    d = h._json()
+    if isinstance(d.get('add'), dict):
+        a = d['add']
+        return board_change(h, board.add_hint, _int_arg(a.get('id')), a.get('market'), a.get('text'))
+    if d.get('remove') is not None:
+        return board_change(h, board.remove_hint, _int_arg(d.get('remove')))
+    return board_change(h, board.set_hint, _int_arg(d.get('hint_id')), d.get('status'), d.get('note'), S.settings)
+
+
+@route('POST', '/api/board/hints/refresh')
+def api_board_hints_refresh(h, q):
+    d = h._json()
+    return board_change(h, lambda c: {'id': board._card(c, _int_arg(d.get('id')))['id']}, refresh=True)
+
+
+@route('POST', '/api/board/task')
+def api_board_task(h, q):
+    """A stage deadline {id, stage, days | due_day, notify: [ids], note, meet_time, meet_minutes}, {cancel: task id}
+    or {send: task id} (send the reminder now)."""
+    d = h._json()
+    if d.get('cancel') is not None:
+        return board_change(h, board.cancel_task, _int_arg(d.get('cancel')))
+    if d.get('send') is not None:
+        ok, why = mailer.ready(S.settings, MAIL_SECRET)
+        if not ok:
+            return h._send(400, {'error': why})
+        out = board_change(h, board.send_now, _int_arg(d.get('send')))
+        BOARD_WAKE.set()
+        return out
+    if d.get('notify'):
+        ok, why = mailer.ready(S.settings, MAIL_SECRET)
+        if not ok:
+            return h._send(400, {'error': why})
+    out = board_change(h, board.set_task, _int_arg(d.get('id')), d.get('stage'), d, S.settings)
+    BOARD_WAKE.set()                                                # the start email goes out right away
+    return out
+
+
+@route('GET', '/api/board/preview')
+def api_board_preview(h, q):
+    return h._send(200, {'mails': S.db.read(board.preview, _int_arg(q.get('task')), S.settings)})
+
+
+@route('GET', '/api/board/summary')
+def api_board_summary(h, q):
+    return h._send(200, {'text': board.summary_text(S.db, S.settings)})
+
+
+def _ids(v):
+    """Notifier ids from a list or '1,2'; None when not given (everyone)."""
+    if v is None:
+        return None
+    parts = v if isinstance(v, list) else str(v).split(',')
+    return [i for i in (_int_arg(x) for x in parts if str(x).strip()) if i is not None]
+
+
+@route('GET', '/api/board/inform')
+def api_board_inform(h, q):
+    """The product update email as it would go now (?to=1,2&message=...)."""
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    view = board.inform_view(S.db, S.settings, _ids(q.get('to')), q.get('message') or '')
+    return h._send(200, {**view, 'mail': {'ready': ok, 'why': why}})
+
+
+@route('POST', '/api/board/inform')
+def api_board_inform_send(h, q):
+    """'Inform attendees': {to: [notifier ids], message} emails the product update now."""
+    d = h._json()
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    if not ok:
+        return h._send(400, {'error': why})
+    try:
+        out = board.inform_send(S.db, S.settings, board_send, _ids(d.get('to')), d.get('message') or '')
+    except (board.BoardError, mailer.MailError, OSError) as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, out)
+
+
+@route('POST', '/api/board/notifiers')
+def api_board_notifiers(h, q):
+    """{add: {name, email}} or {remove: id}: the people reminder emails can go to."""
+    d = h._json()
+    try:
+        if isinstance(d.get('add'), dict):
+            out = S.db.write(board.add_notifier, d['add'].get('name'), d['add'].get('email'))
+        else:
+            out = S.db.write(board.remove_notifier, _int_arg(d.get('remove')))
+    except board.BoardError as e:
+        return h._send(400, {'error': str(e)})
+    board.bump()
+    return h._send(200, {'notifiers': out})
+
+
+@route('GET', '/api/mail')
+def api_mail(h, q):
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    return h._send(200, {'ready': ok, 'why': why, 'has_password': mailer.has_password(MAIL_SECRET),
+                         'pending': board.pending_mail(S.db)})
+
+
+@route('POST', '/api/mail')
+def api_mail_set(h, q):
+    """{password: the app password} saves it encrypted for this Windows user; {forget: true} deletes it."""
+    d = h._json()
+    try:
+        if d.get('forget'):
+            mailer.forget_password(MAIL_SECRET)
+        else:
+            mailer.save_password(MAIL_SECRET, d.get('password'))
+    except (mailer.MailError, OSError) as e:
+        return h._send(400, {'error': str(e)})
+    return api_mail(h, q)
+
+
+@route('POST', '/api/mail/test')
+def api_mail_test(h, q):
+    """Send a test email to your own address."""
+    me = S.settings.get('mail_address') or ''
+    try:
+        mailer.deliver(S.settings, MAIL_SECRET, [(S.settings.get('mail_from_name') or '', me)],
+                       'Product Checker: test email',
+                       'This is a test from Product Checker. Board reminders will be sent from this address.\n')
+    except mailer.MailError as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, {'ok': True, 'to': me})
+
+
+def board_send(to, subject, text, html, ics):
+    mailer.deliver(S.settings, MAIL_SECRET, to, subject, text, html, ics)
+
+
+def board_loop():
+    """Send due reminder emails every 5 minutes (sooner when woken), raise the stock alerts whose day came, and send
+    the automatic product update when its waiting time is over."""
+    delay = 20                                                       # catch up soon after the app starts
+    while True:
+        BOARD_WAKE.wait(delay)
+        BOARD_WAKE.clear()
+        delay = 300
+        try:
+            out = board.tick(S.db, S.settings, board_send, inform_ok=mailer.ready(S.settings, MAIL_SECRET)[0])
+            if out.get('next'):
+                delay = max(5, min(300, out['next'] - time.time()))
+            if out['alerts'] and S.settings.get('board_notify', True):
+                analysis.notify_new(S, out['alerts'])
+        except Exception:                                           # noqa: BLE001 - tried again in 5 minutes
+            log.exception('board reminders')
 
 
 @route('POST', '/api/quit')
@@ -1394,7 +1803,9 @@ def watchdog():
         if win is not None and exited is None and win.poll() is not None:
             exited = time.time()
         what = singleton.watchdog_decision(time.time(), exited, S.started, S.last_beat,
-                                           S.settings.get('keep_running'), S.mode)
+                                           S.settings.get('keep_running') or board.pending_mail(S.db) > 0 or
+                                           (board.inform_waiting(S.db, S.settings) and
+                                            mailer.ready(S.settings, MAIL_SECRET)[0]), S.mode)
         if what == 'shutdown':
             return shutdown()
         if what == 'background':
@@ -1455,6 +1866,7 @@ def main():
         S.run(S.checker.start())                                  # warm up the background browser
     threading.Thread(target=S.scan_imports, daemon=True, name='import-scan').start()
     S.run(S.scheduler.run_forever())                              # automatic refresh
+    threading.Thread(target=board_loop, daemon=True, name='board').start()   # board reminder emails
     fxrates.refresh_soon()                                         # today's exchange rates, in the background
     if not no_window:
         S.window = cp.open_app_window(url, APP_DIR / 'app-window')

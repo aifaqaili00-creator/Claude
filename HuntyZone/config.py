@@ -30,6 +30,7 @@ SCHEMA = {
     'cache_hours': (int, 6, (1, 168)),
     'top': (int, 10, (5, 500)),
     'auto_refresh': (bool, True, None),
+    'auto_qualify': (bool, True, None),                 # the automatic refresh reads what the radar's top products miss
     'keep_running': (bool, False, None),
     'start_with_windows': (bool, False, None),
     'pause_on_battery': (bool, True, None),
@@ -44,6 +45,31 @@ SCHEMA = {
     'price_currency': (str, 'USD', CURRENCIES),         # your currency: the range is typed in it, other prices show ≈ in it
     'cost_currency': (str, 'USD', CURRENCIES),          # what your supplier quotes in (profit calculator, Profit?)
     'exclude_tech': (bool, True, None),                 # no phones, laptops or their accessories
+    'target_margin_pct': (int, 20, (5, 60)),            # the margin the highest supplier price leaves you
+    'board_low_pct': (int, 30, (5, 90)),                # board stock turns red at this share of the last shipment
+    'board_notify': (bool, True, None),                 # Windows notification when stock turns red or a re-order is due
+    'board_inform_auto': (bool, True, None),            # email the Notifiers a product update when products are added or changed
+    'board_inform_wait': (int, 15, (5, 240)),           # ... once nothing changed for this many minutes
+    'mail_address': (str, '', None),                    # board reminders are sent from this address (Gmail)
+    'mail_from_name': (str, '', None),
+    'mail_host': (str, 'smtp.gmail.com', None),
+    'mail_port': (int, 465, (1, 65535)),
+    'mail_security': (str, 'ssl', ('ssl', 'starttls')),
+    'mail_send_hour': (int, 9, (0, 23)),                # reminders and invites go out at this hour, your time
+    'mail_remind_days': (int, 3, (1, 14)),              # the reminder goes this many days before the due date
+    'mail_meet_time': (str, '15:00', None),             # the update meeting on the due date
+    'mail_meet_minutes': (int, 30, (15, 180)),
+    'mail_meet_link': (str, '', None),                  # optional Zoom / Meet / Teams link for the invite
+    'mail_copy_me': (bool, True, None),
+    'mail_start_email': (bool, True, None),             # email the people as soon as you set a deadline
+}
+EMAIL_RX = re.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$')
+# free-text settings that must look right: (pattern, what it should be)
+CHECKS = {
+    'mail_address': (EMAIL_RX, 'an email address'),
+    'mail_host': (re.compile(r'^[A-Za-z0-9.\-]{1,253}$'), 'a server name like smtp.gmail.com'),
+    'mail_meet_time': (re.compile(r'^(?:[01]\d|2[0-3]):[0-5]\d$'), 'a time like 15:00'),
+    'mail_meet_link': (re.compile(r'^https://[^\s<>"\']{3,300}$'), 'a link starting with https://'),
 }
 DEFAULT_LOCATIONS = {'US': '10001', 'AU': '2000', 'AE': 'Dubai'}
 
@@ -81,6 +107,10 @@ def _coerce(key, value):
     v = str(value if value is not None else '').strip()[:300]
     if extra and v not in extra:
         raise ValueError('%s must be one of %s' % (key, ', '.join(extra)))
+    if key == 'mail_from_name':
+        v = re.sub(r'[\r\n<>"]', '', v)[:80]
+    if v and key in CHECKS and not (len(v) <= 254 and CHECKS[key][0].match(v)):
+        raise ValueError('%s must be %s' % (key, CHECKS[key][1]))
     return v
 
 

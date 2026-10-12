@@ -318,5 +318,8 @@ async def refresh(db, trends, term, geo, force=False, with_related=False, now=No
                 pass
     samples = db.read(storage.trends_samples, term, geo, SERIES_TF)
     data = compute(samples)
+    breakouts = sorted({r['query'] for r in db.read(storage.trends_related, term, geo) if r['breakout'] and r['query']})
+    if breakouts:                                       # the related searches Google marks Breakout (alerts, discovery)
+        data['breakout_queries'] = breakouts
     await db.awrite(storage.save_trends_feature, term, geo, data, now)
     return data

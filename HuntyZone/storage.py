@@ -35,9 +35,10 @@ SERP_ITEM_KEEP_DAYS = 180                      # then one snapshot per keyword, 
 LIST_ITEM_KEEP_DAYS = 400
 FETCH_LOG_KEEP_DAYS = 30
 ALERT_KEEP_DAYS = 180
+SUGGEST_KEEP_DAYS = 180                        # older Amazon suggestions go, except the newest per prefix
 BACKUPS = {'daily': 2, 'weekly': 2}
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 MIGRATIONS = {
     1: """
 -- operations
@@ -144,6 +145,39 @@ ALTER TABLE product_snapshot ADD COLUMN seller_id TEXT;
 ALTER TABLE product_snapshot ADD COLUMN fulfillment TEXT;
 CREATE TABLE seller(market TEXT, seller_id TEXT, name TEXT, business_name TEXT, country TEXT, rating_pct REAL,
   ratings INT, status TEXT, fetched_at INT, PRIMARY KEY(market, seller_id));
+""",
+    4: """
+-- your choices per product: your supplier price (US$), your search phrase, starred, or Not for me
+CREATE TABLE product_pref(market TEXT, asin TEXT, cogs_usd REAL, cogs_at INT, phrase TEXT, phrase_at INT,
+  liked_at INT, hidden_at INT, PRIMARY KEY(market, asin));
+""",
+    5: """
+-- the product board: products from sourcing to re-order, their orders and stock, launch hints, notes, deadlines
+-- and the reminder emails those send to the people on your notifier list
+CREATE TABLE board_card(id INTEGER PRIMARY KEY, title TEXT, market TEXT, asin TEXT, kw TEXT, image TEXT, color TEXT,
+  stage TEXT DEFAULT 'sourcing', pos REAL DEFAULT 0, data_json TEXT, created_at INT, updated_at INT, archived_at INT);
+CREATE TABLE board_order(id INTEGER PRIMARY KEY, card_id INT, n INT, unit_cost REAL, cost_cur TEXT, ready_at INT,
+  created_at INT, UNIQUE(card_id, n));
+CREATE TABLE board_line(id INTEGER PRIMARY KEY, order_id INT, market TEXT, units INT, ship_cost REAL, ship_cur TEXT,
+  ship_mode TEXT, steps_json TEXT, arrived_units INT, UNIQUE(order_id, market));
+CREATE TABLE board_stock(id INTEGER PRIMARY KEY, line_id INT, ts INT, units_left INT);
+CREATE TABLE board_hint(id INTEGER PRIMARY KEY, card_id INT, market TEXT, key TEXT, cat TEXT, text TEXT, data_json TEXT,
+  status TEXT DEFAULT 'todo', note TEXT, checked_at INT, moved_json TEXT, custom INT DEFAULT 0, recheck_days INT,
+  updated_at INT, UNIQUE(card_id, market, key));
+CREATE TABLE board_event(id INTEGER PRIMARY KEY, card_id INT, ts INT, kind TEXT, text TEXT, data_json TEXT);
+CREATE TABLE board_task(id INTEGER PRIMARY KEY, card_id INT, stage TEXT, start_day TEXT, days INT, due_day TEXT,
+  note TEXT, notify_json TEXT, meet_time TEXT, meet_minutes INT, meet_start INT, done_at INT, cancelled_at INT,
+  created_at INT);
+CREATE TABLE board_notifier(id INTEGER PRIMARY KEY, name TEXT, email TEXT UNIQUE COLLATE NOCASE, added_at INT,
+  removed_at INT);
+CREATE TABLE board_mail(id INTEGER PRIMARY KEY, task_id INT, kind TEXT, send_at INT, status TEXT DEFAULT 'scheduled',
+  attempts INT DEFAULT 0, sent_at INT, error TEXT, to_json TEXT, subject TEXT);
+CREATE INDEX board_line_order ON board_line(order_id);
+CREATE INDEX board_stock_line ON board_stock(line_id, ts);
+CREATE INDEX board_hint_card ON board_hint(card_id);
+CREATE INDEX board_event_card ON board_event(card_id, ts);
+CREATE INDEX board_task_card ON board_task(card_id, stage);
+CREATE INDEX board_mail_due ON board_mail(status, send_at);
 """,
 }
 
@@ -861,6 +895,91 @@ def save_suggest(conn, market, seed, keywords, n_calls=0, n_failed=0, status='ok
     return cur.lastrowid
 
 
+def suggestions(conn, market, seeds, since_ts=0):
+    """{seed_norm: {'ts', 'keywords': [...] best first}} from the newest readable suggestion snapshot of each seed."""
+    seeds = list(dict.fromkeys(k for k in (config.norm_kw(s) for s in seeds) if k))
+    newest = {}
+    for i in range(0, len(seeds), 400):
+        part = seeds[i:i + 400]
+        for r in conn.execute('SELECT id, seed_norm, ts FROM suggest_snapshot WHERE market=? AND ts>=? AND status IN (%s) '
+                              'AND seed_norm IN (%s) ORDER BY ts, id' % (','.join('?' * len(VALID)), ','.join('?' * len(part))),
+                              (market, since_ts, *VALID, *part)):
+            newest[r['seed_norm']] = (r['id'], r['ts'])
+    out = {s: {'ts': ts, 'keywords': []} for s, (_, ts) in newest.items()}
+    seed_of = {sid: s for s, (sid, _) in newest.items()}
+    ids = list(seed_of)
+    for i in range(0, len(ids), 400):
+        part = ids[i:i + 400]
+        for r in conn.execute('SELECT snapshot_id, keyword FROM suggest_item WHERE snapshot_id IN (%s) ORDER BY rowid'
+                              % ','.join('?' * len(part)), part):
+            if r['keyword']:
+                out[seed_of[r['snapshot_id']]]['keywords'].append(r['keyword'])
+    return out
+
+
+def suggest_history(conn, market, seeds, since_ts=0):
+    """{seed_norm: [(ts, [keywords best first]), ...] oldest first} from every readable suggestion snapshot."""
+    seeds = list(dict.fromkeys(k for k in (config.norm_kw(s) for s in seeds) if k))
+    snaps = {}
+    for i in range(0, len(seeds), 400):
+        part = seeds[i:i + 400]
+        for r in conn.execute('SELECT id, seed_norm, ts FROM suggest_snapshot WHERE market=? AND ts>=? AND status IN (%s) '
+                              'AND seed_norm IN (%s) ORDER BY ts, id' % (','.join('?' * len(VALID)), ','.join('?' * len(part))),
+                              (market, since_ts, *VALID, *part)):
+            snaps[r['id']] = (r['seed_norm'], r['ts'], [])
+    ids = list(snaps)
+    for i in range(0, len(ids), 400):
+        part = ids[i:i + 400]
+        for r in conn.execute('SELECT snapshot_id, keyword FROM suggest_item WHERE snapshot_id IN (%s) ORDER BY rowid'
+                              % ','.join('?' * len(part)), part):
+            if r['keyword']:
+                snaps[r['snapshot_id']][2].append(r['keyword'])
+    out = {}
+    for seed, ts, kws in snaps.values():
+        out.setdefault(seed, []).append((ts, kws))
+    return out
+
+
+# ---------- your choices per product ----------
+def prefs(conn, market, asins=None):
+    """{asin: {'cogs_usd', 'cogs_at', 'phrase', 'phrase_at', 'liked_at', 'hidden_at'}} for a market (all, or these)."""
+    if asins is None:
+        return {r['asin']: dict(r) for r in conn.execute('SELECT * FROM product_pref WHERE market=?', (market,))}
+    out, asins = {}, list(dict.fromkeys(asins))
+    for i in range(0, len(asins), 400):
+        part = asins[i:i + 400]
+        for r in conn.execute('SELECT * FROM product_pref WHERE market=? AND asin IN (%s)' % ','.join('?' * len(part)),
+                              (market, *part)):
+            out[r['asin']] = dict(r)
+    return out
+
+
+def set_pref(conn, market, asin, ts=None, **fields):
+    """Set or clear your choices for one product: cogs_usd (US$ or None), phrase (text or None), liked / hidden
+    (True stamps the time, False clears it). Returns the stored row."""
+    t = _now(ts)
+    cols = {}
+    if 'cogs_usd' in fields:
+        cols.update(cogs_usd=fields['cogs_usd'], cogs_at=t if fields['cogs_usd'] is not None else None)
+    if 'phrase' in fields:
+        cols.update(phrase=fields['phrase'] or None, phrase_at=t if fields['phrase'] else None)
+    for k in ('liked', 'hidden'):
+        if k in fields:
+            cols[k + '_at'] = t if fields[k] else None
+    conn.execute('INSERT OR IGNORE INTO product_pref(market, asin) VALUES (?,?)', (market, asin))
+    if cols:
+        conn.execute('UPDATE product_pref SET %s WHERE market=? AND asin=?' % ', '.join('%s=?' % c for c in cols),
+                     (*cols.values(), market, asin))
+    return dict(conn.execute('SELECT * FROM product_pref WHERE market=? AND asin=?', (market, asin)).fetchone())
+
+
+def hidden_products(conn, market, limit=100):
+    """The products you marked Not for me in a market, newest first, with their title and picture."""
+    return _rows(conn.execute('SELECT p.asin, p.hidden_at, a.title, a.image FROM product_pref p LEFT JOIN asin a '
+                              'ON a.market=p.market AND a.asin=p.asin WHERE p.market=? AND p.hidden_at IS NOT NULL '
+                              'ORDER BY p.hidden_at DESC LIMIT ?', (market, limit)))
+
+
 # ---------- Google Trends ----------
 def save_trends_sample(conn, term, geo, timeframe, status, points=None, resolution=None, user_type=None, ts=None):
     cur = conn.execute('INSERT INTO trends_sample(term, geo, timeframe, fetched_at, status, resolution, user_type, '
@@ -1050,6 +1169,12 @@ def retention(conn, now=None):
     out['fetch_log_dropped'] = conn.execute('DELETE FROM fetch_log WHERE ts<?',
                                             (now - FETCH_LOG_KEEP_DAYS * day,)).rowcount
     out['alerts_dropped'] = conn.execute('DELETE FROM alert WHERE ts<?', (now - ALERT_KEEP_DAYS * day,)).rowcount
+    old = 'ts<? AND id NOT IN (SELECT MAX(id) FROM suggest_snapshot WHERE status IN (%s) GROUP BY market, seed_norm)' % (
+        ','.join("'%s'" % s for s in VALID))
+    cut = (now - SUGGEST_KEEP_DAYS * day,)
+    out['suggest_items_dropped'] = conn.execute(
+        'DELETE FROM suggest_item WHERE snapshot_id IN (SELECT id FROM suggest_snapshot WHERE %s)' % old, cut).rowcount
+    out['suggest_snapshots_dropped'] = conn.execute('DELETE FROM suggest_snapshot WHERE %s' % old, cut).rowcount
     return out
 
 

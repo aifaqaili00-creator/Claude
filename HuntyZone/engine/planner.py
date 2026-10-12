@@ -165,6 +165,17 @@ def _times(mk, mode_times):
     return out
 
 
+def lead_days(market, mode='sea', q4=False):
+    """Days from placing an order to stock on sale at Amazon: production, buffer, transit and check-in."""
+    t = times(market, mode)
+    return t['production'] + t['buffer'] + t['transit'] + (t['check_in_q4'] if q4 else t['check_in'])
+
+
+def times(market, mode='sea'):
+    """The default lead times of one market and freight mode: {'production', 'buffer', 'transit', 'check_in', ...}."""
+    return _times(market if market in THRESH['check_in'] else 'US', None)[mode if mode in MODES else 'sea']
+
+
 def upswing_month(si, peak_month):
     """First month of the contiguous SI >= 1.0 run that leads into the peak (wrapping round the year).
     The peak itself when SI at the peak is below 1.0."""

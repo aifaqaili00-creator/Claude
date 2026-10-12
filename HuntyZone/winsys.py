@@ -93,3 +93,40 @@ def in_quiet_hours(hour, start, end):
     if start < end:
         return start <= hour < end
     return hour >= start or hour < end
+
+
+def _dpapi(data, protect):
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [('cbData', wintypes.DWORD), ('pbData', ctypes.POINTER(ctypes.c_char))]
+    crypt32 = ctypes.WinDLL('crypt32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    fn.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                   wintypes.DWORD, ctypes.POINTER(Blob)]
+    fn.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    buf = ctypes.create_string_buffer(bytes(data), len(data))
+    src, out = Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), Blob()
+    if not fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(out)):     # 0x1: never show a prompt
+        raise OSError('Windows could not %s the secret (error %d)' % ('protect' if protect else 'read',
+                                                                    ctypes.get_last_error()))
+    try:
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        kernel32.LocalFree(ctypes.cast(out.pbData, ctypes.c_void_p))
+
+
+def protect(data):
+    """Encrypt bytes so only this Windows user on this PC can read them (DPAPI)."""
+    if sys.platform != 'win32':
+        raise OSError('Saving secrets needs Windows')
+    return _dpapi(data, True)
+
+
+def unprotect(blob):
+    if sys.platform != 'win32':
+        raise OSError('Reading secrets needs Windows')
+    return _dpapi(blob, False)

@@ -287,8 +287,9 @@ def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=Fal
                 g['new_rank'] = i['new_rank']
             if (i.get('pct') or 0) > (g.get('pct') or 0):
                 g['pct'], g['label'] = i['pct'], i['label'] if i['label'] != 'New' else g['label']
+            g['members'].append({k: i.get(k) for k in ('asin', 'title', 'price', 'reviews', 'url', 'image')})
         else:
-            groups[key] = {**i, 'similar': 0}
+            groups[key] = {**i, 'similar': 0, 'members': []}
     out = sorted(groups.values(), key=lambda x: -x['score'])
     for n, i in enumerate(out, 1):
         i['pos'] = n
@@ -318,10 +319,22 @@ async def scan(checker, code, cats, kinds, hide_risky, progress):
     return out
 
 
+async def complete(checker, code, prefix):
+    """Amazon's search suggestions for what has been typed so far, best first (blank entries kept in place).
+    Raises when the call fails."""
+    await checker.start()
+    url, mid, lop = COMPLETE[code]
+    q = '%s?limit=11&prefix=%s&suggestion-type=KEYWORD&page-type=Search&lop=%s&site-variant=desktop' \
+        '&client-info=amazon-search-ui&mid=%s&alias=aps' % (url, quote(prefix), lop, mid)
+    async with checker.slot('complete:' + code):
+        r = await checker.ctx.request.get(q, timeout=15000)
+        data = await r.json()
+    return [' '.join(str(s.get('value') or '').lower().split()) for s in data.get('suggestions') or []]
+
+
 async def suggest(checker, code, seed, progress=None):
     """Grow a niche into the keywords shoppers actually type, most common first."""
     await checker.start()
-    url, mid, lop = COMPLETE[code]
     seed = ' '.join(seed.lower().split())[:60]
     prefixes = [seed, seed + ' '] + [seed + ' ' + c for c in 'abcdefghiklmnoprstuw'] + ['best ' + seed, seed + ' for']
     found = {}
@@ -331,17 +344,12 @@ async def suggest(checker, code, seed, progress=None):
 
     async def one(i, prefix):
         async with sem:
-            q = '%s?limit=11&prefix=%s&suggestion-type=KEYWORD&page-type=Search&lop=%s&site-variant=desktop' \
-                '&client-info=amazon-search-ui&mid=%s&alias=aps' % (url, quote(prefix), lop, mid)
             try:
-                async with checker.slot('complete:' + code):
-                    r = await checker.ctx.request.get(q, timeout=15000)
-                    data = await r.json()
+                got = await complete(checker, code, prefix)
             except Exception:
                 failed[0] += 1
                 return
-            for n, s in enumerate(data.get('suggestions') or []):
-                kw = ' '.join(str(s.get('value') or '').lower().split())
+            for n, kw in enumerate(got):
                 if not kw:
                     continue
                 f = found.setdefault(kw, {'keyword': kw, 'hits': 0, 'best': 99, 'first': (i, n)})

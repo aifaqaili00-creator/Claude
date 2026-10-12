@@ -1,5 +1,6 @@
 """Settings schema, keyword normalising and marketplace-local dates (including clock changes)."""
 import datetime as dt
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,26 @@ def test_validate_does_not_change_the_current_settings():
     cur = config.defaults()
     config.validate({'locations': {'AU': '4000'}}, cur)
     assert cur['locations']['AU'] == '2000'
+
+
+def test_email_settings_must_look_right():
+    s, err = config.validate({'mail_address': 'ali@gmail.com', 'mail_meet_time': '09:30', 'mail_port': 99999,
+                              'mail_meet_link': 'https://zoom.us/j/123', 'mail_from_name': 'Ali "Boss" <x>\r\n'})
+    assert not err and s['mail_from_name'] == 'Ali Boss x' and s['mail_port'] == 65535 and s['mail_meet_time'] == '09:30'
+    s, err = config.validate({'mail_address': 'ali', 'mail_meet_time': '25:00', 'mail_meet_link': 'http://x.com',
+                              'mail_host': 'smtp gmail', 'mail_security': 'tls'})
+    assert len(err) == 5 and s['mail_address'] == ''
+    assert config.validate({'mail_address': '', 'mail_meet_link': ''})[1] == []
+    assert config.defaults()['board_low_pct'] == 30 and config.merge({'board_low_pct': 1})['board_low_pct'] == 5
+    assert config.defaults()['board_inform_auto'] is True and config.defaults()['board_inform_wait'] == 15
+    assert config.merge({'board_inform_wait': 1})['board_inform_wait'] == 5
+
+
+def test_every_settings_field_on_the_page_is_a_real_setting():
+    html = (Path(__file__).resolve().parents[1] / 'ui' / 'index.html').read_text(encoding='utf-8')
+    keys = set(re.findall(r'data-set="([^"]+)"', html))
+    assert {'board_low_pct', 'board_notify', 'mail_address', 'auto_refresh'} <= keys
+    assert keys <= set(config.defaults())
 
 
 def test_norm_kw():

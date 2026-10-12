@@ -9,8 +9,10 @@ import time
 
 import amazon_check as ac
 import config
+import file_rank as fr
 import ideas
 import product
+import reports
 import scheduler as sc
 import storage
 import throttle
@@ -19,6 +21,17 @@ log = logging.getLogger('pc')
 LIST_CATEGORIES = 8                     # categories per market when you have not chosen any (automatic refresh)
 USER_CATEGORIES = 16                    # ... in a scan you start yourself
 CATEGORY_TTL = 24 * 3600                # Amazon's category menu is read again once a day
+QUALIFY_TOP = 10                        # radar products the automatic refresh qualifies per market and day
+QUALIFY_CHECKS = 4                      # ... of which this many are searched on the markets they could sell in next
+QUALIFY_PAGES = 6                       # ... and this many product pages read
+VARIANTS = 4                            # longer phrases 'Find the underserved version' searches
+QUALIFY_ABROAD = 4                      # top phrases whose related searches and trends in the next markets are read
+QUALIFY_WORDS = {'suggestions': ('Amazon suggestion list', 'Amazon suggestion lists'),
+                 'trends': ('Google trend', 'Google trends'),
+                 'abroad': ('Google trend in another market', 'Google trends in other markets'),
+                 'readiness': ('suggestion list in another market', 'suggestion lists in other markets'),
+                 'searches': ('search in another market', 'searches in other markets'),
+                 'pages': ('product page', 'product pages')}
 
 
 def _dur(s):
@@ -32,6 +45,8 @@ def task_specs(settings, watches):
         return specs
     for m in config.MARKETS:
         specs.append({'kind': 'lists', 'market': m, 'target': 'all', 'every_s': sc.EVERY['lists:' + m], 'priority': 3})
+        if settings.get('auto_qualify', True):
+            specs.append({'kind': 'qualify', 'market': m, 'target': 'radar', 'every_s': sc.EVERY['qualify'], 'priority': 4})
     for w in watches:
         if not w.get('enabled', 1):
             continue
@@ -59,7 +74,7 @@ class Collectors:
 
     def handlers(self):
         return {'products': self.products, 'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
-                'import_scan': self.import_scan, 'maintenance': self.maintenance}
+                'import_scan': self.import_scan, 'maintenance': self.maintenance, 'qualify': self.qualify}
 
     async def _categories(self, market, limit=LIST_CATEGORIES):
         chosen = self.S.settings.get('categories', {}).get(market) or []
@@ -200,6 +215,165 @@ class Collectors:
         res = await asyncio.to_thread(self.S.scan_imports)
         n = sum(1 for r in res if r['status'] == 'imported')
         return {'status': 'ok', 'note': '%d new files' % n}
+
+    async def underserved(self, market, phrase, boom=None, progress=None, n=VARIANTS):
+        """Find the underserved version of a phrase: the longer phrases Amazon suggests for it, searched in the markets
+        it could sell in next (searches of the last few hours are reused) and ranked by their gap score there
+        (reports.variant_gaps). Your own job: a captcha shows as a failed search of that phrase."""
+        from engine import discovery
+        say = progress or (lambda m: None)
+        kw = config.norm_kw(phrase)
+        say('Amazon %s suggestions for "%s"…' % (ac.MARKETS[market]['name'], kw))
+        got = await ideas.suggest(self.S.checker, market, kw)
+        await self.S.db.awrite(storage.save_suggest, market, kw, got['keywords'], got.get('n_calls', 0),
+                               got.get('n_failed', 0), 'ok' if got['keywords'] else 'empty')
+        variants = discovery.pick_variants(kw, [k['keyword'] for k in got['keywords']], n)
+        targets = reports.TARGETS[market]
+        if variants:
+            say('Searching %d phrase%s on Amazon %s…' % (len(variants), '' if len(variants) == 1 else 's',
+                                                       ' and '.join(ac.MARKETS[t]['name'] for t in targets)))
+            await self.S.check_batch([{'key': v + '|' + t, 'market': t, 'search': v} for v in variants for t in targets], say)
+        return await asyncio.to_thread(reports.variant_gaps, self.S.db, market, kw, variants, boom or {}, self.S.settings,
+                                       {k['keyword']: k['hits'] for k in got['keywords']})
+
+    async def qualify(self, task):
+        """The automatic refresh's qualifying: the market's best radar products that still miss something, within the
+        day's 'qualify' budgets."""
+        market = task['market']
+        rows = await asyncio.to_thread(reports.qualify_candidates, self.S.db, market, self.S.settings, None,
+                                       QUALIFY_TOP, QUALIFY_CHECKS)
+        if not rows:
+            return {'status': 'ok', 'note': 'nothing to qualify'}
+        return await self.qualify_products(market, [r['asin'] for r in rows], checks=QUALIFY_CHECKS, pages=QUALIFY_PAGES)
+
+    async def qualify_products(self, market, asins, progress=None, checks=0, pages=12, phrases=None):
+        """Read what the opportunity score misses for these products, one step at a time for all of them: the phrase
+        shoppers type (Amazon's suggestions for the title's first words; `phrases` {asin: words} you typed win), its
+        Google trend, whether the suggestions on the markets it could sell in next know the phrase, a search there (the
+        first `checks` products only) and the product page (at most `pages`). Anything read recently is not read again.
+        A pausing source or a used-up budget ends that step only. A captcha or block on a product page ends the
+        automatic refresh's run. Returns {'status', 'note', 'counts'}."""
+        from engine import discovery
+        S, db = self.S, self.S.db
+        say = progress or (lambda m: None)
+        name = ac.MARKETS[market]['name']
+        fresh = reports.QUALIFY_FRESH
+        now = time.time()
+        items = []
+        for a in asins:
+            title = (db.read(storage.asin_info, market, a) or {}).get('title') or ''
+            words = fr.search_words(title)
+            if words:
+                items.append({'asin': a, 'title': title, 'words': words, 'prefixes': discovery.phrase_prefixes(words)})
+        done = {'suggestions': 0, 'trends': 0, 'abroad': 0, 'readiness': 0, 'searches': 0, 'pages': 0}
+        stopped = []
+        mine = db.read(storage.prefs, market, asins)
+
+        async def ask(code, prefix):
+            """Keep Amazon's suggestions for a prefix; False when the call failed (a pause or budget raises)."""
+            try:
+                got = await ideas.complete(S.checker, code, prefix)
+            except throttle.ThrottleError:
+                raise
+            except Exception as e:                                   # noqa: BLE001 - one failed call skips one prefix
+                log.warning('suggestions %s "%s" failed: %s', code, prefix, e)
+                return False
+            kws = [{'keyword': k, 'hits': 1, 'best': n} for n, k in enumerate(got, 1) if k]
+            await db.awrite(storage.save_suggest, code, prefix, kws, 1, 0, 'ok' if kws else 'empty')
+            return True
+
+        try:                                                         # 1. the phrase shoppers type
+            for n, it in enumerate(items, 1):
+                have = db.read(storage.suggestions, market, it['prefixes'], now - fresh['phrase'] * 86400)
+                for p in it['prefixes']:
+                    if p not in have:
+                        say('%s: Amazon suggestions for "%s" (%d of %d)' % (name, p, n, len(items)))
+                        done['suggestions'] += await ask(market, p)
+        except throttle.ThrottleError as e:
+            stopped.append('suggestions: %s' % e)
+        for it in items:
+            known = db.read(storage.suggestions, market, it['prefixes'])
+            it['phrase'] = (phrases or {}).get(it['asin']) or (mine.get(it['asin']) or {}).get('phrase') or discovery.pick_phrase(
+                it['title'], [k for p in it['prefixes'] for k in known.get(p, {}).get('keywords', [])])
+            it['kw'] = config.norm_kw(it['phrase'] or it['words'])
+
+        if S.settings.get('trends_enabled', True):                   # 2. its Google trend, here and abroad
+            terms = list(dict.fromkeys(it['phrase'] or discovery.suggest_term(it['words']) for it in items))
+            reads = [(term, market, n <= QUALIFY_ABROAD) for n, term in enumerate(terms, 1)]
+            reads += [(term, t, False) for t in reports.TARGETS[market] for term in terms[:QUALIFY_ABROAD]]
+            try:
+                for n, (term, geo, related) in enumerate(reads, 1):
+                    if S.trends.breaker.is_open():
+                        stopped.append('Google Trends is paused (%s)' % (S.trends.breaker.reason or 'asked to slow down'))
+                        break
+                    say('%s: Google Trends for "%s" in %s (%d of %d)' % (name, term, ac.MARKETS[geo]['name'], n, len(reads)))
+                    got = await S.refresh_trends(term, geo, related=related) is not None
+                    done['trends' if geo == market else 'abroad'] += got
+            except throttle.ThrottleError as e:
+                stopped.append('Google Trends: %s' % e)
+
+        kws = list(dict.fromkeys(it['kw'] for it in items))
+        for t in reports.TARGETS[market]:                            # 3. do the next markets' suggestions know it
+            try:
+                have = db.read(storage.suggestions, t, kws, now - fresh['phrase'] * 86400)
+                for n, kw in enumerate(kws, 1):
+                    h = have.get(kw)
+                    if h and (discovery.autocomplete_knows(kw, h['keywords']) or h['ts'] >= now - fresh['arrival'] * 86400):
+                        continue                                     # not known there yet: asked weekly to catch it arriving
+                    say('%s: does Amazon %s suggest "%s"? (%d of %d)' % (name, ac.MARKETS[t]['name'], kw, n, len(kws)))
+                    done['readiness'] += await ask(t, kw)
+            except throttle.ThrottleError as e:
+                stopped.append('%s suggestions: %s' % (ac.MARKETS[t]['name'], e))
+
+        if checks:                                                   # 4. a search there (automatic refresh only)
+            fast, local, _ = S.days()
+            for t in reports.TARGETS[market]:
+                for kw in list(dict.fromkeys(it['kw'] for it in items[:checks])):
+                    if db.read(storage.latest_serp, t, kw, None, None, fresh['check'] * 86400):
+                        continue
+                    say('%s: searching "%s" on Amazon %s' % (name, kw, ac.MARKETS[t]['name']))
+                    try:
+                        s = await S.checker.check(kw, t, fast, 1, None, local)
+                    except ac.BlockedError as e:                     # that market said stop, not this one
+                        await S.save_check({'market': t, 'keyword': kw, 'status': e.status, 'error': str(e)[:200]},
+                                           None, 1, 'qualify')
+                        S.throttle.report('amazon:' + t, e.status, str(e)[:120])
+                        stopped.append('Amazon %s: %s' % (ac.MARKETS[t]['name'], str(e).splitlines()[0][:120]))
+                        break
+                    except throttle.ThrottleError as e:
+                        stopped.append('Amazon %s: %s' % (ac.MARKETS[t]['name'], e))
+                        break
+                    await S.save_check(s, None, 1, 'qualify')
+                    done['searches'] += 1
+
+        block = None                                                 # 5. the product page, last: the slowest
+        try:
+            for it in items:
+                if done['pages'] >= pages:
+                    break
+                last = db.one("SELECT MAX(ts) AS ts FROM product_snapshot WHERE market=? AND asin=? AND "
+                              "status IN ('ok','partial')", (market, it['asin']))
+                if last and (last['ts'] or 0) >= now - fresh['page'] * 86400:
+                    continue
+                say('%s: product page %s' % (name, it['asin']))
+                p = await product.read_product(S.checker, it['asin'], market)
+                await db.awrite(storage.save_product, market, it['asin'], p)
+                done['pages'] += 1
+        except throttle.ThrottleError as e:
+            stopped.append('product pages: %s' % e)
+        except ac.BlockedError as e:
+            if ac.BACKGROUND.get():
+                block = e
+            stopped.append('product pages: %s' % str(e).splitlines()[0][:120])
+        if done['pages']:
+            await S.refit_curve(market)
+        if block:
+            raise block
+        what = ', '.join('%d %s' % (v, QUALIFY_WORDS[k][v != 1]) for k, v in done.items() if v)
+        note = '%d product%s: %s' % (len(items), '' if len(items) == 1 else 's', what or 'nothing new to read')
+        if stopped:
+            note += '; stopped: ' + '; '.join(stopped)
+        return {'status': 'partial' if stopped else 'ok', 'note': note, 'counts': done}
 
     async def maintenance(self, task):
         out = await self.S.db.awrite(storage.retention)

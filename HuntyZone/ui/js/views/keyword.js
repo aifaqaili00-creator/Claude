@@ -62,6 +62,7 @@
             <button class="btn" data-open="${esc(OTHER_SHOP[d.market].url + encodeURIComponent(d.keyword))}" title="The same search on ${OTHER_SHOP[d.market].name}, another big shop in ${esc(MK[d.market])}">${OTHER_SHOP[d.market].name}${icon('external')}</button>
             <button class="btn" id="kXray">${icon('scan')}Xray</button>
             <button class="btn" id="kWatch" title="Re-check this keyword every day and fetch Google Trends weekly">${icon('eye')}Watch</button>
+            <button class="btn" id="kBoard" title="Start sourcing it: the board tracks the order, the launch and re-orders">${icon('board')}Add to board</button>
           </div>
         </div>
         <div class="progress noprint" id="kProg">${now ? 'Last searched ' + ago(now.checked_at) : 'Not searched in ' + MK[d.market] + ' yet.'}${tr.as_of ? ' · Google Trends ' + ago(tr.as_of) : ''}</div>
@@ -129,6 +130,7 @@
     $('kPdf').addEventListener('click', () => pdfDialog(d));
     $('kWatch').addEventListener('click', () => api('/api/watch', {kind: 'keyword', target: d.keyword, markets: [d.market]})
       .then(() => toast('Watching “' + d.keyword + '” in ' + MK[d.market] + '. It is re-checked every day.')).catch(e => toast(e.message)));
+    $('kBoard').addEventListener('click', () => addToBoard({title: d.keyword, market: d.market, kw: d.keyword}));
     $('kXray').addEventListener('click', () => { $('xkw').value = d.keyword; setSeg($('xMk'), d.market); go('xray'); });
     drawTrends(d);
     drawSeason(d);
@@ -341,7 +343,8 @@
           <span id="pfSizeOut"></span>
         </div>
         <div id="pfOut"></div>
-      </div>`;
+      </div>
+      <div class="panel stackv" id="kLaunch"></div>`;
     const form = $('pfForm');
     const syncUse = () => {                                   // offer Amazon's size again once you have changed it
       if ($('pfUseAmz')) $('pfUseAmz').hidden = !['l', 'w', 'h', 'kg'].some(k => amz[k] != null && +form[k].value !== +amz[k]);
@@ -353,17 +356,27 @@
       if (kg != null) { form.kg.value = kg; names.push('kg'); }
       return names;
     };
-    let last = null;
+    let last = null, launchTimer = 0;
+    const drawLaunch = async () => {
+      const f = Object.fromEntries(new FormData(form)), el = $('kLaunch');
+      if (!el) return;
+      try {
+        const r = await api('/api/launch', {...f, market: d.market, kw: d.keyword});
+        if (el.isConnected) el.innerHTML = `<div class="head"><h3>Where to launch</h3><span class="small">The same product, your cost and a first order of ${num(r.units)} in each market it was searched in</span></div>` + launchHtml(r);
+      } catch (e) { el.innerHTML = failPill(e.message); }
+    };
     const run = async () => {
       const f = Object.fromEntries(new FormData(form));
       f.registered = !!form.registered && form.registered.checked;
       f.save_cogs = form.save_cogs.checked;
       Object.assign(f, {market: d.market, kw: d.keyword});
       try { last = await api('/api/profit', f); renderProfit(last, m, d.market); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
+      drawLaunch();
     };
     form.addEventListener('input', e => {
       if (e.target.name === 'cogs') keep('cogs', 'cogs_currency'); else if (e.target.name) keep(e.target.name);
       if (e.target.name === 'units' && last) renderProfit(last, m, d.market);     // planner only: no new calculation needed
+      if (e.target.name === 'units') { clearTimeout(launchTimer); launchTimer = setTimeout(drawLaunch, 400); }
     });
     form.addEventListener('change', e => {
       if (e.target.name === 'units') return;

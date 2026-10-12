@@ -76,6 +76,36 @@ def test_compute_labels_and_low_volume():
     assert trends.compute([{'status': 'throttled'}])['status'] == 'none'
 
 
+class FakeTrends:
+    """Google Trends answers without a browser: a growing weekly series and two related searches."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def series(self, term, geo):
+        self.calls.append(('series', term, geo))
+        pts = [[int(p['time']), p['value'][0], p.get('isPartial', False)] for p in fakeweb.weekly('growing')]
+        return {'status': 'ok', 'points': pts, 'resolution': 'WEEK', 'user_type': 'USER_TYPE_LEGIT'}
+
+    async def related(self, term, geo):
+        self.calls.append(('related', term, geo))
+        return [{'kind': 'rising', 'query': 'cordless tower fan', 'value': 0, 'breakout': True},
+                {'kind': 'top', 'query': 'tower fan', 'value': 100, 'breakout': False}]
+
+
+def test_refresh_keeps_the_related_breakout_searches_in_the_feature(tmp_path):
+    db = storage.DB(tmp_path / 'm.db').open()
+    try:
+        tr = FakeTrends()
+        data = asyncio.run(trends.refresh(db, tr, 'Tower Fan', 'US', with_related=True))
+        assert data['breakout_queries'] == ['cordless tower fan']
+        assert db.read(storage.trends_feature, 'tower fan', 'US')['breakout_queries'] == ['cordless tower fan']
+        again = asyncio.run(trends.refresh(db, tr, 'tower fan', 'US'))           # fresh: no new request, still kept
+        assert again['breakout_queries'] == ['cordless tower fan'] and len(tr.calls) == 2
+    finally:
+        db.close()
+
+
 class StubChecker:
     """Just enough of amazon_check.Checker: a headless browser context."""
 

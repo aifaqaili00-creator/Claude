@@ -30,6 +30,7 @@
             <button class="btn primary" id="pRefresh">${icon('refresh')}Read the product page now</button>
             <button class="btn" data-open="${esc(d.url)}">Amazon${icon('external')}</button>
             <button class="btn" id="pTrack">${icon('eye')}Track daily</button>
+            <button class="btn" id="pBoard" title="Start sourcing it: the board tracks the order, the launch and re-orders">${icon('board')}Add to board</button>
           </div>
           <div class="progress" id="pProg">${now ? 'Last read ' + ago(now.ts) : 'Not read in ' + MK[d.market] + ' yet. Press “Read the product page now”.'}</div>
         </div>
@@ -58,6 +59,7 @@
     $('pRefresh').addEventListener('click', () => refresh(d));
     $('pTrack').addEventListener('click', () => api('/api/watch', {kind: 'asin', target: d.asin, markets: [d.market]})
       .then(() => toast('Tracking ' + d.asin + ' daily in ' + MK[d.market])).catch(e => toast(e.message)));
+    $('pBoard').addEventListener('click', () => addToBoard({title: info.title || d.asin, market: d.market, asin: d.asin, image: info.image}));
     negReviews('pNeg', {market: d.market, asin: d.asin});
 
     const hist = d.history.filter(h => ['ok', 'partial'].includes(h.status));

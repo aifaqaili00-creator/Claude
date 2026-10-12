@@ -18,6 +18,7 @@
 </script>
 <link rel="stylesheet" href="/ui/css/tokens.css">
 <link rel="stylesheet" href="/ui/css/app.css">
+<link rel="stylesheet" href="/ui/css/board.css">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -49,6 +50,14 @@
   <symbol id="i-fx" viewBox="0 0 24 24"><path d="M4 8h14M15 4l4 4-4 4M20 16H6M9 12l-4 4 4 4"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
   <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9.5 14.5L12 17l2.5-2.5"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3.5 4M16 6h3a3 3 0 0 1-3.5 4M12 13v4M8.5 20h7M10 17h4"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5L12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5L18 7M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"/></symbol>
   <!-- country flags (drawn: Windows shows flag emoji as two letters), 3:2 -->
   <defs><pattern id="f-us-stars" width="2.3" height="2.05" patternUnits="userSpaceOnUse" x=".2" y=".35"><circle cx="1.15" cy="1.02" r=".52" fill="#fff"/></pattern></defs>
   <symbol id="f-star" viewBox="-1 -1 2 2"><path d="M0-1L.225-.309H.951L.363.118L.588.809L0 .382L-.588.809L-.363.118L-.951-.309H-.225Z"/></symbol>
@@ -79,6 +88,7 @@
       <a href="#/home" data-view="home" title="Home"><svg class="icon"><use href="#i-home"/></svg><span>Home</span><b class="count" id="alertCount" hidden></b></a>
       <a href="#/radar" data-view="radar" title="Trend radar"><svg class="icon"><use href="#i-radar"/></svg><span>Trend radar</span></a>
       <a href="#/watch" data-view="watch" title="Watchlist"><svg class="icon"><use href="#i-eye"/></svg><span>Watchlist</span></a>
+      <a href="#/board" data-view="board" title="Board"><svg class="icon"><use href="#i-board"/></svg><span>Board</span></a>
       <div class="grp">Research</div>
       <a href="#/check" data-view="check" title="Check sellers"><svg class="icon"><use href="#i-search"/></svg><span>Check sellers</span></a>
       <a href="#/ideas" data-view="ideas" title="Product ideas"><svg class="icon"><use href="#i-bulb"/></svg><span>Product ideas</span></a>
@@ -125,12 +135,24 @@
     <main id="main">
       <!-- Home -->
       <section class="view" id="v-home"><div id="homeOut" class="stackv"></div></section>
+      <!-- Product board -->
+      <section class="view" id="v-board">
+        <div id="boardOut" class="stackv"></div>
+        <dialog id="bDlg" class="bdrawer" aria-label="Product"></dialog>
+        <dialog id="bMini" class="dlg bmini" aria-label="Board"></dialog>
+      </section>
       <!-- Trend radar -->
       <section class="view" id="v-radar">
         <div class="panel row" style="justify-content:space-between">
           <div class="row">
             <div class="seg" id="rMk"><button type="button" data-v="US" aria-pressed="true">USA</button><button type="button" data-v="AU" aria-pressed="false">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button></div>
             <label class="small"><input type="checkbox" id="rHide" checked> Hide risky and deal-driven</label>
+            <select id="rSort" title="Order of the products" aria-label="Order of the products">
+              <option value="opp">Best opportunity first</option><option value="surge">Biggest Amazon surge</option>
+              <option value="search">Strongest search trend</option><option value="reviews">Fewest reviews</option>
+              <option value="gap:AU">Best gap in Australia</option><option value="gap:AE">Best gap in the UAE</option>
+              <option value="me">Best for me (starred first)</option>
+            </select>
           </div>
           <div class="row"><span class="small" id="rWhen"></span><button class="btn primary" id="rScan"><svg class="icon sm"><use href="#i-refresh"/></svg>Scan now</button></div>
         </div>
@@ -265,14 +287,16 @@
             <div><h2 id="iTitle"></h2><div class="small" id="iSub"></div></div>
             <div class="row">
               <select id="iSort" title="Sort ideas" aria-label="Sort ideas">
-                <option value="score">Best ideas first</option><option value="pct">Biggest jump</option>
-                <option value="new">Newest releases</option><option value="reviews">Fewest reviews</option>
+                <option value="opp">Best opportunity first</option><option value="score">Highest list score</option>
+                <option value="pct">Biggest jump</option><option value="new">Newest releases</option><option value="reviews">Fewest reviews</option>
+                <option value="gap:AU">Best gap in Australia</option><option value="gap:AE">Best gap in the UAE</option>
+                <option value="me">Best for me (starred first)</option>
               </select>
               <button class="btn primary" id="btnIdeasCheck">Check top 12 in AU &amp; UAE</button>
             </div>
           </div>
           <div class="progress" id="iCheckProg"></div>
-          <div class="igrid" id="iGrid"></div>
+          <div class="stackv" id="iGrid"></div>
           <div class="panel stackv" id="iMap" hidden>
             <div class="row" style="justify-content:space-between"><div class="seg" id="iMapMk"><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button><button type="button" data-v="US" aria-pressed="false">USA</button></div>
               <span class="small muted">The products you checked: up = more buyers, right = more local sellers.</span></div>
@@ -486,6 +510,8 @@
               <div class="small">Your price range is typed in it, and prices from the other marketplaces also show ≈ in it.</div></div>
             <div class="field"><span class="lbl">Your supplier quotes in</span><span id="sCostCur"></span>
               <div class="small">Used by <b>Profit?</b> on idea and radar cards and by the profit calculator in keyword reports.</div></div>
+            <div class="field"><label for="setMargin">Margin to keep (%)</label><input type="number" id="setMargin" data-set="target_margin_pct" min="5" max="60" step="1" style="width:90px">
+              <div class="small">Radar and idea rows show the most you can pay your supplier per piece and still keep this share of the price.</div></div>
             <div class="tablewrap" style="box-shadow:none"><table class="fxmatrix" id="fxMatrix" aria-label="Exchange rates"></table></div>
             <div class="row" style="justify-content:space-between"><span class="small" id="fxAsOf"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
           </div>
@@ -520,6 +546,7 @@
           <div class="panel stackv" id="autoPanel">
             <h2>Automatic refresh</h2>
             <label class="small"><input type="checkbox" data-set="auto_refresh"> Refresh watched keywords, Amazon lists and Google Trends automatically</label>
+            <label class="small"><input type="checkbox" data-set="auto_qualify"> Fill in what the radar’s top products miss once a day (search phrase, Google Trends, product page, a search in Australia / UAE)</label>
             <label class="small"><input type="checkbox" data-set="keep_running"> Keep refreshing after I close the window</label>
             <label class="small"><input type="checkbox" data-set="start_with_windows"> Start with Windows (in the background)</label>
             <label class="small"><input type="checkbox" data-set="pause_on_battery"> Pause on battery</label>
@@ -534,6 +561,49 @@
               <div class="row"><label class="small"><input type="checkbox" id="regAU"> Australia (GST)</label><label class="small"><input type="checkbox" id="regAE"> UAE (VAT)</label></div></div>
             <div class="small">Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; the marketplace just pauses and Home tells you.</div>
             <div class="row"><button class="btn" id="btnQuit">Quit completely</button></div>
+          </div>
+          <div class="panel stackv" id="mailPanel">
+            <h2>Email for reminders</h2>
+            <div class="small">Board deadlines email the people you pick: a start email, a reminder and an invitation to an update meeting on the due day. They are sent from your Gmail.</div>
+            <div class="field"><label for="mailAddr">Your Gmail address</label><input type="text" id="mailAddr" data-set="mail_address" placeholder="you@gmail.com" autocomplete="email" spellcheck="false"></div>
+            <div class="field"><label for="mailName">Your name in the emails</label><input type="text" id="mailName" data-set="mail_from_name" maxlength="80"></div>
+            <div class="field"><label for="mailPass">Gmail app password</label>
+              <div class="row"><input type="password" id="mailPass" autocomplete="new-password" placeholder="16 letters" style="flex:1;min-width:0">
+                <button class="btn" id="mailPassSave">Save</button><button class="btn ghost" id="mailPassForget" hidden>Forget</button></div>
+              <div class="small" id="mailState"></div></div>
+            <ol class="small steps">
+              <li>Turn on 2-Step Verification for your Google account.</li>
+              <li>Open <a data-open="https://myaccount.google.com/apppasswords">Google app passwords</a> and create one named Product Checker.</li>
+              <li>Paste the 16 letters above and press Save. It is kept encrypted for your Windows user on this PC.</li>
+            </ol>
+            <div class="row"><button class="btn" id="mailTest">Send me a test email</button><span class="small" id="mailTestOut" role="status"></span></div>
+            <div class="row">
+              <div class="field"><label for="mailHour">Send at (hour)</label><input type="number" id="mailHour" data-set="mail_send_hour" min="0" max="23"></div>
+              <div class="field"><label for="mailBack">Remind days before</label><input type="number" id="mailBack" data-set="mail_remind_days" min="1" max="14"></div>
+              <div class="field"><label for="mailMeet">Meeting at</label><input type="text" id="mailMeet" data-set="mail_meet_time" placeholder="15:00" style="width:80px"></div>
+              <div class="field"><label for="mailMins">Minutes</label><input type="number" id="mailMins" data-set="mail_meet_minutes" min="15" max="180" step="5"></div>
+            </div>
+            <div class="field"><label for="mailLink">Meeting link (optional: Zoom, Meet or Teams)</label><input type="text" id="mailLink" data-set="mail_meet_link" placeholder="https://"></div>
+            <label class="small"><input type="checkbox" data-set="mail_copy_me"> Send me a copy of every email</label>
+            <label class="small"><input type="checkbox" data-set="mail_start_email"> Email the people as soon as I set a deadline</label>
+            <details class="small"><summary>Another email server</summary>
+              <div class="row" style="margin-top:8px">
+                <div class="field"><label for="mailHost">Server</label><input type="text" id="mailHost" data-set="mail_host" spellcheck="false"></div>
+                <div class="field"><label for="mailPort">Port</label><input type="number" id="mailPort" data-set="mail_port" min="1" max="65535"></div>
+                <div class="field"><label for="mailSec">Security</label><select id="mailSec" data-set="mail_security"><option value="ssl">SSL (465)</option><option value="starttls">STARTTLS (587)</option></select></div>
+              </div></details>
+            <div class="note">Emails go out only while Product Checker runs. It keeps running in the background while emails are waiting; turn on <b>Start with Windows</b> so it starts again after a restart.</div>
+          </div>
+          <div class="panel stackv" id="boardPanel">
+            <h2>Product board</h2>
+            <div class="row">
+              <div class="field"><label for="setLow">Stock turns red at (% of the shipment left)</label><input type="number" id="setLow" data-set="board_low_pct" min="5" max="90"></div>
+            </div>
+            <label class="small"><input type="checkbox" data-set="board_notify"> Windows notification when stock turns red or a re-order is due</label>
+            <label class="small"><input type="checkbox" data-set="board_inform_auto"> Email the product update to everyone on the Notifier list when I add or change a product</label>
+            <div class="row">
+              <div class="field"><label for="setInformWait">Send it once nothing changed for (minutes)</label><input type="number" id="setInformWait" data-set="board_inform_wait" min="5" max="240"></div>
+            </div>
           </div>
           <div class="panel stackv">
             <h2>Background browser</h2>
@@ -570,5 +640,6 @@
 <script src="/ui/js/views/watch.js"></script>
 <script src="/ui/js/views/health.js"></script>
 <script src="/ui/js/views/product.js"></script>
+<script src="/ui/js/views/board.js"></script>
 </body>
 </html>
