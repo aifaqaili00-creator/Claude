@@ -1,6 +1,11 @@
 @echo off
 cd /d "%~dp0"
-if exist ".venv\Scripts\pythonw.exe" goto run
+if not exist ".venv\Scripts\python.exe" goto setup
+".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+if not errorlevel 1 if exist ".venv\Scripts\pythonw.exe" goto run
+echo Python was moved or reinstalled: rebuilding the app's Python (1-2 minutes)...
+rmdir /s /q .venv
+:setup
 
 echo First run: installing what the app needs. This takes 1-2 minutes...
 py -3 -m venv .venv 2>nul
