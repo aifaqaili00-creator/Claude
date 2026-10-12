@@ -1,10 +1,20 @@
 @echo off
 cd /d "%~dp0"
-if not exist ".venv\Scripts\python.exe" goto setup
+if not exist ".venv" goto setup
+if not exist ".venv\pyvenv.cfg" goto broken
+if not exist ".venv\Scripts\python.exe" goto broken
 ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
 if not errorlevel 1 if exist ".venv\Scripts\pythonw.exe" goto run
+:broken
 echo Python was moved or reinstalled: rebuilding the app's Python (1-2 minutes)...
-rmdir /s /q .venv
+:rebuild
+rmdir /s /q .venv 2>nul
+if not exist ".venv" goto setup
+echo.
+echo The old .venv folder is still in use. Close Product Checker completely
+echo (Task Manager: end every "pythonw.exe"), then press a key to try again.
+pause
+goto rebuild
 :setup
 
 echo First run: installing what the app needs. This takes 1-2 minutes...
