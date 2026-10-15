@@ -1,4 +1,4 @@
-"""Launch & strategy hints for one product in one market, from the app's research: price band, profit at your real
+"""Launching strategy hints for one product in one market, from the app's research: price band, profit at your real
 landed cost, reviews to beat, competition, complaints to fix, shopper phrases, timing, a first sales target and the
 search trend. Each hint says when to check it again, and moved() says when its numbers changed enough to look at it
 again. Pure functions; JSON-safe output."""

@@ -12,7 +12,7 @@ from engine import board as rules
 from engine import remind
 
 ALIBABA_SEARCH = 'https://www.alibaba.com/trade/search?SearchText='
-STAGE_COLORS = {'approval': '#d97706', 'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
+STAGE_COLORS = {'idea': '#64748b', 'approval': '#d97706', 'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
 MARK = {'new': ('NEW', '#ecfdf3', '#067647'), 'changed': ('CHANGED', '#fffaeb', '#b54708')}
 
 
@@ -193,9 +193,7 @@ def texts(items, changed, ctx):
     para = 'margin:0 0 12px'
     body = ['<p style="%s">%s</p><p style="%s">%s</p>' % (para, e(hello), para, e(intro))]
     if note:
-        body.append('<div style="margin:0 0 14px;padding:12px 14px;background:#eff4ff;border-radius:8px">'
-                    '<div style="font-size:12px;color:#475467;margin-bottom:4px">Note from %s</div>%s</div>'
-                    % (e(owner), e(note).replace('\n', '<br>')))
+        body.append(_note(owner, note))
     if changed:
         body.append('<div style="margin:0 0 6px;padding:12px 14px;background:#fffaeb;border-left:4px solid #f79009;'
                     'border-radius:8px"><div style="font-weight:600;margin-bottom:6px">%s</div><ul style="margin:0;'
@@ -225,21 +223,99 @@ def texts(items, changed, ctx):
             '<div style="margin-top:12px">%s%s</div></td></tr></table></td></tr>'
             % (STAGE_COLORS.get(p['stage'], '#98a2b3'), pic, e(p['title']), badge, facts,
                btn % (e(p['amazon'], quote=True), '#232f3e', e(a)), btn % (e(p['alibaba'], quote=True), '#c2410c', e(b))))
-    page = (
+    page = _page('Product update \u00b7 ' + remind.nice_day(today), '%d product%s on the board' % (n, '' if n == 1 else 's'),
+                 ''.join(body), ''.join(cards), owner,
+                 ' You get it when products are added or changed.' if ctx.get('auto') else '')
+    return subject(items, changed, today), text, page
+
+
+def _note(owner, note):
+    e = html.escape
+    return ('<div style="margin:0 0 14px;padding:12px 14px;background:#eff4ff;border-radius:8px">'
+            '<div style="font-size:12px;color:#475467;margin-bottom:4px">Note from %s</div>%s</div>'
+            % (e(owner), e(note).replace('\n', '<br>')))
+
+
+def _page(kicker, title, body, rows, owner, extra=''):
+    """The email page: a header (kicker over title), the body, more table rows (already HTML), the sign-off, a footer."""
+    e = html.escape
+    return (
         '<!doctype html><html><body style="margin:0;padding:0;background:#f2f4f7">'
         '<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f2f4f7"><tr>'
         '<td align="center" style="padding:24px 12px"><table role="presentation" width="100%%" cellpadding="0" '
         'cellspacing="0" style="max-width:640px;background:#ffffff;border:1px solid #e4e7ec;border-radius:12px;'
         'font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.55;color:#101828">'
         '<tr><td style="padding:20px 24px 16px;border-bottom:1px solid #e4e7ec">'
-        '<div style="font-size:12px;color:#667085;letter-spacing:.06em;text-transform:uppercase">Product update \u00b7 %s</div>'
+        '<div style="font-size:12px;color:#667085;letter-spacing:.06em;text-transform:uppercase">%s</div>'
         '<div style="font-size:20px;font-weight:700;margin-top:4px">%s</div></td></tr>'
         '<tr><td style="padding:18px 24px 8px">%s</td></tr>%s'
         '<tr><td style="padding:4px 24px 20px">Thanks,<br>%s</td></tr>'
         '<tr><td style="padding:12px 24px;background:#f9fafb;border-top:1px solid #e4e7ec;border-radius:0 0 12px 12px;'
         'font-size:12px;color:#667085">Sent from Product Checker by %s.%s Reply to this email to reach %s.</td></tr>'
         '</table></td></tr></table></body></html>'
-        % (e(remind.nice_day(today)), e('%d product%s on the board' % (n, '' if n == 1 else 's')), ''.join(body),
-           ''.join(cards), e(owner), e(owner),
-           ' You get it when products are added or changed.' if ctx.get('auto') else '', e(owner.split()[0])))
-    return subject(items, changed, today), text, page
+        % (e(kicker), e(title), body, rows, e(owner), e(owner), extra, e(owner.split()[0])))
+
+
+# ---------- the deadlines email (Inform deadlines) ----------
+def due_text(day, today):
+    """'due Mon 19 Oct (in 4 days)', 'due today, Mon 12 Oct' or 'was due Mon 12 Oct (3 days late)'."""
+    n = (rules.day(day) - rules.day(today)).days
+    if n < 0:
+        return 'was due %s (%d day%s late)' % (remind.nice_day(day), -n, '' if n == -1 else 's')
+    if n == 0:
+        return 'due today, %s' % remind.nice_day(day)
+    return 'due %s (in %d day%s)' % (remind.nice_day(day), n, '' if n == 1 else 's')
+
+
+def deadline_texts(items, ctx):
+    """(subject, plain text, HTML) of the deadlines email: every open deadline on the board, the soonest first.
+    items: [{'title', 'market', 'stage', 'due_day', 'note'}] sorted by due day; ctx: {'owner', 'to_names',
+    'message', 'now', 'none': [products without a deadline]}."""
+    today = remind.today(ctx['now'])
+    owner = ctx.get('owner') or 'Product Checker'
+    who = remind.join_names(ctx.get('to_names') or [])
+    note = (ctx.get('message') or '').strip()
+    none = ctx.get('none') or []
+    late = sum(1 for i in items if rules.day(i['due_day']) < today)
+    day = remind.nice_day(today)
+    parts = (['%d late' % late] if late else []) + (['%d coming up' % (len(items) - late)] if len(items) > late else [])
+    subject_ = 'Deadlines, %s: %s' % (day, ', '.join(parts) or 'none set')
+    hello = 'Hi %s,' % who if who else 'Hi,'
+    intro = 'Here are the deadlines on our product board, the soonest first.' if items else \
+        'No product on our board has a deadline yet.'
+    stage = lambda i: rules.STAGE_NAMES.get(i['stage'], i['stage'])          # noqa: E731
+
+    lines = [hello, '', intro]
+    if note:
+        lines += ['', 'Note from %s:' % owner, note]
+    lines.append('')
+    for n, i in enumerate(items, 1):
+        lines.append('%d. %s (%s): %s, %s' % (n, i['title'], _name(i['market']), stage(i), due_text(i['due_day'], today)))
+        if i.get('note'):
+            lines.append('   Note: %s' % i['note'])
+    if none:
+        lines += ['', 'No deadline yet: %s.' % ', '.join(none)]
+    lines += ['', 'Thanks,', owner]
+    text = '\n'.join(lines) + '\n'
+
+    e = html.escape
+    para = 'margin:0 0 12px'
+    body = '<p style="%s">%s</p><p style="%s">%s</p>' % (para, e(hello), para, e(intro)) + (_note(owner, note) if note else '')
+    cell = 'padding:10px 12px;border-top:1px solid #e4e7ec;vertical-align:top'
+    trs = ''.join(
+        '<tr><td style="%s"><div style="font-weight:600">%s</div><div style="font-size:12px;color:#667085">%s%s</div></td>'
+        '<td style="%s;white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%%;'
+        'background:%s;margin-right:6px"></span>%s</td><td style="%s;%s">%s</td></tr>'
+        % (cell, e(i['title']), e(_name(i['market'])), ' \u00b7 ' + e(i['note']) if i.get('note') else '',
+           cell, STAGE_COLORS.get(i['stage'], '#98a2b3'), e(stage(i)), cell,
+           'color:#b42318;font-weight:600' if rules.day(i['due_day']) < today else 'color:#101828',
+           e(due_text(i['due_day'], today))) for i in items)
+    head = ''.join('<th align="left" style="padding:8px 12px;font-size:12px;color:#667085;font-weight:600">%s</th>' % x
+                   for x in ('Product', 'Stage', 'Deadline'))
+    rows = ('<tr><td style="padding:0 24px 14px"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" '
+            'style="border:1px solid #e4e7ec;border-radius:10px;font-size:14px"><tr style="background:#f9fafb">%s</tr>%s'
+            '</table></td></tr>' % (head, trs)) if trs else ''
+    if none:
+        rows += '<tr><td style="padding:0 24px 14px;color:#475467">No deadline yet: %s.</td></tr>' % e(', '.join(none))
+    title = '%d deadline%s on the board' % (len(items), '' if len(items) == 1 else 's')
+    return subject_, text, _page('Deadlines \u00b7 ' + day, title, body, rows, owner)

@@ -31,6 +31,7 @@ function route() {
   document.querySelectorAll('#nav a').forEach(a => {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
+  if ($('navMore').querySelector('[aria-current]')) showMore(true);
   document.querySelectorAll('section.view').forEach(s => s.classList.toggle('on', s.id === 'v-' + (v.section || name)));
   $('pageTitle').textContent = typeof v.title === 'function' ? v.title(params) : v.title;
   $('pageSub').textContent = (typeof v.sub === 'function' ? v.sub(params) : v.sub) || '';
@@ -63,12 +64,38 @@ seg($('themeSeg'), setTheme);
 seg($('themeSeg2'), setTheme);
 applyTheme(PRINT ? 'light' : themePref());
 
+/* ---------- the simple view: parts marked .adv show only with "Show all details"; a PDF always has everything ---------- */
+function applyDetails(all) {
+  all = !!all || !!PRINT;
+  document.documentElement.classList.toggle('simple', !all);
+  if (!PRINT) try { localStorage.setItem('pcDetails', all ? '1' : '0'); } catch (e) {}
+  ['detailsSw', 'detailsSw2'].forEach(id => { if ($(id)) $(id).checked = all; });
+  window.dispatchEvent(new CustomEvent('pc:details'));
+}
+function setDetails(all) {
+  applyDetails(all);
+  api('/api/settings', {show_details: all}).then(r => { ST.settings = r.settings; }).catch(e => toast(e.message));
+}
+['detailsSw', 'detailsSw2'].forEach(id => $(id).addEventListener('change', e => setDetails(e.target.checked)));
+$('detailsOn').addEventListener('click', () => setDetails(true));
+applyDetails(!document.documentElement.classList.contains('simple'));
+
+/* ---------- the sidebar's More group: closed until you open it, and open while you are on one of its pages ---------- */
+function showMore(open, remember) {
+  $('navMore').hidden = !open;
+  $('navMoreBtn').setAttribute('aria-expanded', String(open));
+  if (remember) try { localStorage.setItem('pcNavMore', open ? '1' : '0'); } catch (e) {}
+}
+$('navMoreBtn').addEventListener('click', () => showMore($('navMore').hidden, true));
+try { showMore(localStorage.getItem('pcNavMore') === '1'); } catch (e) { showMore(false); }
+
 /* ---------- status ---------- */
 const BROWSER_STATE = {ready: ['good', 'Checker ready'], starting: ['warn', 'Starting checker…'], error: ['bad', 'Checker error'],
                        stopped: ['weak', 'Checker stopped']};
 function renderStatus() {
   const b = ST.browser || {};
   const bs = BROWSER_STATE[b.state] || ['weak', b.state || 'Checker'];
+  if (ST.version) $('appVersion').textContent = 'Version ' + ST.version;
   $('checkerPill').className = 'pill ' + bs[0];
   $('checkerPill').title = b.error || (b.visible ? 'The checker browser is visible' : 'Runs minimised in the background');
   $('checkerPill').innerHTML = '<i></i><span>' + esc(bs[1]) + '</span>';
@@ -78,10 +105,10 @@ function renderStatus() {
     const cls = l.ok === true ? 'good' : l.ok === false ? 'warn' : 'weak';
     const tip = l.ok === false ? 'Amazon shows “' + (l.text || '?') + '”, wanted ' + (m.location || '') + '. Open Settings to fix it.'
       : l.text ? 'Amazon delivers to: ' + l.text : 'Checked on the first search';
-    h += `<span class="pill ${cls}" title="${esc(tip)}"><i></i>${mkFlag(c, true)} · ${esc(m.location || '')}</span>`;
+    h += `<span class="pill ${cls}${l.ok === false ? '' : ' adv'}" title="${esc(tip)}"><i></i>${mkFlag(c, true)} · ${esc(m.location || '')}</span>`;
   }
   const prof = (ST.profiles || []).find(p => p.id === (ST.settings || {}).profile);
-  h += `<span class="pill line" title="Links and Helium 10 open in this Chrome profile">Chrome: ${esc(prof ? prof.name : 'default')}</span>`;
+  h += `<span class="pill line adv" title="Links and Helium 10 open in this Chrome profile">Chrome: ${esc(prof ? prof.name : 'default')}</span>`;
   $('status').innerHTML = h;
 }
 
@@ -94,6 +121,7 @@ async function poll() {
     const first = !ST.version;
     ST = s;
     if (first && !PRINT && s.settings && s.settings.theme && s.settings.theme !== themePref()) applyTheme(s.settings.theme);
+    if (first && !PRINT && s.settings && s.settings.show_details !== undefined) applyDetails(s.settings.show_details);
     const fresh = s.messages || [];
     fresh.forEach(m => { lastMsg = Math.max(lastMsg, m.t); });
     renderStatus();

@@ -60,7 +60,8 @@ def parse_health(conn, now):
         h = {'search_pages_last_2_days': pages}
         if before_pages:
             h.update(badges_last_2_days=b2, badges_before=bb)
-        r = conn.execute('SELECT n FROM list_snapshot WHERE market=? AND ts>=? ORDER BY ts', (m, now - 14 * 86400)).fetchall()
+        r = conn.execute("SELECT n FROM list_snapshot WHERE market=? AND ts>=? AND kind IN ('movers','new') ORDER BY ts",
+                         (m, now - 14 * 86400)).fetchall()
         ns = [x[0] for x in r if x[0] is not None]
         if len(ns) >= 6:
             recent = ns[-4:]
@@ -132,6 +133,10 @@ def run(S, results=(), now=None):
             found += ops_alerts(conn, S, watches, now)
         except Exception:                                       # noqa: BLE001
             log.exception('ops alerts')
+        try:
+            found += stockout_alerts(conn, now)
+        except Exception:                                       # noqa: BLE001
+            log.exception('stock-out alerts')
         return rules.dedupe(found)
 
     found = S.db.read(build)
@@ -144,6 +149,31 @@ def run(S, results=(), now=None):
         storage.add_alerts(conn, fresh)
         return fresh
     return S.db.write(store)
+
+
+def stockout_alerts(conn, now, fresh_days=3):
+    """Amazon itself out of stock (or no longer selling) on a watched product in Australia or the UAE: watched ASINs,
+    the top listings of watched keywords, lone exporters you watch and the products on your board."""
+    from engine import intel
+    out = []
+    for m in config.TARGET_MARKETS:
+        asins = set(storage.tracked_asins(conn, m))
+        asins |= {r[0] for r in conn.execute("SELECT target FROM watch WHERE kind='lone' AND market=? AND enabled=1", (m,))}
+        asins |= {r[0] for r in conn.execute('SELECT asin FROM board_card WHERE market=? AND asin IS NOT NULL AND archived_at IS NULL',
+                                             (m,))}
+        for a in sorted(x for x in asins if x):
+            rows = [dict(r) for r in conn.execute(
+                "SELECT p.ts, p.fulfillment, p.available, p.buybox_seller, a.title FROM product_snapshot p LEFT JOIN asin a "
+                "ON a.market=p.market AND a.asin=p.asin WHERE p.market=? AND p.asin=? AND p.status IN ('ok','partial') "
+                'ORDER BY p.ts DESC LIMIT 2', (m, a))]
+            if len(rows) < 2 or rows[0]['ts'] < now - fresh_days * 86400:
+                continue
+            for r in rows:
+                r['available'] = None if r['available'] is None else bool(r['available'])
+            alert = intel.amazon_stockout(m, a, rows[0]['title'], rows[1], rows[0], now)
+            if alert:
+                out.append(alert)
+    return out
 
 
 def notify_new(S, fresh):

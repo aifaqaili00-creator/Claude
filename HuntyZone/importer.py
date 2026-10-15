@@ -49,7 +49,8 @@ def as_of(path, name=None):
 
 def market_from_name(name):
     n = Path(name).name.upper()
-    for code, keys in (('AU', ('AU_', '_AU_', 'AUSTRALIA')), ('AE', ('AE_', '_AE_', 'UAE')), ('US', ('US_', '_US_', 'USA'))):
+    for code, keys in (('AU', ('AU_', '_AU_', 'AUSTRALIA')), ('AE', ('AE_', '_AE_', 'UAE')), ('GB', ('UK_', '_UK_', 'GB_', '_GB_')),
+                       ('DE', ('DE_', '_DE_', 'GERMANY')), ('US', ('US_', '_US_', 'USA'))):
         if any(n.startswith(k) or k in n for k in keys):
             return code
     return None

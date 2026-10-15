@@ -12,18 +12,23 @@ try:
 except ImportError:                                          # pragma: no cover (Python < 3.9)
     ZoneInfo = None
 
-VERSION = '6.4'
+VERSION = '7.2'
 APP_DIR = Path(os.environ.get('PC_APP_DIR') or
                Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker')
 MARKETS = ('US', 'AU', 'AE')
-MARKET_TZ = {'US': 'America/New_York', 'AU': 'Australia/Sydney', 'AE': 'Asia/Dubai'}
-_FALLBACK_OFFSET = {'US': -5, 'AU': 10, 'AE': 4}             # used only if the time zone database is missing
+PROOF_MARKETS = ('GB', 'DE')                                # demand only: proof that a product sells, no fee tables
+ALL_MARKETS = MARKETS + PROOF_MARKETS
+TARGET_MARKETS = ('AU', 'AE')                               # where the Gap Finder looks for gaps
+MARKET_TZ = {'US': 'America/New_York', 'AU': 'Australia/Sydney', 'AE': 'Asia/Dubai', 'GB': 'Europe/London',
+             'DE': 'Europe/Berlin'}
+_FALLBACK_OFFSET = {'US': -5, 'AU': 10, 'AE': 4, 'GB': 0, 'DE': 1}   # used only if the time zone database is missing
 CURRENCIES = ('USD', 'AUD', 'AED', 'EUR')                   # prices and supplier costs can be typed in these
 
 # key: (type, default, extra) -- extra = (min, max) for numbers, choices for strings
 SCHEMA = {
     'profile': (str, '', None),
     'theme': (str, 'light', ('light', 'dark', 'system')),
+    'show_details': (bool, False, None),                # off: the simple view hides the advanced parts of each page
     'fast_days': (int, 3, (1, 10)),
     'local_days': (int, 9, (2, 21)),
     'pages': (int, 1, (1, 3)),
@@ -48,6 +53,7 @@ SCHEMA = {
     'target_margin_pct': (int, 20, (5, 60)),            # the margin the highest supplier price leaves you
     'board_low_pct': (int, 30, (5, 90)),                # board stock turns red at this share of the last shipment
     'board_notify': (bool, True, None),                 # Windows notification when stock turns red or a re-order is due
+    'board_live': (bool, True, None),                   # with SP-API keys: units left and daily sales from Amazon every 4 hours
     'board_inform_auto': (bool, True, None),            # email the Notifiers a product update when products are added or changed
     'board_inform_wait': (int, 15, (5, 240)),           # ... once nothing changed for this many minutes
     'mail_method': (str, 'browser', ('browser', 'smtp')),  # browser: emails open ready to send in Gmail / Outlook
@@ -65,6 +71,12 @@ SCHEMA = {
     'mail_meet_link': (str, '', None),                  # optional Zoom / Meet / Teams link for the invite
     'mail_copy_me': (bool, True, None),
     'mail_start_email': (bool, True, None),             # email the people as soon as you set a deadline
+    'gap_auto': (bool, True, None),                     # the Gap Finder runs once a day with the automatic refresh
+    'proof_us': (int, 300, (10, 100000)),               # "sells well": at least this many a month in the USA,
+    'proof_gb': (int, 100, (10, 100000)),               # ... the UK
+    'proof_de': (int, 100, (10, 100000)),               # ... and Germany
+    'ai_model': (str, 'claude-sonnet-4-5', None),      # Ask AI: the Claude model (only with an API key saved)
+    'ai_month_usd': (float, 5.0, (0.5, 500)),           # ... and the most it may cost a month (US$)
 }
 EMAIL_RX = re.compile(r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$')
 # free-text settings that must look right: (pattern, what it should be)
@@ -73,14 +85,15 @@ CHECKS = {
     'mail_host': (re.compile(r'^[A-Za-z0-9.\-]{1,253}$'), 'a server name like smtp.gmail.com'),
     'mail_meet_time': (re.compile(r'^(?:[01]\d|2[0-3]):[0-5]\d$'), 'a time like 15:00'),
     'mail_meet_link': (re.compile(r'^https://[^\s<>"\']{3,300}$'), 'a link starting with https://'),
+    'ai_model': (re.compile(r'^claude-[a-z0-9.\-]{2,60}$'), 'a Claude model name like claude-sonnet-4-5'),
 }
-DEFAULT_LOCATIONS = {'US': '10001', 'AU': '2000', 'AE': 'Dubai'}
+DEFAULT_LOCATIONS = {'US': '10001', 'AU': '2000', 'AE': 'Dubai', 'GB': 'SW1A 1AA', 'DE': '10115'}
 
 
 def defaults():
     d = {k: v[1] for k, v in SCHEMA.items()}
     d['locations'] = dict(DEFAULT_LOCATIONS)
-    d['categories'] = {m: [] for m in MARKETS}                 # chosen Movers & Shakers slugs per market
+    d['categories'] = {m: [] for m in ALL_MARKETS}             # chosen Movers & Shakers slugs per market
     d['registered'] = {'AU': False, 'AE': False}               # registered for GST / VAT
     return d
 
@@ -152,11 +165,11 @@ def _merge_sub(out, key, value):
         out[name] = dict(out[name])
     if key == 'locations':
         for m, loc in value.items():
-            if m in MARKETS and str(loc).strip():
+            if m in ALL_MARKETS and str(loc).strip():
                 out['locations'][m] = str(loc).strip()[:40]
     elif key == 'categories':
         for m, slugs in value.items():
-            if m in MARKETS and isinstance(slugs, list):
+            if m in ALL_MARKETS and isinstance(slugs, list):
                 out['categories'][m] = [re.sub(r'[^a-z0-9-]', '', str(x).lower())[:60] for x in slugs][:20]
     elif key == 'registered':
         for m in ('AU', 'AE'):

@@ -12,6 +12,7 @@ const ago = t => {
 const compact = v => v == null ? '' : Math.abs(v) >= 1e6 ? num(v / 1e6, 1) + 'M' : Math.abs(v) >= 1e4 ? num(v / 1e3, 0) + 'K' : Math.abs(v) >= 1e3 ? num(v / 1e3, 1) + 'K' : num(v);
 const MK = {AU: 'Australia', AE: 'UAE', US: 'USA'};
 const MK_SHORT = {AU: 'AU', AE: 'UAE', US: 'US'};
+const MK_PROOF = {GB: 'UK', DE: 'Germany'};             // proof markets of the Gap Finder: not in the market pickers
 const COUNTRY = {AU: 'Australia', AE: 'United Arab Emirates', US: 'United States', CN: 'China', HK: 'Hong Kong', GB: 'United Kingdom',
   DE: 'Germany', IN: 'India', JP: 'Japan', KR: 'South Korea', TW: 'Taiwan', VN: 'Vietnam', CA: 'Canada', TR: 'Turkey', SG: 'Singapore',
   FR: 'France', IT: 'Italy', ES: 'Spain', NL: 'Netherlands', PL: 'Poland', MY: 'Malaysia', TH: 'Thailand', PK: 'Pakistan', ID: 'Indonesia'};
@@ -25,7 +26,7 @@ function cflag(code, label) {
   return DRAWN_FLAGS.has(c) ? `<svg class="cflag" ${a11y}>${name ? '<title>' + esc(name) + '</title>' : ''}<use href="#f-${c}"/></svg>`
     : `<span class="cflag code" ${a11y}${name ? ` title="${esc(name)}"` : ''}>${c}</span>`;
 }
-const mkFlag = (m, short) => cflag(m, '') + esc((short ? MK_SHORT : MK)[m] || m);   // flag + market name
+const mkFlag = (m, short) => cflag(m, '') + esc((short ? MK_SHORT : MK)[m] || MK_PROOF[m] || m);   // flag + market name
 /* PDF mode: the hidden browser that makes a PDF opens a report as /?print=summary,sellers,... (the parts to keep). */
 const PRINT = (() => { const p = new URLSearchParams(location.search).get('print'); return p == null ? null : p.split(',').filter(Boolean); })();
 if (PRINT) document.documentElement.classList.add('print');

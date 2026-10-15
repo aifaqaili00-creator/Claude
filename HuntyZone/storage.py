@@ -28,7 +28,7 @@ log = logging.getLogger('pc')
 
 VALID = ('ok', 'empty', 'partial')            # statuses that count as data; anything else is a gap
 STATUSES = VALID + ('captcha', 'blocked', 'geo_redirect', 'wrong_location', 'empty_suspect', 'offline', 'timeout',
-                    'error')
+                    'error', 'missing')
 LOW_REVIEWS = 100                              # "easy to compete with" listings have fewer reviews than this
 DELIVERY_KEEP_DAYS = 14                        # raw delivery text is dropped after this; the flags stay
 SERP_ITEM_KEEP_DAYS = 180                      # then one snapshot per keyword, market and month is kept
@@ -36,9 +36,10 @@ LIST_ITEM_KEEP_DAYS = 400
 FETCH_LOG_KEEP_DAYS = 30
 ALERT_KEEP_DAYS = 180
 SUGGEST_KEEP_DAYS = 180                        # older Amazon suggestions go, except the newest per prefix
+GAP_KEEP_DAYS = 180                            # older Gap Finder checks and offer readings go, except the newest
 BACKUPS = {'daily': 2, 'weekly': 2}
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 MIGRATIONS = {
     1: """
 -- operations
@@ -178,6 +179,31 @@ CREATE INDEX board_hint_card ON board_hint(card_id);
 CREATE INDEX board_event_card ON board_event(card_id, ts);
 CREATE INDEX board_task_card ON board_task(card_id, stage);
 CREATE INDEX board_mail_due ON board_mail(status, send_at);
+""",
+    6: """
+-- the Global Gap Finder (no semicolons in comments: migrations are split on them)
+ALTER TABLE product_snapshot ADD COLUMN available INT;
+ALTER TABLE product_snapshot ADD COLUMN merchant_id TEXT;
+ALTER TABLE product_snapshot ADD COLUMN safety_json TEXT;
+CREATE TABLE offer_snapshot(id INTEGER PRIMARY KEY, market TEXT, asin TEXT, ts INT, source TEXT, status TEXT,
+  available INT, n_offers INT, amazon INT, n_fba INT, n_fbm INT, offers_json TEXT);
+CREATE TABLE gap_check(id INTEGER PRIMARY KEY, ts INT, day TEXT, market TEXT, asin TEXT, cluster TEXT, phrase TEXT,
+  status TEXT, gap_type TEXT, data_json TEXT);
+CREATE INDEX offer_snapshot_key ON offer_snapshot(market, asin, ts);
+CREATE INDEX gap_check_key ON gap_check(cluster, market, ts);
+CREATE INDEX gap_check_ts ON gap_check(ts);
+""",
+    7: """
+-- Market intelligence: the ads on a search page, a listing's images and content, and the product-page carousels
+ALTER TABLE serp_snapshot ADD COLUMN ads_json TEXT;
+ALTER TABLE product_snapshot ADD COLUMN listing_json TEXT;
+CREATE TABLE related(market TEXT, asin TEXT, kind TEXT, other TEXT, pos INT, ts INT, PRIMARY KEY(market, asin, kind, other));
+CREATE INDEX related_other ON related(market, other);
+""",
+    8: """
+-- the Product board: where a stock count came from (you or the SP-API) and Amazon's daily sales of your products
+ALTER TABLE board_stock ADD COLUMN source TEXT;
+CREATE TABLE board_sales(card_id INT, market TEXT, day TEXT, units INT, ts INT, PRIMARY KEY(card_id, market, day));
 """,
 }
 
@@ -524,6 +550,8 @@ def save_serp(conn, s, source='user', run_id=None, pages=1, location_wanted=None
         'origin_unknown': s.get('origin_unknown'), 'fast_days': s.get('fast_days'), 'local_days': s.get('local_days'),
         'parse_health': _num(s.get('parse_health')), 'error': (s.get('error') or '')[:300] or None, **agg,
     }
+    if s.get('ads') is not None:
+        cols['ads_json'] = json.dumps(s['ads'])
     names = list(cols)
     cur = conn.execute('INSERT INTO serp_snapshot(%s) VALUES (%s)' % (', '.join(names), ','.join('?' * len(names))),
                        [cols[n] for n in names])
@@ -570,7 +598,8 @@ def snapshot_as_summary(conn, snap):
     kw = conn.execute('SELECT display FROM keyword WHERE kw_norm=?', (snap['kw_norm'],)).fetchone()
     return {'market': snap['market'], 'keyword': kw[0] if kw else snap['kw_norm'], 'location': snap['location'] or '',
             'checked_at': snap['ts'], 'rows': snapshot_rows(conn, snap['id'], snap['market']),
-            'snapshot_id': snap['id'], 'status': snap['status'], 'pages': snap['pages']}
+            'snapshot_id': snap['id'], 'status': snap['status'], 'pages': snap['pages'],
+            'ads': json.loads(snap['ads_json']) if snap.get('ads_json') else None}
 
 
 def latest_serp(conn, market, kw, pages=None, location_wanted=None, max_age_s=None, now=None, statuses=VALID):
@@ -691,26 +720,29 @@ def save_list(conn, market, kind, slug, category, items, status='ok', run_id=Non
     return sid
 
 
-def list_history(conn, market, since_ts=0):
-    """List items since a time, with their snapshot's kind, slug, time and status (for surge scores)."""
+def list_history(conn, market, since_ts=0, kinds=('movers', 'new')):
+    """List items since a time, with their snapshot's kind, slug, time and status (for surge scores). Best Sellers
+    lists (kind 'best', the Gap Finder's proof) are left out unless asked for."""
     return _rows(conn.execute(
         'SELECT s.kind, s.slug, s.category, s.ts, s.day, s.status, s.n, i.*, a.title, a.image FROM list_snapshot s '
         'JOIN list_item i ON i.snapshot_id=s.id LEFT JOIN asin a ON a.market=s.market AND a.asin=i.asin '
-        'WHERE s.market=? AND s.ts>=? ORDER BY s.ts', (market, since_ts)))
+        'WHERE s.market=? AND s.ts>=? AND s.kind IN (%s) ORDER BY s.ts' % ','.join('?' * len(kinds)),
+        (market, since_ts, *kinds)))
 
 
-def list_scans(conn, market, since_ts=0):
+def list_scans(conn, market, since_ts=0, kinds=('movers', 'new')):
     """List scans grouped as engine.surge expects: [{'ts', 'day', 'market', 'kind', 'slug', 'category', 'n',
     'status', 'items': [...]}], oldest first. 'n_median' is the median n of the same list in the window."""
     scans = {}
-    for r in list_history(conn, market, since_ts):
+    for r in list_history(conn, market, since_ts, kinds):
         sc = scans.setdefault(r['snapshot_id'], {'id': r['snapshot_id'], 'ts': r['ts'], 'day': r['day'], 'market': market,
                                                  'kind': r['kind'], 'slug': r['slug'], 'category': r['category'],
                                                  'n': r['n'], 'status': r['status'], 'items': []})
         sc['items'].append({k: r[k] for k in ('asin', 'pos', 'pct', 'rank_now', 'rank_before', 'price', 'rating',
                                               'reviews', 'title', 'image')} | {'deal': bool(r['deal'])})
     for r in conn.execute('SELECT id, ts, day, kind, slug, category, n, status FROM list_snapshot '
-                          'WHERE market=? AND ts>=? AND n=0', (market, since_ts)):
+                          'WHERE market=? AND ts>=? AND n=0 AND kind IN (%s)' % ','.join('?' * len(kinds)),
+                          (market, since_ts, *kinds)):
         scans.setdefault(r[0], {'id': r[0], 'ts': r[1], 'day': r[2], 'market': market, 'kind': r[3], 'slug': r[4],
                                 'category': r[5], 'n': 0, 'status': r[7], 'items': []})
     out = sorted(scans.values(), key=lambda s: s['ts'])
@@ -732,11 +764,18 @@ def save_product(conn, market, asin, p, ts=None, run_id=None):
     cur = conn.execute(
         'INSERT INTO product_snapshot(run_id, market, asin, ts, day, status, root_rank, root_node, sub_ranks_json, badge_low, '
         'price, offers, rating, reviews, buybox_seller, ships_from, sold_by_amazon, n_variations, delivery_days, origin, '
-        'seller_id, fulfillment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'seller_id, fulfillment, available, merchant_id, safety_json, listing_json) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         (run_id, market, asin, t, config.market_day(t, market), status, p.get('root_rank'), p.get('root_node'),
          json.dumps(p.get('sub_ranks') or []), p.get('badge_low'), _num(p.get('price')), p.get('offers'),
          _num(p.get('rating')), p.get('reviews'), p.get('buybox_seller'), p.get('ships_from'), p.get('sold_by_amazon'),
-         p.get('n_variations'), p.get('delivery_days'), p.get('origin'), p.get('seller_id'), p.get('fulfillment')))
+         p.get('n_variations'), p.get('delivery_days'), p.get('origin'), p.get('seller_id'), p.get('fulfillment'),
+         None if p.get('available') is None else int(bool(p['available'])), p.get('merchant_id'),
+         json.dumps({'safety': p.get('safety') or [], 'item_form': p.get('item_form'),
+                     'bullets': (p.get('bullets') or '')[:600]}) if status in VALID else None,
+         json.dumps(p['listing']) if status in VALID and p.get('listing') else None))
+    if status in VALID and p.get('related'):
+        save_related(conn, market, asin, p['related'], t)
     if status in VALID:
         upsert_asins(conn, market, [{'asin': asin, 'title': p.get('title'), 'image': p.get('image'), 'brand': p.get('brand')}], t)
         dims = p.get('pkg_cm') or [None, None, None]
@@ -761,6 +800,29 @@ def product_history(conn, market, asin, since_ts=0):
     for r in rows:
         r['sub_ranks'] = json.loads(r.pop('sub_ranks_json') or '[]')
     return rows
+
+
+# ---------- "customers also bought" and the other product-page carousels ----------
+def save_related(conn, market, asin, related, ts=None):
+    """One page's carousels {kind: [{'asin', 'title'}]}: each kind it showed replaces that kind's links."""
+    t = _now(ts)
+    for kind, items in related.items():
+        conn.execute('DELETE FROM related WHERE market=? AND asin=? AND kind=?', (market, asin, kind))
+        for pos, it in enumerate(items, 1):
+            conn.execute('INSERT OR REPLACE INTO related(market, asin, kind, other, pos, ts) VALUES (?,?,?,?,?,?)',
+                         (market, asin, kind, it['asin'], pos, t))
+            conn.execute("INSERT INTO asin(market, asin, title, image, first_seen, last_seen) VALUES (?,?,?,'',?,?) "
+                         "ON CONFLICT(market, asin) DO UPDATE SET title=COALESCE(NULLIF(title, ''), excluded.title)",
+                         (market, it['asin'], (it.get('title') or '')[:300] or None, t, t))   # a carousel's short title never wins
+
+
+def related_links(conn, market, asins):
+    """Every carousel link from or to these ASINs: [{'asin', 'kind', 'other', 'pos', 'ts'}]."""
+    if not asins:
+        return []
+    q = ','.join('?' * len(asins))
+    return _rows(conn.execute('SELECT * FROM related WHERE market=? AND (asin IN (%s) OR other IN (%s)) ORDER BY kind, pos'
+                              % (q, q), (market, *asins, *asins)))
 
 
 def asin_info(conn, market, asin):
@@ -832,6 +894,62 @@ def latest_products(conn, market, asins):
         "WHERE p.market=? AND p.asin IN (%s) AND p.status IN ('ok','partial') ORDER BY p.ts" % ','.join('?' * len(asins)),
         (market, *asins))
     return {r['asin']: dict(r) for r in rows}                     # ordered by time: the newest wins
+
+
+def latest_page(conn, market, asin, since_ts=0):
+    """The newest product-page reading of one listing since a time, whatever its status (a 'missing' page counts),
+    with its safety facts unpacked; None when it was not read."""
+    r = conn.execute('SELECT p.*, a.title, a.brand, a.image, a.pkg_l_cm, a.pkg_w_cm, a.pkg_h_cm, a.pkg_kg FROM product_snapshot p '
+                     'LEFT JOIN asin a ON a.market=p.market AND a.asin=p.asin WHERE p.market=? AND p.asin=? AND p.ts>=? '
+                     'ORDER BY p.ts DESC LIMIT 1', (market, asin, since_ts)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    d.update(json.loads(d.pop('safety_json') or '{}'))
+    return d
+
+
+# ---------- who offers a listing, and the Gap Finder's checks ----------
+def save_offers(conn, market, asin, offers, summary, source, status='ok', ts=None):
+    """One reading of who offers a listing (engine.offers shape), from its product page or the SP-API."""
+    conn.execute('INSERT INTO offer_snapshot(market, asin, ts, source, status, available, n_offers, amazon, n_fba, n_fbm, '
+                 'offers_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                 (market, asin, _now(ts), source, status, None if summary.get('available') is None else int(bool(summary['available'])),
+                  summary.get('n_offers'), int(bool(summary.get('amazon'))), summary.get('n_fba'), summary.get('n_fbm'),
+                  json.dumps(offers or [])))
+
+
+def latest_offers(conn, market, asin, before_ts=None):
+    """The newest good offers reading of a listing (before a time, when given): {'ts', 'source', 'available', 'n_offers',
+    'amazon', 'offers'} or None."""
+    sql = "SELECT * FROM offer_snapshot WHERE market=? AND asin=? AND status='ok'"
+    params = [market, asin]
+    if before_ts is not None:
+        sql += ' AND ts<?'
+        params.append(before_ts)
+    r = conn.execute(sql + ' ORDER BY ts DESC, id DESC LIMIT 1', params).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    d['offers'] = json.loads(d.pop('offers_json') or '[]')
+    return d
+
+
+def save_gap_check(conn, market, asin, cluster, phrase, status, gap_type, data, ts=None):
+    t = _now(ts)
+    conn.execute('INSERT INTO gap_check(ts, day, market, asin, cluster, phrase, status, gap_type, data_json) '
+                 'VALUES (?,?,?,?,?,?,?,?,?)', (t, config.market_day(t, market), market, asin, cluster, phrase, status,
+                                                gap_type, json.dumps(data)))
+
+
+def gap_checks(conn, since_ts=0):
+    """The newest check of each product (cluster) in each target market since a time: [{..., 'data'}]."""
+    rows = _rows(conn.execute(
+        'SELECT g.* FROM gap_check g JOIN (SELECT cluster, market, MAX(id) AS id FROM gap_check WHERE ts>=? '
+        'GROUP BY cluster, market) n ON n.id=g.id ORDER BY g.ts DESC', (since_ts,)))
+    for r in rows:
+        r['data'] = json.loads(r.pop('data_json') or '{}')
+    return rows
 
 
 def calib_obs(conn, market, now=None):
@@ -1080,7 +1198,7 @@ def kw_volume(conn, market, kw):
 
 
 # ---------- watchlist ----------
-WATCH_KINDS = ('keyword', 'asin', 'seed', 'category')
+WATCH_KINDS = ('keyword', 'asin', 'seed', 'category', 'lone')
 STAGES = ('idea', 'researching', 'sourcing', 'ordered', 'launched', 'rejected')
 
 
@@ -1175,6 +1293,13 @@ def retention(conn, now=None):
     out['suggest_items_dropped'] = conn.execute(
         'DELETE FROM suggest_item WHERE snapshot_id IN (SELECT id FROM suggest_snapshot WHERE %s)' % old, cut).rowcount
     out['suggest_snapshots_dropped'] = conn.execute('DELETE FROM suggest_snapshot WHERE %s' % old, cut).rowcount
+    gap_cut = (now - GAP_KEEP_DAYS * day,)
+    out['gap_checks_dropped'] = conn.execute(
+        'DELETE FROM gap_check WHERE ts<? AND id NOT IN (SELECT MAX(id) FROM gap_check GROUP BY cluster, market)',
+        gap_cut).rowcount
+    out['offer_readings_dropped'] = conn.execute(
+        'DELETE FROM offer_snapshot WHERE ts<? AND id NOT IN (SELECT MAX(id) FROM offer_snapshot GROUP BY market, asin)',
+        gap_cut).rowcount
     return out
 
 

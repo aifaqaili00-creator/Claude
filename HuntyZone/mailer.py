@@ -1,11 +1,13 @@
 """Email for the product board's reminders. Two ways to send:
 
 - browser (the default): each email opens ready to send in Gmail or Outlook, in the Edge or Chrome profile you pick
-  (where you are already signed in), and you press Send. No password is stored.
+  (where you are already signed in), and you press Send. With Gmail, the update meeting opens as a Google Calendar
+  event with the guests added: you press Save and Google emails them the invitation. No password is stored.
 - smtp: your Gmail (or another SMTP server) with an app password that is kept encrypted for your Windows user. Emails
   then go out by themselves, with the calendar invite attached.
 
-Builds the messages (plain text, HTML, calendar invite) and sends or opens them."""
+Builds the messages (plain text, HTML, calendar invite) and sends or opens them. With PC_NO_EMAIL set (a development
+PC), no email is sent or opened."""
 import collections
 import email.message
 import email.utils
@@ -21,12 +23,15 @@ from urllib.parse import quote, urlencode
 import chrome_profiles as cp
 import config
 import winsys
+from engine import remind
 
 MAX_TO = 20                     # recipients per email, Bcc included
 MAX_PER_HOUR = 50
 TIMEOUT = 30
 BODY_MAX = 6000                 # longer bodies are cut: browsers and webmail limit the length of a link
 OUTLOOK_DOMAINS = ('outlook.', 'hotmail.', 'live.', 'msn.com', 'windowslive.com')
+CALENDAR_URL = 'https://calendar.google.com/calendar/render'
+OFF_SWITCH = 'PC_NO_EMAIL'
 _sent = collections.deque()
 _lock = threading.Lock()
 
@@ -84,13 +89,30 @@ def method(settings):
 
 
 def mail_profile(settings, profiles=None):
-    """The browser profile emails open in: the one chosen for email, else the one for links. {} if none is known."""
+    """The browser profile emails open in: the one chosen for email; else (Automatic) the Edge or Chrome profile
+    signed in with your email address; else the one for links. {} if none is known."""
     profiles = cp.list_profiles() if profiles is None else profiles
-    for pid in (settings.get('mail_profile'), settings.get('profile')):
-        for p in profiles:
-            if pid and p['id'] == pid:
-                return p
+    chosen, links = settings.get('mail_profile'), settings.get('profile')
+    addr = (settings.get('mail_address') or '').strip().lower()
+    for p in profiles:
+        if chosen and p['id'] == chosen:
+            return p
+    for p in profiles:
+        if addr and (p.get('email') or '').strip().lower() == addr:
+            return p
+    for p in profiles:
+        if links and p['id'] == links:
+            return p
     return {}
+
+
+def google_account(settings, profile=None):
+    """The Google account Gmail and Calendar should open in: your email address, else the profile's account."""
+    for a in (settings.get('mail_address'), (profile or {}).get('email')):
+        a = (a or '').strip()
+        if config.EMAIL_RX.match(a):
+            return a
+    return ''
 
 
 def web_service(settings, profile=None):
@@ -106,13 +128,18 @@ def web_service(settings, profile=None):
     return 'gmail'
 
 
-def compose_url(service, to, subject, text, bcc=None):
-    """A link that opens a new email, filled in, in Gmail or Outlook on the web."""
-    to_s = ','.join(e for _, e in to or [])
-    bcc_s = ','.join(e for _, e in bcc or [])
+def _cut(text):
     body = str(text or '')
     if len(body) > BODY_MAX:
         body = body[:BODY_MAX].rstrip() + '\n\n[... cut: the full text is in Product Checker]'
+    return body
+
+
+def compose_url(service, to, subject, text, bcc=None, account=''):
+    """A link that opens a new email, filled in, in Gmail or Outlook on the web (Gmail in `account`, when given)."""
+    to_s = ','.join(e for _, e in to or [])
+    bcc_s = ','.join(e for _, e in bcc or [])
+    body = _cut(text)
     subject = re.sub(r'[\r\n]+', ' ', str(subject or ''))[:200]
     if service in ('outlook', 'office'):
         base = ('https://outlook.office.com/mail/deeplink/compose' if service == 'office'
@@ -124,7 +151,27 @@ def compose_url(service, to, subject, text, bcc=None):
     q = {'view': 'cm', 'fs': '1', 'tf': '1', 'to': to_s, 'su': subject, 'body': body}
     if bcc_s:
         q['bcc'] = bcc_s
+    if account:
+        q['authuser'] = account
     return 'https://mail.google.com/mail/?' + urlencode(q, quote_via=quote)
+
+
+def calendar_url(event, guests, account=''):
+    """A link that opens a new Google Calendar event, filled in, with the guests added (Calendar of `account`, when
+    given). event: read_ics() of the invite. You press Save and Google emails the guests the invitation."""
+    def utc(ts):
+        return time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(ts))
+    start = int(event['start'])
+    end = int(event.get('end') or start + 30 * 60)
+    q = {'action': 'TEMPLATE', 'text': re.sub(r'[\r\n]+', ' ', str(event.get('summary') or ''))[:200],
+         'dates': '%s/%s' % (utc(start), utc(end)), 'details': _cut(event.get('description'))}
+    if event.get('location'):
+        q['location'] = str(event['location'])[:300]
+    if guests:
+        q['add'] = ','.join(guests)
+    if account:
+        q['authuser'] = account
+    return CALENDAR_URL + '?' + urlencode(q, quote_via=quote)
 
 
 def where(settings, profiles=None):
@@ -222,8 +269,9 @@ def _rate(now):
         _sent.append(now)
 
 
-def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now=None):
-    """Open the email, filled in, in your browser profile's Gmail or Outlook; you press Send. Returns the link."""
+def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now=None, ics=None):
+    """Open the email, filled in, in your browser profile's Gmail or Outlook; you press Send. With Gmail, a meeting
+    (ics) opens as a Google Calendar event with the guests added instead; you press Save. Returns the link."""
     if not to:
         raise MailError('Nobody to send to.')
     for _, e in to:
@@ -232,7 +280,13 @@ def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now
         raise MailError('At most %d people per email.' % MAX_TO)
     _rate(now or time.time())
     p = mail_profile(settings, profiles)
-    url = compose_url(web_service(settings, p), to, subject, text)
+    service = web_service(settings, p)
+    account = google_account(settings, p) if service == 'gmail' else ''
+    event = remind.read_ics(ics) if ics and service == 'gmail' else None
+    if event and event['start']:
+        url = calendar_url(event, [e for _, e in to], account)
+    else:
+        url = compose_url(service, to, subject, text, account=account)
     try:
         (opener or cp.open_url)(url, p.get('id', ''))
     except OSError as e:
@@ -240,11 +294,20 @@ def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now
     return url
 
 
+def outcome(result):
+    """What deliver() did: 'calendar' (a Google Calendar event opened), 'opened' (an email opened) or 'sent'."""
+    if isinstance(result, str):
+        return 'calendar' if result.startswith(CALENDAR_URL) else 'opened'
+    return 'sent'
+
+
 def deliver(settings, path, to, subject, text, html=None, ics=None, transport=None, opener=None):
     """Send one email: open it ready to send in your browser, or send it from the saved account (you get a copy as
     Bcc when settings say so)."""
+    if os.environ.get(OFF_SWITCH) and transport is None and opener is None:
+        raise MailError('Email is switched off on this PC (%s is set).' % OFF_SWITCH)
     if method(settings) == 'browser':
-        return open_in_browser(settings, to, subject, text, opener)
+        return open_in_browser(settings, to, subject, text, opener, ics=ics)
     ok, why = ready(settings, path)
     if not ok:
         raise MailError(why)

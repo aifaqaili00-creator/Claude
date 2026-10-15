@@ -5,8 +5,16 @@ function icon(name, cls = 'sm') { return `<svg class="icon ${cls}" aria-hidden="
 function toast(msg, ms = 5000) {
   const box = $('toasts'), t = document.createElement('div');
   t.className = 'toast'; t.textContent = msg;
-  box.appendChild(t); setTimeout(() => t.remove(), ms);
+  box.appendChild(t); setTimeout(() => { t.remove(); raiseToasts(); }, ms);
   while (box.children.length > 4) box.firstChild.remove();
+  raiseToasts();
+}
+/* An open dialog covers everything, so the toast box is a popover, shown again on top whenever its toasts change. */
+function raiseToasts() {
+  const box = $('toasts');
+  if (!box.showPopover) return;
+  if (box.matches(':popover-open')) box.hidePopover();
+  if (box.children.length) box.showPopover();
 }
 
 /* Segmented control: single choice, or several when el.dataset.multi is set. */
@@ -24,8 +32,11 @@ function setSeg(el, v) { el.querySelectorAll('button').forEach(b => b.setAttribu
 
 const busy = text => '<span class="spin"></span><span>' + esc(text) + '</span>';
 const failPill = msg => '<span class="pill bad">' + icon('x') + esc(msg) + '</span>';
+/* An explanation that stays closed until you click its (i). html must already be escaped. */
+const explain = (html, label = 'What this means') =>
+  `<details class="explain"><summary>${icon('info')}<span>${esc(label)}</span></summary><div class="note">${html}</div></details>`;
 
-/* Put a product on the board: {title, market, asin, kw, image}. */
+/* Put a product on the board: {title, market, asin, alibaba, kw, image}. */
 async function addToBoard(item) {
   try {
     const r = await api('/api/board/add', item);

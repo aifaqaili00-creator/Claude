@@ -33,8 +33,8 @@
   const basisPill = e => e ? `<span class="pill line" title="How this number was made">${esc(BASIS_LABEL[e.basis] || e.basis)}</span>` : '';
   const tMs = t => t * 1000;
 
-  function tile(label, value, sub, extra = '') {
-    return `<div class="kpi"><span class="eyebrow">${esc(label)}</span><span class="v">${value}</span>${sub ? `<span class="s">${sub}</span>` : ''}${extra}</div>`;
+  function tile(label, value, sub, extra = '', cls = '') {
+    return `<div class="kpi ${cls}"><span class="eyebrow">${esc(label)}</span><span class="v">${value}</span>${sub ? `<span class="s">${sub}</span>` : ''}${extra}</div>`;
   }
 
   function render(d) {
@@ -57,10 +57,10 @@
             <button class="btn primary" id="kRefresh">${icon('refresh')}Refresh now</button>
             <button class="btn" id="kPdf" title="Save the parts of this report you choose as a PDF in Downloads">${icon('pdf')}PDF</button>
             <button class="btn" data-open="${esc(d.search_url)}">Amazon${icon('external')}</button>
-            <button class="btn" data-open="${esc(d.trends_url)}">Google Trends${icon('external')}</button>
-            <button class="btn" data-open="${esc(alibabaUrl(d.keyword))}" title="Find suppliers for this product on Alibaba">Alibaba${icon('external')}</button>
-            <button class="btn" data-open="${esc(OTHER_SHOP[d.market].url + encodeURIComponent(d.keyword))}" title="The same search on ${OTHER_SHOP[d.market].name}, another big shop in ${esc(MK[d.market])}">${OTHER_SHOP[d.market].name}${icon('external')}</button>
-            <button class="btn" id="kXray">${icon('scan')}Xray</button>
+            <button class="btn adv" data-open="${esc(d.trends_url)}">Google Trends${icon('external')}</button>
+            <button class="btn adv" data-open="${esc(alibabaUrl(d.keyword))}" title="Find suppliers for this product on Alibaba">Alibaba${icon('external')}</button>
+            <button class="btn adv" data-open="${esc(OTHER_SHOP[d.market].url + encodeURIComponent(d.keyword))}" title="The same search on ${OTHER_SHOP[d.market].name}, another big shop in ${esc(MK[d.market])}">${OTHER_SHOP[d.market].name}${icon('external')}</button>
+            <button class="btn adv" id="kXray">${icon('scan')}Xray</button>
             <button class="btn" id="kWatch" title="Re-check this keyword every day and fetch Google Trends weekly">${icon('eye')}Watch</button>
             <button class="btn" id="kBoard" title="Start sourcing it: the board tracks the order, the launch and re-orders">${icon('board')}Add to board</button>
           </div>
@@ -72,11 +72,11 @@
         <div class="panel stackv" id="kScore"></div>
         <div class="kpis">
           ${tile('Units sold / month', last ? fmtU(last.units.v) : '–', last ? (rangeText(last.units) ? rangeText(last.units) + ' · ' : '') + monthName(last.month) : 'no estimate yet', last ? basisPill(last.units) : '')}
-          ${tile('Revenue / month', last && last.revenue && last.revenue.v != null ? esc(cur) + ' ' + compact(last.revenue.v) : '–', last && last.revenue ? [approx(last.revenue.v, d.market, {short: true}), rangeText(last.revenue)].filter(Boolean).join(' · ') : '', last && last.revenue ? basisPill(last.revenue) : '')}
+          ${tile('Revenue / month', last && last.revenue && last.revenue.v != null ? esc(cur) + ' ' + compact(last.revenue.v) : '–', last && last.revenue ? [approx(last.revenue.v, d.market, {short: true}), rangeText(last.revenue)].filter(Boolean).join(' · ') : '', last && last.revenue ? basisPill(last.revenue) : '', 'adv')}
           ${tile('Local sellers', now ? now.local : '–', now ? `${now.fast} fast · ${now.overseas} overseas of ${now.total}` : '')}
           ${tile('Search trend', tr.label ? esc(tr.label) : tr.status === 'low_volume' ? 'Low volume' : '–', tr.score != null ? 'score ' + Math.round(tr.score) + ' of 100' : tr.status === 'none' ? 'not fetched yet' : '')}
-          ${tile('Review barrier', comp && comp.review_barrier != null ? num(comp.review_barrier) : '–', 'median reviews, top 10')}
-          ${d.demand.volume && d.demand.volume.length ? tile('Searches / month', compact(d.demand.volume[d.demand.volume.length - 1].volume), 'Helium 10 ' + esc(d.demand.volume[d.demand.volume.length - 1].source) + ', ' + esc(d.demand.volume[d.demand.volume.length - 1].month)) : ''}
+          ${tile('Review barrier', comp && comp.review_barrier != null ? num(comp.review_barrier) : '–', 'median reviews, top 10', '', 'adv')}
+          ${d.demand.volume && d.demand.volume.length ? tile('Searches / month', compact(d.demand.volume[d.demand.volume.length - 1].volume), 'Helium 10 ' + esc(d.demand.volume[d.demand.volume.length - 1].source) + ', ' + esc(d.demand.volume[d.demand.volume.length - 1].month), '', 'adv') : ''}
           ${tile('Price', comp && comp.prices.length ? esc(cur) + ' ' + num(median(comp.prices), 0) : '–', comp && comp.prices.length ? [approx(median(comp.prices), d.market, {d: 0}), 'median of ' + comp.prices.length + ' listings'].filter(Boolean).join(' · ') : '')}
         </div>
       </section>
@@ -90,19 +90,19 @@
       </section>
       <section class="rsec stackv" data-sec="demand">
         <h2 class="section">Demand</h2>
-        ${tr.why && tr.why.length ? `<div class="panel"><h3 style="margin-bottom:8px">Why the search trend is “${esc(tr.label)}”</h3><ul class="reasons">${tr.why.map(w => `<li class="${/Declining|Fad/.test(tr.label) ? 'bad' : /Spike|Mixed|Seasonal/.test(tr.label) ? 'warn' : 'good'}">${esc(w)}</li>`).join('')}</ul></div>` : ''}
+        ${tr.why && tr.why.length ? `<div class="panel adv"><h3 style="margin-bottom:8px">Why the search trend is “${esc(tr.label)}”</h3><ul class="reasons">${tr.why.map(w => `<li class="${/Declining|Fad/.test(tr.label) ? 'bad' : /Spike|Mixed|Seasonal/.test(tr.label) ? 'warn' : 'good'}">${esc(w)}</li>`).join('')}</ul></div>` : ''}
         <div class="grid2">
-          <div class="panel" id="kTrends"></div>
+          <div class="panel adv" id="kTrends"></div>
           <div class="panel" id="kSeason"></div>
         </div>
         <div class="panel" id="kUnits"></div>
-        <div class="panel" id="kRevenue"></div>
-        <details class="more panel"${PRINT ? ' open' : ''}><summary>More detail: page-1 sales and sellers at each check</summary>
+        <div class="panel adv" id="kRevenue"></div>
+        <details class="more panel adv"${PRINT ? ' open' : ''}><summary>More detail: page-1 sales and sellers at each check</summary>
           <div class="grid2"><div id="kAmz"></div><div id="kSupply"></div></div>
           <div id="kMix"></div>
         </details>
       </section>
-      <section class="rsec stackv" data-sec="competition">
+      <section class="rsec stackv adv" data-sec="competition">
         <h2 class="section">Competition</h2>
         <div class="panel stackv" id="kPer"></div>
         <div class="grid2">
@@ -115,14 +115,15 @@
         <h2 class="section">Customer complaints</h2>
         <div class="panel stackv" id="kNeg"></div>
       </section>
-      <section class="rsec stackv" data-sec="markets">
+      <section class="rsec stackv adv" data-sec="markets">
         <h2 class="section">Other markets</h2>
         <div id="kMarkets"></div>
       </section>
-      <section class="rsec stackv" data-sec="data">
+      <section class="rsec stackv adv" data-sec="data">
         <details class="more"${PRINT ? ' open' : ''}><summary><h2 class="section">Where these numbers come from</h2></summary>
           <div class="panel stackv" id="kData"></div></details>
-      </section>`;
+      </section>
+      <div class="simple-only small muted noprint">${icon('info')} Competition, other markets and where the numbers come from are hidden in the simple view: turn on <b>Show all details</b> (bottom left) to see them.</div>`;
     if (PRINT) box.querySelectorAll('.rsec').forEach(s => { s.hidden = !PRINT.includes(s.dataset.sec); });
 
     seg($('kMk'), mk => go('k', mk, d.keyword));
@@ -221,10 +222,10 @@
         <button type="button" class="btn slim noprint" id="kWhoRead" title="Read their product and seller pages on Amazon again">${icon('refresh')}${w.read_at ? 'Read again' : 'Read now'}</button></div></div>
       ${w.takeaway ? `<p class="takeaway big">${esc(w.takeaway)}</p>` : '<p class="small">The sellers are read from the listings’ Amazon pages: about a minute the first time, then kept for two weeks.</p>'}
       ${w.reasons.length ? `<ul class="reasons">${w.reasons.map(r => `<li class="${r.level}">${esc(r.text)}</li>`).join('')}</ul>` : ''}
-      ${known.seller ? `<div class="grid2"><div id="kWhoSellers"></div><div class="stackv"><div id="kWhoCountries"></div>
+      ${known.seller ? `<div class="grid2 adv"><div id="kWhoSellers"></div><div class="stackv"><div id="kWhoCountries"></div>
         <div><h3>How they ship</h3><div class="small" style="margin:2px 0 8px">FBA sellers keep stock in Amazon’s warehouse; FBM sellers send each order themselves.</div>${originBar(shipParts, n, 12)}${legend(shipParts)}</div></div></div>` : ''}
       <div class="tablewrap"><table><thead><tr><th class="r">#</th><th>Listing</th><th>Seller</th><th>Ships</th><th class="r">Launched</th><th class="r">Reviews</th><th class="r">Sales/mo</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="small muted">Seller known for ${known.seller} of ${n} listings and their country for ${known.country} (from the business address Amazon shows). Sales per listing come from “bought in past month” badges, else the sales rank or Helium 10: estimates.</div>`;
+      <div class="small muted adv">Seller known for ${known.seller} of ${n} listings and their country for ${known.country} (from the business address Amazon shows). Sales per listing come from “bought in past month” badges, else the sales rank or Helium 10: estimates.</div>`;
     if (known.seller) {
       Charts.bars($('kWhoSellers'), {title: 'Biggest sellers', sub: sales ? 'Their share of the sales of the top listings (estimate)' : 'Listings in the top ' + n,
         columns: ['Seller', sales ? 'Share of sales' : 'Listings'],
@@ -292,8 +293,8 @@
     $('kSentence').textContent = m.sentence || '';
     $('kScore').innerHTML = `
       <div class="head"><h3>Score</h3>${o ? `<span class="pill ${LABEL_TONE[o.label] || 'weak'}">${esc(o.label)} · ${o.score != null ? Math.round(o.score) : '?'} / 100</span>` : ''}</div>
-      ${o ? `<div class="parts">${o.parts.map(part).join('')}</div>
-        <div class="small">Green is good for you, red is hard. Crowding ${m.saturation && m.saturation.score != null ? Math.round(m.saturation.score) + ' / 100' : 'unknown'} · confidence ${esc(o.conf)}${o.risk && o.risk.n ? ' · risky: ' + esc(o.risk.flags.join(', ')) : ''}</div>`
+      ${o ? `<div class="parts adv">${o.parts.map(part).join('')}</div>
+        <div class="small adv">Green is good for you, red is hard. Crowding ${m.saturation && m.saturation.score != null ? Math.round(m.saturation.score) + ' / 100' : 'unknown'} · confidence ${esc(o.conf)}${o.risk && o.risk.n ? ' · risky: ' + esc(o.risk.flags.join(', ')) : ''}</div>`
         : '<div class="small">Search this keyword first (Refresh now).</div>'}`;
     const plan = m.plan || {};
     const dates = x => x ? `order by <b>${esc(x.order_by)}</b> · ship by ${esc(x.ship_by)} · in stock by ${esc(x.in_stock_by)}` : '–';
@@ -309,8 +310,9 @@
       cogs = saved.cogs_currency && saved.cogs_currency !== costCur() ? +fxConvert(+saved.cogs, saved.cogs_currency, costCur()).toFixed(2) : saved.cogs;
     }
     $('kMoney').innerHTML = `
+      <div class="panel stackv" id="kDecide">${busy('Checking the deal-breakers…')}</div>
       <div class="grid2">
-        ${Object.keys(m.arbitrage).length ? `<div class="panel stackv"><h3>Bring it from the USA?</h3>${Object.entries(m.arbitrage).map(([t, a]) => a ? `<div class="row" style="justify-content:space-between"><span><b>${mkFlag(t)}</b> <span class="small">${esc((a.why || []).slice(0, 2).join(' · '))}</span>${priceGap(d, t)}</span><span class="pill ${LABEL_TONE[a.label] || 'weak'}">${esc(a.label || '')} ${a.score != null ? Math.round(a.score) : '?'}</span></div>` : `<div class="small">${mkFlag(t)}: not checked yet. <a href="#/k/${t}/${encodeURIComponent(d.keyword)}">Open</a> and refresh.</div>`).join('')}</div>` : ''}
+        ${Object.keys(m.arbitrage).length ? `<div class="panel stackv adv"><h3>Bring it from the USA?</h3>${Object.entries(m.arbitrage).map(([t, a]) => a ? `<div class="row" style="justify-content:space-between"><span><b>${mkFlag(t)}</b> <span class="small">${esc((a.why || []).slice(0, 2).join(' · '))}</span>${priceGap(d, t)}</span><span class="pill ${LABEL_TONE[a.label] || 'weak'}">${esc(a.label || '')} ${a.score != null ? Math.round(a.score) : '?'}</span></div>` : `<div class="small">${mkFlag(t)}: not checked yet. <a href="#/k/${t}/${encodeURIComponent(d.keyword)}">Open</a> and refresh.</div>`).join('')}</div>` : ''}
         <div class="panel stackv">
           <h3>Launch plan</h3>
           ${plan.status === 'unknown' ? `<div class="small">${esc(plan.note || 'Seasonality unknown.')}</div>` : `
@@ -327,14 +329,14 @@
           <div class="field"><label for="pfPrice">Price (${esc(cur)})</label><input type="number" step="0.01" id="pfPrice" name="price" value="${pfVal('price', m.price != null ? m.price : '')}"></div>
           <div class="field"><label for="pfCost">Product cost per piece</label><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="number" step="0.01" min="0" id="pfCost" name="cogs" value="${esc(cogs)}" placeholder="from supplier">
             <select name="cogs_currency" aria-label="Currency of the product cost" title="The currency your supplier quotes in">${CURRENCIES.map(c => `<option value="${c}" ${c === costCur() ? 'selected' : ''}>${CUR_SYM[c]}</option>`).join('')}</select></div></div>
-          <div class="field"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" step="0.1" name="l" style="width:64px" value="${sizeVal('l')}" aria-label="Length (cm)"><input type="number" step="0.1" name="w" style="width:64px" value="${sizeVal('w')}" aria-label="Width (cm)"><input type="number" step="0.1" name="h" style="width:64px" value="${sizeVal('h')}" aria-label="Height (cm)"></div></div>
-          <div class="field"><label for="pfKg">Weight (kg)</label><input type="number" step="0.01" id="pfKg" name="kg" value="${sizeVal('kg')}"></div>
-          <div class="field"><label for="pfFreight">Freight</label><select id="pfFreight" name="freight_mode"><option value="sea">Sea</option><option value="air" ${saved.freight_mode === 'air' ? 'selected' : ''}>Air</option></select></div>
+          <div class="field adv"><label>Size L × W × H (cm)</label><div class="row" style="gap:4px"><input type="number" step="0.1" name="l" style="width:64px" value="${sizeVal('l')}" aria-label="Length (cm)"><input type="number" step="0.1" name="w" style="width:64px" value="${sizeVal('w')}" aria-label="Width (cm)"><input type="number" step="0.1" name="h" style="width:64px" value="${sizeVal('h')}" aria-label="Height (cm)"></div></div>
+          <div class="field adv"><label for="pfKg">Weight (kg)</label><input type="number" step="0.01" id="pfKg" name="kg" value="${sizeVal('kg')}"></div>
+          <div class="field adv"><label for="pfFreight">Freight</label><select id="pfFreight" name="freight_mode"><option value="sea">Sea</option><option value="air" ${saved.freight_mode === 'air' ? 'selected' : ''}>Air</option></select></div>
           <div class="field"><label for="pfUnits">First order (units)</label><input type="number" min="0" step="50" id="pfUnits" name="units" value="${pfVal('units', 300)}"></div>
-          ${d.market !== 'US' ? `<label class="small"><input type="checkbox" name="registered" ${(ST.settings.registered || {})[d.market] ? 'checked' : ''}> Registered for ${d.market === 'AU' ? 'GST' : 'VAT'}</label>` : ''}
+          ${d.market !== 'US' ? `<label class="small adv"><input type="checkbox" name="registered" ${(ST.settings.registered || {})[d.market] ? 'checked' : ''}> Registered for ${d.market === 'AU' ? 'GST' : 'VAT'}</label>` : ''}
           <label class="small noprint"><input type="checkbox" name="save_cogs"> Remember the cost</label>
         </form>
-        <div class="row small sizebar" id="pfSize">
+        <div class="row small sizebar adv" id="pfSize">
           <span>${amzKnown ? `Size from Amazon: <b>${esc(sizeText(sz.dims_cm, sz.kg))}</b> <span class="muted">(${sz.n ? 'median of ' + sz.n + ' top listing' + (sz.n > 1 ? 's' : '') : 'weight from Helium 10'})</span>`
             : sz.searched ? 'Size and weight above are a guess until Amazon\'s are read.' : 'Search this keyword (Refresh now) to read the size from Amazon.'}</span>
           ${amzKnown ? '<button type="button" class="btn slim" id="pfUseAmz" hidden>Use Amazon\'s size</button>' : ''}
@@ -344,7 +346,8 @@
         </div>
         <div id="pfOut"></div>
       </div>
-      <div class="panel stackv" id="kLaunch"></div>`;
+      <div class="panel stackv" id="kYear"></div>
+      <div class="panel stackv adv" id="kLaunch"></div>`;
     const form = $('pfForm');
     const syncUse = () => {                                   // offer Amazon's size again once you have changed it
       if ($('pfUseAmz')) $('pfUseAmz').hidden = !['l', 'w', 'h', 'kg'].some(k => amz[k] != null && +form[k].value !== +amz[k]);
@@ -365,6 +368,13 @@
         if (el.isConnected) el.innerHTML = `<div class="head"><h3>Where to launch</h3><span class="small">The same product, your cost and a first order of ${num(r.units)} in each market it was searched in</span></div>` + launchHtml(r);
       } catch (e) { el.innerHTML = failPill(e.message); }
     };
+    const drawDecide = async () => {
+      const f = Object.fromEntries(new FormData(form));
+      try {
+        const r = await api('/api/decide', {...f, market: d.market, kw: d.keyword});
+        if ($('kDecide') && $('kDecide').isConnected) { $('kDecide').innerHTML = decideHtml(r, d.market); $('kYear').innerHTML = yearHtml(r.plan, d.market); }
+      } catch (e) { if ($('kDecide')) $('kDecide').innerHTML = failPill(e.message); }
+    };
     const run = async () => {
       const f = Object.fromEntries(new FormData(form));
       f.registered = !!form.registered && form.registered.checked;
@@ -372,11 +382,12 @@
       Object.assign(f, {market: d.market, kw: d.keyword});
       try { last = await api('/api/profit', f); renderProfit(last, m, d.market); } catch (e) { $('pfOut').innerHTML = failPill(e.message); }
       drawLaunch();
+      drawDecide();
     };
     form.addEventListener('input', e => {
       if (e.target.name === 'cogs') keep('cogs', 'cogs_currency'); else if (e.target.name) keep(e.target.name);
       if (e.target.name === 'units' && last) renderProfit(last, m, d.market);     // planner only: no new calculation needed
-      if (e.target.name === 'units') { clearTimeout(launchTimer); launchTimer = setTimeout(drawLaunch, 400); }
+      if (e.target.name === 'units') { clearTimeout(launchTimer); launchTimer = setTimeout(() => { drawLaunch(); drawDecide(); }, 400); }
     });
     form.addEventListener('change', e => {
       if (e.target.name === 'units') return;
@@ -423,7 +434,49 @@
     });
     syncUse();
     form.addEventListener('submit', e => { e.preventDefault(); run(); });
-    if (form.price.value) await run();
+    if (form.price.value) await run(); else drawDecide();
+  }
+
+  /* Go or no-go: the deal-breakers, then the score, with the rules it was decided under. */
+  const STATE = {pass: ['ok', 'good', 'passes'], fail: ['x', 'bad', 'fails'], unknown: ['dot', 'weak', 'not read'], off: ['dot', 'weak', 'off']};
+  function decideHtml(r, mk) {
+    const dc = r.decision, p = r.previous;
+    const rows = dc.rules.map(x => {
+      const [ic, tone, word] = STATE[x.state] || STATE.unknown;
+      const tag = x.kind === 'hard' ? 'deal-breaker' : 'warning';
+      return `<tr class="st-${x.state}"><td><span class="pill ${x.state === 'fail' && x.kind === 'soft' ? 'warn' : tone}" title="${esc(word)}">${icon(x.state === 'fail' && x.kind === 'soft' ? 'warn' : ic)}${esc(word)}</span></td>
+        <td><b>${esc(x.name)}</b> <span class="small muted">${tag}</span><div class="sub" title="${esc(x.means)}">${esc(x.why)}</div>${x.fix ? `<div class="sub">What to do: ${esc(x.fix)}</div>` : ''}</td></tr>`;
+    }).join('');
+    return `<div class="head"><h3>Go or no-go</h3><span class="pill ${dc.tone} big">${esc(dc.label)}</span>
+        <span class="small muted adv">confidence ${esc(dc.confidence)} · rules ${esc(dc.fingerprint)} · <a href="#/settings" data-rules>change the rules</a></span></div>
+      <div class="verdict ${dc.tier === 'go' ? 'opportunity' : dc.tier === 'no_go' ? 'crowded' : 'some'}">${icon(dc.tier === 'go' ? 'ok' : dc.tier === 'no_go' ? 'x' : 'warn')}<span>${esc(dc.why)}</span></div>
+      ${p ? `<div class="small">${icon('clock')} Last time (${esc(new Date(p.at * 1000).toLocaleDateString())}) this was <b>${esc(p.label)}</b>${p.rules_changed ? ', under other rules' : ''}.</div>` : ''}
+      ${rows ? `<table class="dtable"><tbody>${rows}</tbody></table>` : ''}
+      ${explain('A deal-breaker that fails makes it a No-go whatever the score. With none failing, the opportunity score gives Go (60+), Maybe (40–59) or Weak, one step lower for each warning; “not read” is never counted as a pass or a fail, and three or more make it Maybe at best. The rules are yours to change in Settings; each decision keeps the rules it was made under.')}`;
+  }
+
+  /* The first year, week by week, in a good, likely and poor case. */
+  function yearHtml(p, mk) {
+    if (!p) return '<h3>The first year</h3><div class="small">Search this keyword first (Refresh now).</div>';
+    if (p.status !== 'ok') return `<h3>The first year</h3><div class="small">${esc(p.why)}</div>`;
+    const cur = MK_CUR[mk], mny = v => (v < 0 ? '−' : '') + curMoney(Math.abs(v), cur, 0), C = p.cases, keys = ['good', 'likely', 'poor'];
+    const card = k => { const c = C[k]; return `<div class="ycase y-${k}"><div class="of">${esc(c.name)}</div>
+        <div class="v" style="color:var(--${c.profit_year >= 0 ? 'good' : 'bad'}-text)">${mny(c.profit_year)}</div><div class="of">profit in the first year</div>
+        <ul class="small"><li>Money back: <b>${c.money_back_week ? 'week ' + c.money_back_week : 'not within a year'}</b>${c.money_back_day ? ' (' + esc(c.money_back_day) + ')' : ''}</li>
+        <li>Most money tied up: <b>${mny(c.most_money_needed)}</b></li>
+        <li>${num(c.units_year)} sold${c.lost_year ? `, about ${num(c.lost_year)} lost while out of stock (${c.stockout_weeks} week${c.stockout_weeks === 1 ? '' : 's'}, first in week ${c.first_stockout_week})` : ''}</li>
+        <li>${c.reorders} re-order${c.reorders === 1 ? '' : 's'} (${num(c.reordered_units)} units) · ads ${mny(c.ads_year)}</li>
+        <li>Left at the end: ${num(c.stock_end)} units (${mny(c.stock_end_value)})</li></ul></div>`; };
+    const all = keys.flatMap(k => C[k].weeks.map(w => w.cash)), lo = Math.min(0, ...all), hi = Math.max(0, ...all), W = 640, H = 170;
+    const y = v => (H - 8) - (v - lo) / ((hi - lo) || 1) * (H - 16), x = w => 4 + (w - 1) / 51 * (W - 8);
+    const line = k => `<polyline class="yl-${k}" points="${C[k].weeks.map(w => x(w.week).toFixed(1) + ',' + y(w.cash).toFixed(1)).join(' ')}"/>`;
+    return `<div class="head"><h3>The first year, week by week</h3><span class="small">first order ${num(p.units)} units · on sale from about ${esc(p.start)}${p.seasonal ? ' · with the Google Trends season' : ''}</span></div>
+      <div class="ycases">${keys.map(card).join('')}</div>
+      <figure class="ychart adv"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Money in or out, week by week, in the three cases">
+        <line x1="0" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" class="y0"/>${keys.map(line).join('')}</svg>
+        <figcaption class="small muted">Money in or out so far (after the first order and each re-order): <span class="yk yl-good">good</span> <span class="yk yl-likely">likely</span> <span class="yk yl-poor">poor</span>. Where a line crosses the dashed zero, your money is back.</figcaption></figure>
+      <details class="small adv"><summary>How this is worked out</summary><ul>${p.assumptions.map(a => `<li>${esc(a)}</li>`).join('')}</ul></details>
+      ${explain('A rough plan, not a promise. The likely case is the one to fund; make sure you could carry the poor case\'s most money tied up.')}`;
   }
 
   function renderProfit(r, m, mk) {
@@ -432,13 +485,13 @@
     $('pfOut').innerHTML = `
       <div class="kpis" style="margin:8px 0">
         <div class="kpi"><span class="eyebrow">Profit per sale</span><span class="v" style="color:var(--${e.Profit >= 0 ? 'good' : 'bad'}-text)">${mny(e.Profit)}</span><span class="s">${[e.Margin != null ? Math.round(e.Margin * 100) + '% margin' : '', approx(e.Profit, mk)].filter(Boolean).join(' · ')}</span></div>
-        <div class="kpi"><span class="eyebrow">Return on stock</span><span class="v">${e.ROI != null ? Math.round(e.ROI * 100) + '%' : '–'}</span><span class="s">profit ÷ landed cost</span></div>
-        <div class="kpi"><span class="eyebrow">Break-even ad spend</span><span class="v">${e.BreakEvenACoS != null ? Math.round(e.BreakEvenACoS * 100) + '%' : '–'}</span><span class="s">ACoS where profit hits zero</span></div>
+        <div class="kpi adv"><span class="eyebrow">Return on stock</span><span class="v">${e.ROI != null ? Math.round(e.ROI * 100) + '%' : '–'}</span><span class="s">profit ÷ landed cost</span></div>
+        <div class="kpi adv"><span class="eyebrow">Break-even ad spend</span><span class="v">${e.BreakEvenACoS != null ? Math.round(e.BreakEvenACoS * 100) + '%' : '–'}</span><span class="s">ACoS where profit hits zero</span></div>
         <div class="kpi"><span class="eyebrow">Highest product cost</span><span class="v">${r.max_cogs_20_cost != null ? curMoney(r.max_cogs_20_cost, r.cost_currency || 'USD') : '–'}</span><span class="s">for a 20% margin${r.max_cogs_20 != null && r.cost_currency !== 'USD' ? ' · US$ ' + num(r.max_cogs_20, 2) : ''}</span></div>
-        ${units ? `<div class="kpi"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">${[approx(e.Profit * units, mk, {d: 0}), '~' + num(units) + ' sales a month (badge estimate, rough)'].filter(Boolean).join(' · ')}</span></div>` : ''}
+        ${units ? `<div class="kpi adv"><span class="eyebrow">Per month, selling like a median top-10 listing</span><span class="v">${mny(e.Profit * units)}</span><span class="s">${[approx(e.Profit * units, mk, {d: 0}), '~' + num(units) + ' sales a month (badge estimate, rough)'].filter(Boolean).join(' · ')}</span></div>` : ''}
       </div>
       ${orderPlan(e, mk, mny)}
-      <div class="grid2">
+      <div class="grid2 adv">
         <div><table><tbody>${e.waterfall.map(([k, v]) => `<tr${k === 'Profit' ? ' class="fast"' : ''}><td>${esc({NetSales: e.registered ? 'Price without GST/VAT' : 'Price', Referral: 'Referral fee', FBA: 'FBA fee (' + (e.fee_source === 'table' ? (e.tier_label || 'table') : e.fee_source === 'h10' ? 'Helium 10' : 'yours') + ')', Storage: 'Storage', Placement: 'Inbound placement', FeeTax: 'GST/VAT on fees', Landed: 'Product + freight + duty', Ads: 'Ads (12% of sales)', Returns: 'Returns (2.5%)', Other: 'Other', Profit: 'Profit'}[k] || k)}</td><td class="r">${k === 'NetSales' || k === 'Profit' ? mny(v) : '− ' + num(v, 2)}</td></tr>`).join('')}</tbody></table>
           ${e.warnings.map(w => `<div class="small">${icon('warn')} ${esc(w)}</div>`).join('')}</div>
         <div><table><thead><tr><th class="r">Price</th><th class="r">Profit</th><th class="r">Margin</th><th></th></tr></thead><tbody>

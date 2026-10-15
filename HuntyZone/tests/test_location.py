@@ -53,7 +53,7 @@ def test_header_text_uses_both_lines():
 
 
 def test_only_one_location_popup_at_a_time():
-    pages = [Page(['Deliver to', 'nowhere']) for _ in range(3)]
+    pages = [Page(['Deliver to', 'nowhere']) for _ in ac.MARKETS]
     c = checker(list(pages))
     live, peak = [0], [0]
 
@@ -70,7 +70,7 @@ def test_only_one_location_popup_at_a_time():
         return await asyncio.gather(*(c.ensure_location(m, manual=False) for m in ac.MARKETS))
     res = asyncio.run(go())
     assert all(ok for ok, _ in res) and peak[0] == 1
-    assert sum('✓' in m for m in c.logs) == 3
+    assert sum('✓' in m for m in c.logs) == len(ac.MARKETS)
 
 
 def test_manual_fallback_only_for_your_own_work():

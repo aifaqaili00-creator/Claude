@@ -29,20 +29,31 @@ MARKETS = {
            'location': 'Dubai', 'expect': ('dubai',)},
     'US': {'name': 'USA', 'site': 'https://www.amazon.com', 'currency': 'US$',
            'location': '10001', 'expect': ('10001', 'new york')},
+    'GB': {'name': 'UK', 'site': 'https://www.amazon.co.uk', 'currency': '£',
+           'location': 'SW1A 1AA', 'expect': ('sw1a', 'london')},
+    'DE': {'name': 'Germany', 'site': 'https://www.amazon.de', 'currency': '€',
+           'location': '10115', 'expect': ('10115', 'berlin')},
 }
-for _code, _site in (('AU', 'PC_SITE_AU'), ('AE', 'PC_SITE_AE'), ('US', 'PC_SITE_US')):   # used by tests
-    if os.environ.get(_site):
-        MARKETS[_code]['site'] = os.environ[_site].rstrip('/')
+for _code in MARKETS:                                                # used by tests
+    if os.environ.get('PC_SITE_' + _code):
+        MARKETS[_code]['site'] = os.environ['PC_SITE_' + _code].rstrip('/')
+LANG = {'AE': 'en_AE', 'DE': 'en_GB'}                               # pages asked for in English, so the texts can be read
 
 MONTHS = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'], 1)}
 MON = r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b'
 DAY_MON = re.compile(r'\b(\d{1,2})\s+' + MON, re.I)            # 10 Oct (AU, UAE)
 MON_DAY = re.compile(r'\b' + MON + r'\.?\s+(\d{1,2})\b', re.I)  # Oct 10 (US)
 RANGE = re.compile(r'\b(\d{1,2})\s*[-–]\s*\d{1,2}\s+' + MON, re.I)   # 15 - 16 Oct: the first day has no month
+# German pages (in case amazon.de ignores the English request): "Lieferung Dienstag, 21. Oktober", "morgen"
+MONTHS_DE = {'jan': 1, 'feb': 2, 'mär': 3, 'mrz': 3, 'apr': 4, 'mai': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'okt': 10,
+             'nov': 11, 'dez': 12}
+DAY_MON_DE = re.compile(r'\b(\d{1,2})\.?\s+(jan(?:uar)?|feb(?:ruar)?|mär(?:z)?|mrz|apr(?:il)?|mai|jun[i]?|jul[i]?|aug(?:ust)?|'
+                        r'sep(?:t(?:ember)?)?|okt(?:ober)?|nov(?:ember)?|dez(?:ember)?)\b', re.I)
 
 # Text that means the item ships from another country (Amazon Global Store, "ships from abroad"...)
 INTERNATIONAL = re.compile(r'international delivery|international items|ships from abroad|global store|'
-                           r'ships from outside|imported from|from overseas|international shipping', re.I)
+                           r'ships from outside|imported from|from overseas|international shipping|'
+                           r'versand aus dem ausland|internationale[rn]? (?:versand|lieferung)', re.I)
 LOCAL_MAX_DAYS = 9          # slower than this (and no "international" text) = probably shipped from abroad
 SIGNIN = re.compile(r'/(?:ap/signin|ax/claim)\b')        # Amazon's sign-in pages
 
@@ -141,14 +152,20 @@ def delivery_days(text, today=None):
     today = today or dt.date.today()
     t = text.lower()
     days = []
-    if re.search(r'\btoday\b|\bovernight\b|\bwithin \d+ hours?\b', t):
+    if re.search(r'\btoday\b|\bovernight\b|\bwithin \d+ hours?\b|\bheute\b', t):
         days.append(0)
-    if 'tomorrow' in t:
+    if 'tomorrow' in t or re.search(r'(?<!über)morgen\b', t):
         days.append(1)
+    if 'übermorgen' in t:
+        days.append(2)
     found = [(int(d), m) for d, m in DAY_MON.findall(t)] + [(int(d), m) for m, d in MON_DAY.findall(t)] + \
             [(int(d), m) for d, m in RANGE.findall(t)]
+    if not found:
+        found = [(int(d), m) for d, m in DAY_MON_DE.findall(t)]
     for day, mon in found:
-        month = MONTHS[mon[:3]]
+        month = MONTHS.get(mon[:3]) or MONTHS_DE.get(mon[:3])
+        if not month:
+            continue
         try:
             date = dt.date(today.year, month, day)
         except ValueError:
@@ -191,9 +208,19 @@ def parse_count(text):
 
 
 def parse_price(text):
-    m = re.search(r'(\d[\d,]*\.?\d*)', (text or '').replace('\xa0', ' '))
+    """'A$ 1,299.00' -> 1299.0; a German price like '12,99 €' or '1.299,99 €' -> 12.99 / 1299.99."""
+    m = re.search(r'\d[\d.,]*', (text or '').replace('\xa0', ' ').replace('\u202f', ''))
+    if not m:
+        return None
+    s = m.group(0).rstrip('.,')
+    if ',' in s and '.' in s:
+        s = s.replace('.', '').replace(',', '.') if s.rfind(',') > s.rfind('.') else s.replace(',', '')
+    elif ',' in s:
+        s = s.replace(',', '.') if re.fullmatch(r'\d+,\d{1,2}', s) else s.replace(',', '')
+    elif re.fullmatch(r'\d{1,3}(?:\.\d{3})+', s):
+        s = s.replace('.', '')
     try:
-        return float(m.group(1).replace(',', '')) if m else None
+        return float(s)
     except ValueError:
         return None
 
@@ -231,6 +258,46 @@ EXTRACT_JS = r"""
     };
   })
 """
+
+# Runs inside a search page: the ads that are not result cards (brand banner, video ads, sponsored carousels).
+ADS_JS = r"""
+() => {
+  const out = [];
+  const asinsOf = w => [...new Set([...w.querySelectorAll('[data-asin]')].map(x => x.getAttribute('data-asin'))
+    .concat([...w.querySelectorAll('a[href*="/dp/"]')].map(a => ((a.getAttribute('href') || '').match(/\/dp\/([A-Z0-9]{10})/) || [])[1]))
+    .filter(a => a && /^[A-Z0-9]{10}$/.test(a)))].slice(0, 12);
+  for (const w of document.querySelectorAll('[cel_widget_id], [data-cel-widget]')) {
+    const id = w.getAttribute('cel_widget_id') || w.getAttribute('data-cel-widget') || '';
+    const kind = /sb-|_sb_|sponsored.?brand|top-slot/i.test(id) ? 'brand_banner' : /VIDEO/i.test(id) ? 'video'
+      : /FEATURED_ASINS|THEMATIC|CAROUSEL/i.test(id) ? 'carousel' : null;
+    if (!kind || out.some(o => o.el.contains(w))) continue;
+    const text = (w.innerText || w.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!/sponsored/i.test(text)) continue;
+    out.push({el: w, kind, id: id.slice(0, 80), text: text.slice(0, 300), asins: asinsOf(w),
+              alts: [...w.querySelectorAll('img[alt]')].map(i => i.getAttribute('alt')).filter(Boolean).slice(0, 8)});
+  }
+  return out.map(({el, ...o}) => o);
+}
+"""
+SPONSORED_PREFIX = re.compile(r'^\s*Sponsored Ad\s*[–—-]\s*', re.I)
+SHOP_BRAND = re.compile(r'\bShop\s+(.{2,40}?)(?=\s+(?:Previous page|Next page|Shop now|Learn more)\b|\s*\||$)')
+
+
+def parse_ads(raw):
+    """The page's ads that are not result cards -> [{'kind': 'brand_banner' | 'video' | 'carousel', 'brand' (the
+    banner's "Shop <brand>", else None), 'asins', 'titles'}]."""
+    out = []
+    for a in raw or []:
+        if a.get('kind') not in ('brand_banner', 'video', 'carousel'):
+            continue
+        alts = [SPONSORED_PREFIX.sub('', str(x)).strip() for x in a.get('alts') or [] if x]
+        brand = None
+        if a['kind'] == 'brand_banner':
+            m = SHOP_BRAND.search(a.get('text') or '')
+            brand = (m.group(1).strip() if m else None) or next((x for x in alts if 0 < len(x.split()) <= 3), None)
+        out.append({'kind': a['kind'], 'brand': brand, 'asins': [x for x in a.get('asins') or [] if x][:12],
+                    'titles': [x for x in dict.fromkeys(alts) if x != brand and len(x.split()) > 2][:8]})
+    return out
 
 
 class Checker:
@@ -406,6 +473,8 @@ class Checker:
         base = want[4:] if want.startswith('www.') else want
         if got and base and got != base and not got.endswith('.' + base):
             return 'geo_redirect'
+        if http == 404:                                  # a page that does not exist (its dog picture is not a block)
+            return None
         try:
             info = await page.evaluate(BLOCK_JS)
         except Exception:
@@ -583,16 +652,23 @@ class Checker:
                 await page.fill('#GLUXZipUpdateInput', loc)
                 await page.locator('#GLUXZipUpdate input, #GLUXZipUpdate').first.click()
             elif await page.locator('#GLUXPostalCodeWithCity_PostalCodeInput').count():  # Australia: postcode + suburb
-                await page.fill('#GLUXPostalCodeWithCity_PostalCodeInput', loc)
-                await page.wait_for_timeout(1200)
+                box = page.locator('#GLUXPostalCodeWithCity_PostalCodeInput').first
+                await box.click()
+                await box.fill('')
+                await box.press_sequentially(loc, delay=60)          # key presses make Amazon load the suburbs
+                try:
+                    await page.locator('#GLUXPostalCodeWithCity_DropdownList option:not(.a-prompt)').first.wait_for(
+                        state='attached', timeout=8000)
+                except Exception:
+                    pass
                 dd = page.locator('#GLUXPostalCodeWithCity_DropdownButton, #GLUXPostalCodeWithCity_CityValue')
                 if await dd.count():
                     await dd.first.click()
                     opt = page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]', has_text=re.compile('sydney', re.I))
                     if await opt.count():
-                        await opt.first.click()
+                        await opt.first.click(timeout=8000)
                     else:
-                        await page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]').first.click()
+                        await page.locator('a[id^="GLUXPostalCodeWithCity_DropdownList"]').first.click(timeout=8000)
                 else:
                     await self._pick_option(page, 'Sydney', 2500)
                 await self._apply(page)
@@ -637,13 +713,13 @@ class Checker:
     async def check(self, keyword, code, fast_days=3, pages=1, progress=None, local_days=LOCAL_MAX_DAYS):
         """Search one marketplace. Returns a summary dict with every listing, plus how the page looked:
         status (ok / empty / empty_suspect), Amazon's result count and the parser's health."""
-        from engine import badge
         await self.start()
         m = MARKETS[code]
         page = await self.ctx.new_page()
         rows, seen = [], set()
         location = ''
         info = {}
+        ads = None
         today = config.market_today(code)
         try:
             for n in range(1, pages + 1):
@@ -666,19 +742,15 @@ class Checker:
                         info = await page.evaluate(RESULT_INFO_JS)
                     except Exception:
                         info = {}
+                    try:
+                        ads = parse_ads(await page.evaluate(ADS_JS))
+                    except Exception:
+                        ads = None
                 for r in raw:
                     if r['asin'] in seen:
                         continue
                     seen.add(r['asin'])
-                    rows.append({
-                        'market': code, 'asin': r['asin'], 'title': r['title'][:200],
-                        'price': parse_price(r['price']), 'rating': parse_price(r['rating']),
-                        'reviews': parse_count(r['reviews']),
-                        'bought': badge.parse_badge(r.get('badge')) or parse_count(r['bought']),
-                        'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:240],
-                        'days': delivery_days(r['delivery'], today), 'intl': bool(r.get('intl')),
-                        'url': '%s/dp/%s' % (m['site'], r['asin']), 'image': r['image'],
-                    })
+                    rows.append(search_row(r, code, today))
                 if progress:
                     progress('%s: page %d read, %d listings' % (m['name'], n, len(rows)))
                 if not raw:
@@ -687,7 +759,7 @@ class Checker:
             await page.close()
         s = summarize(code, keyword, location, rows, fast_days, local_days)
         total, over = parse_results_info(info.get('text'))
-        s.update(results_total=total, results_over=over, parse_health=parse_health(rows))
+        s.update(results_total=total, results_over=over, parse_health=parse_health(rows), ads=ads)
         if not rows:
             # no listings and no "no results" message: probably a soft block or a changed page, not zero sellers
             s['status'] = 'empty' if info.get('no_results') else 'empty_suspect'
@@ -697,11 +769,27 @@ class Checker:
         return s
 
 
+def search_row(r, code, today):
+    """One search result as the page gave it (EXTRACT_JS) -> the row kept: numbers parsed, delivery days counted."""
+    from engine import badge
+    return {'market': code, 'asin': r['asin'], 'title': r['title'][:200],
+            'price': parse_price(r['price']), 'rating': parse_price(r['rating']), 'reviews': parse_count(r['reviews']),
+            'bought': badge.parse_badge(r.get('badge')) or parse_count(r['bought']),
+            'prime': r['prime'], 'sponsored': r['sponsored'], 'delivery': r['delivery'][:240],
+            'days': delivery_days(r['delivery'], today), 'intl': bool(r.get('intl')),
+            'url': '%s/dp/%s' % (MARKETS[code]['site'], r['asin']), 'image': r['image']}
+
+
+def with_lang(url, code):
+    """Ask amazon.ae and amazon.de for the English page (the parsers read English texts)."""
+    lang = LANG.get(code)
+    return '%s%slanguage=%s' % (url, '&' if '?' in url else '?', lang) if lang else url
+
+
 def search_url(code, keyword, page=1):
-    """Amazon search address. amazon.ae is asked for English, so delivery texts can be read."""
+    """Amazon search address. amazon.ae and amazon.de are asked for English, so delivery texts can be read."""
     m = MARKETS[code]
-    return '%s/s?k=%s%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % page if page > 1 else '',
-                              '&language=en_AE' if code == 'AE' else '')
+    return with_lang('%s/s?k=%s%s' % (m['site'], quote_plus(keyword), '&page=%d' % page if page > 1 else ''), code)
 
 
 def _median(v):

@@ -75,6 +75,22 @@ def test_every_script_and_stylesheet_in_index_exists():
         assert (app.UI_DIR / ref).is_file(), ref
 
 
+def test_the_menu_follows_your_steps_and_the_simple_view_can_show_everything():
+    import re
+    html = (app.UI_DIR / 'index.html').read_text(encoding='utf-8')
+    nav = html[html.index('id="nav"'):html.index('</nav>')]
+    groups = re.findall(r'<div class="grp">([^<]+)</div>', nav)
+    assert groups == ['1 \u00b7 Find ideas', '2 \u00b7 Check an idea', '3 \u00b7 Your products']
+    more = nav[nav.index('id="navMore"'):nav.index('</div>', nav.index('id="navMore"'))]
+    assert re.findall(r'data-view="(\w+)"', more) == ['intel', 'ai', 'rank', 'library', 'health']
+    views = re.findall(r'data-view="(\w+)"', nav)
+    assert len(views) == len(set(views)) == 15 and views[0] == 'home' and views[-1] == 'settings'
+    head = html[:html.index('</head>')]
+    assert "classList.add('simple')" in head and 'print=' in head                # a PDF always shows everything
+    assert 'id="detailsSw"' in html and 'id="detailsSw2"' in html
+    assert 'html.simple .adv' in (app.UI_DIR / 'css' / 'app.css').read_text(encoding='utf-8')
+
+
 def test_static_files_cannot_escape_the_ui_folder(server):
     for path in ('/ui/../app.py', '/ui/%2e%2e/app.py', '/ui/..%2fapp.py', '/ui/js/../../config.py', '/app.py', '/ui/'):
         st, _, body = call(server, 'GET', path, token=False)
@@ -545,8 +561,11 @@ def test_the_board_routes_check_their_input_and_never_show_the_password(server, 
     monkeypatch.setitem(server.settings, 'mail_method', 'smtp')         # these check the Gmail way
     mailer._sent.clear()
     assert call(server, 'GET', '/api/board', token=False)[0] == 403
-    st, _, raw = call(server, 'POST', '/api/board/add', {'title': 'Dog Bed', 'market': 'US', 'kw': 'dog bed'})
+    bed = {'title': 'Dog Bed', 'market': 'US', 'kw': 'dog bed', 'asin': 'B0DOGBED99'}
+    assert call(server, 'POST', '/api/board/add', {**bed, 'alibaba': 'javascript:alert(1)'})[0] == 400
+    st, _, raw = call(server, 'POST', '/api/board/add', {**bed, 'alibaba': 'https://www.alibaba.com/product-detail/bed.html'})
     cid = json.loads(raw)['id']
+    assert json.loads(raw)['moved'] == 'approval'
     b = json.loads(call(server, 'GET', '/api/board')[2])
     assert st == 200 and b['cards'][0]['id'] == cid and b['mail']['ready'] is False
     st, _, raw = call(server, 'POST', '/api/board/line', {'id': cid, 'n': 1, 'market': 'US', 'set': {'ship_mode': 'boat'}})
@@ -597,6 +616,14 @@ def test_notes_counts_and_products_can_be_removed(server):
     note = next(e['id'] for e in card['events'] if e['kind'] == 'note')
     assert call(server, 'POST', '/api/board/note', {'remove': note})[0] == 200
     assert call(server, 'POST', '/api/board/note', {'remove': note})[0] == 400
+    strat = lambda d: call(server, 'POST', '/api/board/strategy', {'id': cid, **d})[0]     # noqa: E731
+    assert strat({'add': {'by': 'Sara', 'text': 'Coupon 20% in week 1'}}) == 200 and strat({'add': {'text': ' '}}) == 400
+    s = json.loads(call(server, 'GET', '/api/board/card?id=%d' % cid)[2])['strategy']
+    assert [(x['by'], x['text']) for x in s] == [('Sara', 'Coupon 20% in week 1')]
+    assert strat({'edit': {'sid': s[0]['id'], 'by': 'Sara', 'text': 'Coupon 25%'}}) == 200
+    assert json.loads(call(server, 'GET', '/api/board/card?id=%d' % cid)[2])['strategy'][0]['text'] == 'Coupon 25%'
+    assert strat({'remove': s[0]['id']}) == 200 and strat({'remove': s[0]['id']}) == 400
+    assert call(server, 'POST', '/api/board/strategy', {'id': 99999, 'add': {'text': 'x'}})[0] == 400
     assert call(server, 'POST', '/api/board/stock', {'remove': 99999})[0] == 400
     assert call(server, 'POST', '/api/board/archive', {'id': cid, 'archived': True})[0] == 200
     assert any(a['id'] == cid for a in json.loads(call(server, 'GET', '/api/board')[2])['archived'])
@@ -636,6 +663,42 @@ def test_inform_attendees_previews_and_sends_the_product_update(server, monkeypa
         st, _, raw = call(server, 'POST', '/api/board/inform', {'to': []})
         assert st == 400 and 'Pick who' in json.loads(raw)['error']
         assert json.loads(call(server, 'GET', '/api/board')[2])['inform']['to'] == ['Li Wei']
+    finally:
+        call(server, 'POST', '/api/settings', {'mail_address': '', 'mail_from_name': ''})
+        call(server, 'POST', '/api/mail', {'forget': True})
+        call(server, 'POST', '/api/board/archive', {'id': cid, 'archived': True})
+
+
+def test_inform_deadlines_previews_and_sends_each_products_deadline(server, monkeypatch, tmp_path):
+    import mailer
+    import winsys
+    monkeypatch.setattr(app, 'MAIL_SECRET', tmp_path / 'mail.secret')
+    monkeypatch.setattr(winsys, 'protect', lambda b: b'X' + b[::-1])
+    monkeypatch.setattr(winsys, 'unprotect', lambda b: b[1:][::-1])
+    sent = []
+    monkeypatch.setattr(mailer, '_smtp', lambda acct, password, msg: sent.append(msg))
+    monkeypatch.setitem(server.settings, 'mail_method', 'smtp')
+    mailer._sent.clear()
+    cid = json.loads(call(server, 'POST', '/api/board/add', {'title': 'Desk Lamp', 'market': 'AE', 'kw': 'desk lamp'})[2])['id']
+    assert call(server, 'POST', '/api/board/task', {'id': cid, 'stage': 'idea', 'days': 5, 'note': 'Find 3 suppliers'})[0] == 200
+    people = json.loads(call(server, 'POST', '/api/board/notifiers', {'add': {'name': 'Omar Saeed', 'email': 'omar@example.com'}})[2])
+    omar = next(p['id'] for p in people['notifiers'] if p['email'] == 'omar@example.com')
+    view = json.loads(call(server, 'GET', '/api/board/deadlines?to=%d&message=Hello' % omar)[2])
+    assert view['to'] == ['Omar Saeed'] and view['subject'].startswith('Deadlines, ') and view['count'] >= 1
+    assert 'Desk Lamp (UAE): Idea, due ' in view['text'] and 'Find 3 suppliers' in view['text'] and 'Hello' in view['text']
+    assert view['mail']['ready'] is False and '<html>' in view['html']
+    assert json.loads(call(server, 'GET', '/api/board/deadlines?to=0')[2])['to'] == []
+    assert call(server, 'POST', '/api/board/deadlines', {'to': [omar]})[0] == 400              # no Gmail yet
+    call(server, 'POST', '/api/mail', {'password': 'abcd efgh ijkl mnop'})
+    call(server, 'POST', '/api/settings', {'mail_address': 'me@gmail.com', 'mail_from_name': 'Ali'})
+    try:
+        st, _, raw = call(server, 'POST', '/api/board/deadlines', {'to': [omar], 'message': 'Call me if a date slips'})
+        assert st == 200 and json.loads(raw)['to'] == ['Omar Saeed'] and sent[-1]['To'] == 'Omar Saeed <omar@example.com>'
+        body = sent[-1].get_body(('plain',)).get_content()
+        assert 'Desk Lamp (UAE): Idea, due ' in body and 'Call me if a date slips' in body
+        st, _, raw = call(server, 'POST', '/api/board/deadlines', {'to': []})
+        assert st == 400 and 'Pick who' in json.loads(raw)['error']
+        assert json.loads(call(server, 'GET', '/api/board/deadlines')[2])['last']['to'] == ['Omar Saeed']
     finally:
         call(server, 'POST', '/api/settings', {'mail_address': '', 'mail_from_name': ''})
         call(server, 'POST', '/api/mail', {'forget': True})

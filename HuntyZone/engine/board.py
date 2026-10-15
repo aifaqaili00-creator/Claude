@@ -4,8 +4,9 @@ and totals in US$ through `per_usd` ({'USD': 1, 'AUD': 1.55, ...})."""
 import datetime as dt
 import math
 
-STAGES = ('approval', 'sourcing', 'launch', 'reorder')
-STAGE_NAMES = {'approval': 'Approval', 'sourcing': 'Sourcing & PO', 'launch': 'Launch & strategy', 'reorder': 'Re-order'}
+STAGES = ('idea', 'approval', 'sourcing', 'launch', 'reorder')
+STAGE_NAMES = {'idea': 'Idea', 'approval': 'Approval', 'sourcing': 'Sourcing & PO', 'launch': 'Launching strategy',
+               'reorder': 'Re-order'}
 # what a new product is checked against before money goes into it; each card can add its own or remove some
 APPROVAL_CHECKS = (
     'Demand checked: enough buyers a month in the target market',
@@ -25,6 +26,8 @@ THRESH = {
     'rate_window_days': 45,     # stock counts used for the sell rate
     'rate_min_days': 3,         # the counts must span at least this long
     'month_days': 30.4,
+    'sales_min_days': 7,        # Amazon's daily order counts needed before they set the selling pace
+    'soon_chip_days': 7,        # a countdown this close is amber
 }
 DAY = 86400
 
@@ -103,7 +106,7 @@ def sourcing_status(order, lines, per_usd):
 
 
 def launch_status(hints, live):
-    """Launch & strategy is done when every hint is handled (done, changed or not relevant) and the product is live
+    """Launching strategy is done when every hint is handled (done, changed or not relevant) and the product is live
     on Amazon in at least one market. hints [{'status'}]; live {market: 'YYYY-MM-DD' or None}."""
     total = len(hints or ())
     done = sum(1 for h in hints or () if h.get('status') in HANDLED)
@@ -117,6 +120,13 @@ def launch_status(hints, live):
             'progress': round((done + (1 if on else 0)) / (total + 1), 3)}
 
 
+def idea_status(asin, alibaba):
+    """An idea is complete once it has the product's Amazon ASIN and the supplier's Alibaba link."""
+    missing = [what for v, what in ((asin, 'the Amazon ASIN'), (alibaba, 'the Alibaba link')) if not v]
+    return {'complete': not missing, 'done': 2 - len(missing), 'total': 2, 'missing': missing,
+            'progress': round((2 - len(missing)) / 2, 3)}
+
+
 def approval_status(items):
     """The approval checklist: approved when every check is ticked (and there is at least one)."""
     items = items or []
@@ -128,11 +138,47 @@ def approval_status(items):
 
 
 def unlocked(milestones):
-    """The stages a card may be in: Sourcing after 'Approved', Launch after 'Order ready', Re-order after
-    'Launched'."""
+    """The stages a card may be in: Approval once the idea is done, Sourcing after 'Approved', Launch after
+    'Order ready', Re-order after 'Launched'."""
     ms = milestones or {}
-    return ['approval'] + (['sourcing'] if ms.get('approved') else []) + \
+    return ['idea'] + (['approval'] if ms.get('idea_done') else []) + (['sourcing'] if ms.get('approved') else []) + \
         (['launch'] if ms.get('order_ready') else []) + (['reorder'] if ms.get('launched') else [])
+
+
+def next_step(milestones, idea, approval, sourcing, launch, stocks=(), reorders=()):
+    """The one thing to do next on a product, in plain words: {'text', 'tab' (the card tab that does it), 'tone'
+    ('todo', 'warn' or 'bad'), 'order' (the order to show on the Sourcing & PO tab)}, or None while nothing waits.
+    idea, approval, sourcing (the first order) and launch are the *_status results; stocks [{'market', 'level',
+    'order_now'}]; reorders [{'n', 'missing'}] are the re-orders not complete yet."""
+    ms = milestones or {}
+
+    def step(text, tab, tone='todo', order=None):
+        return {'text': text, 'tab': tab, 'tone': tone, 'order': order}
+
+    def more(miss):
+        return miss[0] + (' and %d more' % (len(miss) - 1) if len(miss) > 1 else '')
+
+    if not ms.get('idea_done'):
+        return step('Add ' + ' and '.join(idea['missing'] or ['the Amazon ASIN']), 'idea')
+    if not ms.get('approved'):
+        left = approval['total'] - approval['done']
+        return step('Tick %d approval check%s' % (left, '' if left == 1 else 's') if left > 0 else 'Add an approval check',
+                    'approval')
+    if not ms.get('order_ready'):
+        return step('Add ' + more(sourcing['missing'] or ['the order details']), 'sourcing', order=1)
+    if not ms.get('launched'):
+        left = launch['total'] - launch['done']
+        return step('Check %d launch hint%s' % (left, '' if left == 1 else 's') if left > 0 else
+                    'Set the day it went live on Amazon', 'launch')
+    for r in reorders:
+        if r['missing']:
+            return step('Finish re-order #%d: add %s' % (r['n'], more(r['missing'])), 'sourcing', order=r['n'])
+    for tone, hit, text in (('bad', lambda s: s.get('order_now'), 'Re-order now for %s'),
+                            ('warn', lambda s: s.get('level') == 'red', 'Low stock in %s: plan a re-order')):
+        s = next((s for s in stocks if hit(s)), None)
+        if s:
+            return step(text % MARKET_NAMES.get(s['market'], s['market']), 'reorder', tone)
+    return None
 
 
 def sell_rate(counts, sent=None, arrived=None):
@@ -200,3 +246,101 @@ def target_progress(rate, target):
         return None
     m = r * THRESH['month_days']
     return {'month': round(m), 'pct': round(m / t * 100)}
+
+
+# ---------- live sales, the card face, the timeline ----------
+def sales_rate(days, today=None, window=28):
+    """Units sold a day from Amazon's daily order counts [('YYYY-MM-DD', units)] (SP-API Sales): the average of the
+    last `window` complete days that have a count; None with fewer than THRESH['sales_min_days'] of them."""
+    t = day(today) or dt.date.today()
+    recent = [_num(u) for d, u in days or () if day(d) and _num(u) is not None and 0 < (t - day(d)).days <= window]
+    if len(recent) < THRESH['sales_min_days']:
+        return None
+    return round(sum(recent) / len(recent), 3)
+
+
+def ring(progress, late=False):
+    """A card's progress ring: every stage an equal share. {'pct', 'tone': 'bad' (overdue) | 'good' (all done) |
+    'accent'}."""
+    p = round(sum(min(1.0, max(0.0, _num((progress or {}).get(k)) or 0.0)) for k in STAGES) / len(STAGES) * 100)
+    return {'pct': p, 'tone': 'bad' if late else 'good' if p >= 100 else 'accent'}
+
+
+def countdown(dates, today=None):
+    """The one date a card waits for, as a chip. dates: [{'kind': 'reorder' | 'due' | 'eta' | 'order_by' (the last day
+    to order for the season, with 'mode' sea or air), 'day', 'market'?}].
+    The nearest one wins; a re-order day or a due day that has passed comes first. -> {'kind', 'day', 'days',
+    'text', 'tone'} or None."""
+    t = day(today) or dt.date.today()
+    found = [(day(d.get('day')), d) for d in dates or () if day(d.get('day')) and d.get('kind') in COUNTDOWN]
+    if not found:
+        return None
+    d, it = min(found, key=lambda x: ((x[0] - t).days >= 0 if x[1]['kind'] != 'eta' else True, x[0]))
+    n = (d - t).days
+    k = it['kind']
+    if k == 'reorder':
+        text = 'Re-order now' if n <= 0 else 'Re-order in %d day%s' % (n, '' if n == 1 else 's')
+    elif k == 'due':
+        text = '%d day%s late' % (-n, '' if n == -1 else 's') if n < 0 else 'Due today' if n == 0 else \
+            'Due in %d day%s' % (n, '' if n == 1 else 's')
+    elif k == 'order_by':
+        text = ('Order today' if n <= 0 else 'Order in %d day%s' % (n, '' if n == 1 else 's')) + \
+            (' by air' if it.get('mode') == 'air' else '')
+    else:
+        text = 'At Amazon today' if n <= 0 else 'At Amazon in %d day%s' % (n, '' if n == 1 else 's')
+    tone = 'bad' if n < 0 or (k in ('reorder', 'order_by') and n <= 0) else 'warn' if n <= THRESH['soon_chip_days'] else 'line'
+    return {'kind': k, 'day': d.isoformat(), 'days': n, 'text': text, 'tone': tone, 'market': it.get('market')}
+
+
+COUNTDOWN = ('reorder', 'due', 'eta', 'order_by')
+TIMELINE = {'due': 'Due', 'step': None, 'eta': 'At Amazon (expected)', 'live': 'Live on Amazon', 'reorder': 'Re-order by',
+            'order_by': 'Last day to order'}
+STEP_NAMES = {'deposit': 'Deposit paid', 'produced': 'Produced', 'shipped': 'Shipped', 'arrived': 'Arrived'}
+
+
+def timeline_events(cards, today=None):
+    """Every dated thing on the board, for the timeline. cards: [{'id', 'title', 'color', 'stage', 'tasks': [{'id',
+    'stage', 'due_day', 'start_day', 'done'}], 'lines': [{'n', 'market', 'steps', 'eta'}], 'live': {mk: day},
+    'reorder': [{'market', 'day'}], 'order_by': [{'market', 'day', 'mode', 'peak'}]}]. -> [{'card_id', 'title', 'color',
+    'kind', 'day', 'label', 'market', 'late',
+    'edit': how to move it ({'type': 'task', 'task_id', 'start_day'} | {'type': 'step', 'n', 'market', 'step'} |
+    {'type': 'live', 'market'}) or None for dates the app works out}], by day."""
+    t = day(today) or dt.date.today()
+    out = []
+
+    def add(c, kind, d, label, market=None, edit=None, late=False):
+        if day(d):
+            out.append({'card_id': c['id'], 'title': c['title'], 'color': c.get('color') or 'blue', 'kind': kind,
+                        'day': day(d).isoformat(), 'label': label, 'market': market, 'late': bool(late), 'edit': edit})
+    for c in cards or ():
+        for task in c.get('tasks') or ():
+            if not task.get('done'):
+                add(c, 'due', task.get('due_day'), '%s due' % STAGE_NAMES.get(task.get('stage'), task.get('stage')),
+                    edit={'type': 'task', 'task_id': task['id'], 'start_day': task.get('start_day')},
+                    late=day(task.get('due_day')) < t)
+        for ln in c.get('lines') or ():
+            for step, d in (ln.get('steps') or {}).items():
+                add(c, 'step', d, STEP_NAMES.get(step, step), ln.get('market'),
+                    {'type': 'step', 'n': ln.get('n'), 'market': ln.get('market'), 'step': step})
+            if ln.get('eta') and not (ln.get('steps') or {}).get('arrived'):
+                add(c, 'eta', ln['eta'], TIMELINE['eta'], ln.get('market'))
+        for mk, d in (c.get('live') or {}).items():
+            add(c, 'live', d, TIMELINE['live'], mk, {'type': 'live', 'market': mk})
+        for r in c.get('reorder') or ():
+            add(c, 'reorder', r.get('day'), TIMELINE['reorder'], r.get('market'), late=day(r.get('day')) <= t)
+        for r in c.get('order_by') or ():
+            add(c, 'order_by', r.get('day'), TIMELINE['order_by'] + (' (by air)' if r.get('mode') == 'air' else '') +
+                (' for the %s peak' % r['peak'] if r.get('peak') else ''), r.get('market'), late=day(r.get('day')) < t)
+    out.sort(key=lambda e: (e['day'], e['card_id'], e['kind']))
+    return out
+
+
+def clean_tags(tags):
+    """A card's tags: up to 8 short words or phrases, without repeats (case-insensitive)."""
+    out, seen = [], set()
+    for x in tags or ():
+        s = ' '.join(str(x).split())[:24]
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    return out[:8]

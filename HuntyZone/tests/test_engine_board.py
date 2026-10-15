@@ -48,10 +48,19 @@ def test_launch_needs_every_hint_handled_and_a_live_day():
 
 
 def test_stages_unlock_in_order():
-    assert rules.unlocked({}) == ['approval']
-    assert rules.unlocked({'approved': 1}) == ['approval', 'sourcing']
-    assert rules.unlocked({'approved': 1, 'order_ready': 1}) == ['approval', 'sourcing', 'launch']
-    assert rules.unlocked({'approved': 1, 'order_ready': 1, 'launched': 2}) == ['approval', 'sourcing', 'launch', 'reorder']
+    assert rules.unlocked({}) == ['idea']
+    assert rules.unlocked({'idea_done': 1}) == ['idea', 'approval']
+    assert rules.unlocked({'idea_done': 1, 'approved': 1}) == ['idea', 'approval', 'sourcing']
+    assert rules.unlocked({'idea_done': 1, 'approved': 1, 'order_ready': 1}) == ['idea', 'approval', 'sourcing', 'launch']
+    assert rules.unlocked({'idea_done': 1, 'approved': 1, 'order_ready': 1, 'launched': 2}) == list(rules.STAGES)
+
+
+def test_an_idea_needs_the_asin_and_the_alibaba_link():
+    assert rules.idea_status(None, None) == {'complete': False, 'done': 0, 'total': 2, 'progress': 0.0,
+                                             'missing': ['the Amazon ASIN', 'the Alibaba link']}
+    assert rules.idea_status('B0DOGBED01', '')['missing'] == ['the Alibaba link']
+    s = rules.idea_status('B0DOGBED01', 'https://www.alibaba.com/product-detail/1.html')
+    assert s['complete'] and s['progress'] == 1 and s['missing'] == []
 
 
 def test_sell_rate_from_counts_or_from_the_arrival():
@@ -95,3 +104,35 @@ def test_lead_days_add_production_buffer_transit_and_check_in():
     assert planner.lead_days('AU', 'air') == 30 + 7 + 10 + 7
     assert planner.lead_days('US', 'sea', q4=True) == 30 + 7 + 40 + 21
     assert planner.lead_days('XX', 'boat') == planner.lead_days('US', 'sea')
+
+
+def test_the_next_step_is_the_one_thing_left_to_do_on_a_product():
+    idea, empty = rules.idea_status(None, None), rules.sourcing_status({}, [], PER_USD)
+    ap = rules.approval_status([{'text': 'a', 'done': True}, {'text': 'b'}, {'text': 'c'}])
+    ls = rules.launch_status([{'status': 'done'}, {'status': 'open'}], {})
+
+    def nxt(ms, **kw):
+        return rules.next_step(ms, kw.get('idea', idea), kw.get('ap', ap), kw.get('src', empty), kw.get('ls', ls),
+                               kw.get('stocks', ()), kw.get('reorders', ()))
+
+    assert nxt({}) == {'text': 'Add the Amazon ASIN and the Alibaba link', 'tab': 'idea', 'tone': 'todo', 'order': None}
+    assert nxt({}, idea=rules.idea_status('B0X', None))['text'] == 'Add the Alibaba link'
+    assert nxt({'idea_done': 1}) == {'text': 'Tick 2 approval checks', 'tab': 'approval', 'tone': 'todo', 'order': None}
+    assert nxt({'idea_done': 1}, ap=rules.approval_status([]))['text'] == 'Add an approval check'
+    ms = {'idea_done': 1, 'approved': 2}
+    assert nxt(ms) == {'text': 'Add the price per unit and 1 more', 'tab': 'sourcing', 'tone': 'todo', 'order': 1}
+    src = rules.sourcing_status({'unit_cost': 6}, [{'market': 'AU', 'units': 300, 'ship_mode': 'sea'}], PER_USD)
+    assert nxt(ms, src=src)['text'] == 'Add the shipping cost to Australia'
+    ms['order_ready'] = 3
+    assert nxt(ms)['text'] == 'Check 1 launch hint' and nxt(ms)['tab'] == 'launch'
+    assert nxt(ms, ls=rules.launch_status([], {}))['text'] == 'Set the day it went live on Amazon'
+    ms['launched'] = 4
+    assert nxt(ms) is None                                                         # nothing waits
+    red = [{'market': 'US', 'level': 'green', 'order_now': False}, {'market': 'AE', 'level': 'red', 'order_now': False}]
+    assert nxt(ms, stocks=red) == {'text': 'Low stock in UAE: plan a re-order', 'tab': 'reorder', 'tone': 'warn',
+                                   'order': None}
+    now = red + [{'market': 'AU', 'level': 'amber', 'order_now': True}]
+    assert nxt(ms, stocks=now)['text'] == 'Re-order now for Australia' and nxt(ms, stocks=now)['tone'] == 'bad'
+    open_ = [{'n': 2, 'missing': ['units for USA', 'the shipping cost to USA']}]
+    assert nxt(ms, stocks=now, reorders=open_) == {'text': 'Finish re-order #2: add units for USA and 1 more',
+                                                   'tab': 'sourcing', 'tone': 'todo', 'order': 2}

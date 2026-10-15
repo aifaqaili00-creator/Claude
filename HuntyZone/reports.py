@@ -3,6 +3,7 @@
 Every estimated number carries its range and basis ({'v', 'lo', 'hi', 'basis', 'conf'}), and every series keeps
 its gaps: a blocked or failed search is listed under `gaps`, never drawn as zero.
 """
+import datetime as dt
 import json
 import math
 import time
@@ -1295,4 +1296,142 @@ def opportunities(db, settings, limit=10):
                              'label': n['opportunity']['label'], 'why': n['opportunity']['why'][:2]})
         rows.sort(key=lambda r: -r['score'])
         return rows[:limit]
+    return db.read(build)
+
+
+# ---------- Go or no-go, and the first year ----------
+RULES_KEY = 'decide_rules'
+DECISIONS_KEY = 'decisions'
+DECISIONS_KEEP = 500
+
+
+def decide_rules(conn):
+    from engine import decide as dc
+    return dc.merge_rules(storage.get_state(conn, RULES_KEY))
+
+
+def decision(db, market, kw, settings, cogs_usd=None, units=300, dims=None, kg=None, freight_mode='sea', now=None):
+    """Go or no-go for a keyword in a market (engine.decide) and its first year week by week (engine.yearplan), from
+    the newest stored search, the sellers read, Google Trends and your supplier price (US$). Nothing is fetched.
+    -> {'decision', 'plan', 'facts'}"""
+    from engine import decide as dc
+    from engine import launch as lch
+    from engine import planner, profit, yearplan
+    from engine.trendfeat import MONTH_NAMES
+    now = now or time.time()
+    kw_norm = config.norm_kw(kw)
+
+    def build(conn):
+        rules = decide_rules(conn)
+        n = niche_inputs(conn, market, kw_norm, settings, cogs_usd)
+        if not n:
+            return {'decision': dc.decide({'market': market, 'searched': False}, rules), 'plan': None, 'facts': None}
+        m, s, tf = n['metrics'], n['summary'], n['trend'] or {}
+        organic = [r for r in s['rows'] if not r['sponsored']]
+        econ = None
+        if n['price']:
+            inp = {'market': market, 'price': n['price'], 'category': '', 'cogs_usd': cogs_usd or 0.0,
+                   'freight_mode': freight_mode, 'registered': bool((settings.get('registered') or {}).get(market)),
+                   'date': config.market_today(market).isoformat()}
+            if dims:
+                inp['dims_cm'] = list(dims)
+            if kg:
+                inp['kg'] = kg
+            econ = profit.unit_economics(inp)
+        w = _who_sells(conn, market, kw_norm, now)
+        read = [x for x in w['listings'] if x.get('ships')]
+        season = tf.get('seasonality') or {}
+        facts = {'market': market, 'searched': True, 'price': n['price'], 'review_barrier': m.get('review_barrier'),
+                 'page1_units': n['bought_mid_sum'] if any(r.get('bought') for r in organic) else None,
+                 'margin': econ['Margin'] if econ and cogs_usd else None,
+                 'after_amazon': round((econ['Profit'] + econ['Landed']) / econ['NetSales'], 4)
+                 if econ and not cogs_usd and econ['NetSales'] else None,
+                 'amazon_share': round(sum(1 for x in read if x['ships'] == 'amazon') / len(read), 3) if read else None,
+                 'amazon_read': len(read), 'risk_flags': m.get('risk_flags'),
+                 'season': {'strength': season.get('strength'), 'reliable': season.get('reliable'),
+                            'peak': MONTH_NAMES[int(season['peak_month']) - 1] if season.get('peak_month') else None},
+                 'season_read': bool(season) and tf.get('label') not in (None, 'Insufficient'),
+                 'fast': m.get('fast_local'), 'trend': tf.get('label'),
+                 'score': (n['opportunity'] or {}).get('score'), 'score_label': (n['opportunity'] or {}).get('label'),
+                 'searched_at': s.get('checked_at')}
+        new = lch.newcomer_units((s.get('per_seller') or {}).get('per_seller'), m.get('review_barrier'), market)
+        lead = planner.lead_days(market, freight_mode)
+        start = (config.market_today(market) + dt.timedelta(days=lead)).isoformat()
+        plan = yearplan.plan(econ, new, units, lead, start, season.get('si') if season.get('reliable') else None)
+        return {'decision': dc.decide(facts, rules), 'plan': plan, 'facts': facts}
+    return db.read(build)
+
+
+def record_decision(conn, market, kw_norm, d, now=None):
+    """Keep the newest decision per keyword with the rules it was made under. Returns the one before it when the tier
+    or the rules changed since (else None)."""
+    if d['tier'] == 'unknown':
+        return None
+    log = storage.get_state(conn, DECISIONS_KEY) or {}
+    key = '%s|%s' % (market, kw_norm)
+    prev = log.get(key)
+    log[key] = {'tier': d['tier'], 'label': d['label'], 'at': int(now or time.time()), 'fingerprint': d['fingerprint']}
+    if len(log) > DECISIONS_KEEP:
+        for k in sorted(log, key=lambda k: log[k]['at'])[:len(log) - DECISIONS_KEEP]:
+            del log[k]
+    storage.set_state(conn, DECISIONS_KEY, log)
+    if prev and (prev['tier'] != d['tier'] or prev['fingerprint'] != d['fingerprint']):
+        return {**prev, 'rules_changed': prev['fingerprint'] != d['fingerprint']}
+    return None
+
+
+# ---------- Global Gap Finder ----------
+GAP_SHOW_DAYS = 60            # checks older than this are not shown
+
+
+def gap_row(conn, r, settings, watched):
+    """One gap_check row -> one line of the Gap Finder table (JSON-safe)."""
+    from engine import gaps as gp
+    from engine import profit
+    d, mk = r['data'], r['market']
+    g, lst, srch = d.get('gap') or {}, d.get('listing') or {}, d.get('search') or {}
+    price = lst.get('price') or srch.get('price_med')
+    info = storage.asin_info(conn, mk, r['asin']) or {}
+    dims = lst.get('dims_cm') or [info.get('pkg_l_cm'), info.get('pkg_w_cm'), info.get('pkg_h_cm')]
+    dims = dims if all(dims or [None]) else None
+    inp = {'market': mk, 'price': price, 'category': d.get('category') or info.get('root_name') or '',
+           'kg': lst.get('kg') or info.get('pkg_kg'), 'dims_cm': dims,
+           'registered': bool((settings.get('registered') or {}).get(mk)), 'date': config.market_today(mk).isoformat()}
+    w = watched.get((mk, r['asin']))
+    proof = d.get('proof') or {}
+    return {'id': r['id'], 'market': mk, 'asin': r['asin'], 'cluster': r['cluster'], 'phrase': r['phrase'],
+            'status': r['status'], 'ts': r['ts'], 'type': r['gap_type'], 'label': g.get('label') or gp.LABEL.get(r['gap_type']),
+            'means': gp.MEANS.get(r['gap_type']), 'why': g.get('why'), 'conf': g.get('conf'), 'gap': bool(g.get('gap')),
+            'order': g.get('order', 99), 'sellers': g.get('sellers'), 'local_rivals': g.get('local_rivals'),
+            'same_local': g.get('same_local'), 'exporter': g.get('exporter'), 'flags': d.get('flags') or [],
+            'title': d.get('title'), 'brand': d.get('brand'), 'image': d.get('image'), 'items': d.get('items') or [],
+            'proof': proof.get('markets') or {}, 'proof_n': proof.get('n') or 0,
+            'price': price, 'price_basis': 'listing' if lst.get('price') else 'page 1 median' if srch.get('price_med') else None,
+            'currency': ac.MARKETS[mk]['currency'], 'demand_floor': srch.get('bought_total'), 'page1': srch.get('total'),
+            'max_cogs_20': profit.max_cogs(inp, 0.20) if price else None, 'size_known': bool(dims),
+            'delivery_days': lst.get('days'), 'listing_status': lst.get('status'), 'source': lst.get('source'),
+            'search_status': srch.get('status'), 'stopped': d.get('stopped'), 'same': d.get('same') or [],
+            'watch_id': w['id'] if w else None}
+
+
+def gaps_table(db, settings, now=None):
+    """The Gap Finder page: the newest check of each proven product in Australia and the UAE (last 60 days), gaps
+    first, each with its proof, who sells it there, the price there and the highest product cost that still leaves a
+    20% margin; the lone exporters you watch; and the automatic runs."""
+    import gapfinder
+    now = now or time.time()
+
+    def build(conn):
+        watched = {(w['market'], w['target']): w for w in storage.watches(conn, enabled_only=False) if w['kind'] == 'lone'}
+        rows = [gap_row(conn, r, settings, watched) for r in storage.gap_checks(conn, now - GAP_SHOW_DAYS * 86400)]
+        rows.sort(key=lambda x: (not x['gap'], x['order'], -x['proof_n'], -x['ts']))
+        lone = []
+        for w in watched.values():
+            o = storage.latest_offers(conn, w['market'], w['target'])
+            lone.append({'id': w['id'], 'market': w['market'], 'asin': w['target'], 'title': w['display'],
+                         'added_at': w['added_at'], 'sellers': max(len(o['offers']), o['n_offers'] or 0) if o else None,
+                         'checked_at': o['ts'] if o else None, 'source': o['source'] if o else None})
+        tasks = storage._rows(conn.execute("SELECT * FROM task WHERE kind IN ('proof','gaps','lone') AND enabled=1 "
+                                           'ORDER BY kind, market'))
+        return {'rows': rows, 'lone': lone, 'tasks': tasks, 'proven': len(gapfinder.proven(conn, settings, now))}
     return db.read(build)

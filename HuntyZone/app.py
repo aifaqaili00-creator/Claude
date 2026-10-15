@@ -21,6 +21,8 @@ from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
+import ai_chat
+import ai_tools
 import amazon_check as ac
 import analysis
 import board
@@ -29,16 +31,20 @@ import collectors
 import config
 import file_rank as fr
 import fxrates
+import gapfinder
 import ideas
 import importer
+import intel
 import mailer
 import product
 import reports
 import scheduler
 import singleton
+import spapi
 import storage
 import throttle
 import trends
+import vault
 import winsys
 import xray
 from jobs import JobManager
@@ -113,6 +119,33 @@ def downloads_dir():
     return d if d.is_dir() else APP_DIR / 'reports'
 
 
+def main_market(v, default):
+    """One of the three markets you sell in (the UK and Germany are only proof markets for the Gap Finder)."""
+    return v if v in config.MARKETS else default
+
+
+def gap_excel_row(r):
+    """One Gap Finder line for Excel, in plain words."""
+    def proof(mk):
+        p = r['proof'].get(mk) or {}
+        u = p.get('units') or {}
+        return ('%s%s' % ('sells well: ' if p.get('well') else 'not proven: ' if p.get('well') is False else '',
+                          p.get('why') or '') + (' [%s-%s a month, %s]' % (u.get('lo'), u.get('hi'), p.get('src'))
+                                                 if u.get('lo') is not None else '')) if p else ''
+    ex = r.get('exporter') or {}
+    return {'Market': ac.MARKETS[r['market']]['name'], 'Product': r['title'], 'Brand': r['brand'], 'ASIN': r['asin'],
+            'Gap': r['label'], 'Why': r['why'], 'Confidence': r['conf'], 'Sellers there': r['sellers'],
+            'Lone exporter': ex.get('seller'), 'Exporter country': ex.get('country'),
+            'Local rivals on page 1': r['local_rivals'], 'Shoppers type': r['phrase'],
+            'Price there': r['price'], 'Currency': r['currency'], 'Price from': r['price_basis'],
+            'Bought last month on page 1 (at least, badges)': r['demand_floor'],
+            'Highest product cost for 20% margin (US$)': r['max_cogs_20'],
+            'Size known': 'yes' if r['size_known'] else 'no (a small parcel was assumed)',
+            'Proof USA': proof('US'), 'Proof UK': proof('GB'), 'Proof Germany': proof('DE'),
+            'Warnings': '; '.join('%s (%s)' % (f['label'], f['why']) for f in r['flags']),
+            'Checked': time.strftime('%Y-%m-%d %H:%M', time.localtime(r['ts']))}
+
+
 def clean(o):
     """Make data JSON-safe: NaN/inf -> None, numpy numbers -> Python numbers."""
     if isinstance(o, dict):
@@ -166,6 +199,7 @@ class State:
         self.trends.throttle = self.throttle
         self.trends.breaker.load(self.db.read(storage.get_state, 'trends_breaker'))
         self.jobs = JobManager(self.run, self.say, self.gate.user_start, self.gate.user_end)
+        self.spapi = spapi.load_client()                          # None until you save SP-API keys in Settings
         self.collectors = collectors.Collectors(self)
         self.scheduler = scheduler.Scheduler(self.db, self.collectors.handlers(), self.throttle,
                                              conditions=self.pause_reason, on_run_done=self.after_run, say=self.say)
@@ -178,7 +212,8 @@ class State:
                 continue
             ac.MARKETS[c]['location'] = v
             default = config.DEFAULT_LOCATIONS.get(c)
-            ac.MARKETS[c]['expect'] = DEFAULT_EXPECT[c] if v == default else (v.lower(),)
+            mine = v.split()[0] if c == 'GB' else v                # the UK header shows the postcode's first half
+            ac.MARKETS[c]['expect'] = DEFAULT_EXPECT[c] if v == default else (mine.lower(),)
 
     def say(self, msg):
         log.info(msg)
@@ -702,8 +737,8 @@ class Handler(BaseHTTPRequestHandler):
         S.ranks = dict(list(S.ranks.items())[-10:])
         counts = all_['verdict'].value_counts().to_dict()
         return self._send(200, {'id': rid, 'file': name, 'market': mk, 'summary': summary, 'counts': counts,
-                                'total': len(all_), 'target': fr.TARGETS[mk], 'rows': fr.to_records(all_.head(100)),
-                                'imported': imported})
+                                'total': len(all_), 'target': fr.TARGETS.get(mk, fr.TARGETS['US']),
+                                'rows': fr.to_records(all_.head(100)), 'imported': imported})
 
     def _xray(self, path, q, name=None):
         try:
@@ -777,6 +812,13 @@ class Handler(BaseHTTPRequestHandler):
             a = S.xrays[q['id']]
             xray.export_excel(a, tmp)
             name = 'Xray_analysis_%s_%s.xlsx' % (a['market'], '_'.join(a['keyword'].split()) or 'market')
+        elif q.get('kind') == 'gaps':
+            fxrates.rates()
+            rows = reports.gaps_table(S.db, S.settings)['rows']
+            if not rows:
+                return self._send(400, {'error': 'Nothing to save yet: the Gap Finder has not checked any product.'})
+            fr.excel_safe(pd.DataFrame([gap_excel_row(r) for r in rows])).to_excel(tmp, index=False, sheet_name='Gaps')
+            name = 'Gap_finder.xlsx'
         else:
             return self._send(404, {'error': 'nothing to export'})
         data = Path(tmp).read_bytes()
@@ -866,7 +908,7 @@ def api_history_item(h, q):
 
 @route('GET', '/api/report/keyword')
 def api_report_keyword(h, q):
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    market = main_market(q.get('market'), 'AU')
     kw = ' '.join(str(q.get('kw') or '').split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -888,7 +930,7 @@ def api_trends_state(h, q):
 def api_report_refresh(h, q):
     """Search Amazon again for this keyword and market, and fetch Google Trends if it is older than a week."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    market = main_market(d.get('market'), 'AU')
     kw = ' '.join(str(d.get('kw', '')).split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -905,7 +947,7 @@ def api_report_refresh(h, q):
 @route('GET', '/api/report/sellers')
 def api_report_sellers(h, q):
     """Who sells a keyword's best page-1 listings: seller, country, brand, how it ships, share of the sales."""
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    market = main_market(q.get('market'), 'AU')
     kw = ' '.join(str(q.get('kw') or '').split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -916,7 +958,7 @@ def api_report_sellers(h, q):
 def api_report_top(h, q):
     """Read the keyword's best listings on Amazon (product pages, negative reviews, sellers); returns who sells them."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    market = main_market(d.get('market'), 'AU')
     kw = ' '.join(str(d.get('kw', '')).split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -931,7 +973,7 @@ def api_report_top(h, q):
 def api_report_pdf(h, q):
     """Save the keyword report as a PDF in Downloads, with the parts you chose."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    market = main_market(d.get('market'), 'AU')
     kw = ' '.join(str(d.get('kw', '')).split())[:120]
     chosen = d.get('sections') if isinstance(d.get('sections'), list) else []
     parts = [p for p in PDF_PARTS if p in chosen]
@@ -958,7 +1000,7 @@ def api_pdf_open(h, q):
 
 def _review_target(d):
     """Market, keyword and ASIN of a reviews request: a keyword's best listings, or one listing (asin)."""
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'AU'
+    market = main_market(d.get('market'), 'AU')
     asin = str(d.get('asin') or '').strip().upper()[:12]
     kw = None if asin else ' '.join(str(d.get('kw') or '').split())[:120]
     return market, kw, asin if asin.isalnum() else None
@@ -1022,7 +1064,7 @@ def api_import_upload(h, q):
 def api_check(h, q):
     d = h._json()
     kw = ' '.join(str(d.get('keyword', '')).split())[:120]
-    markets = [m for m in d.get('markets', []) if m in ac.MARKETS] or list(ac.MARKETS)
+    markets = [m for m in d.get('markets', []) if m in config.MARKETS] or list(config.MARKETS)
     if not kw:
         return h._send(400, {'error': 'Type a product first.'})
 
@@ -1048,8 +1090,8 @@ def api_check_batch(h, q):
 @route('POST', '/api/ideas')
 def api_ideas(h, q):
     d = h._json()
-    code = d.get('market') if d.get('market') in ac.MARKETS else 'US'
-    kinds = [k for k in d.get('kinds', ['movers', 'new']) if k in ideas.LISTS] or ['movers', 'new']
+    code = main_market(d.get('market'), 'US')
+    kinds = [k for k in d.get('kinds', ['movers', 'new']) if k in ('movers', 'new')] or ['movers', 'new']
     slugs = [str(s) for s in d.get('slugs') or []][:20]
     phrases = typed_phrases(d)
     jid = S.new_job('ideas', lambda p: S.find_ideas(code, slugs, kinds, d.get('hide_risky', True) is not False,
@@ -1158,9 +1200,9 @@ def api_browser(h, q):
     elif action == 'locations':
         async def all_locations():
             await S.checker.start()
-            for c in ac.MARKETS:
+            for c in config.MARKETS:
                 S.checker.locations[c] = {'ok': None, 'text': ''}
-            for c in ac.MARKETS:                                # one at a time: Amazon's popups need the focused tab
+            for c in config.MARKETS:                            # one at a time: Amazon's popups need the focused tab
                 await S.checker.ensure_location(c, manual=True)
         fut = S.run(all_locations())
     elif action == 'restart':
@@ -1198,14 +1240,14 @@ def api_home(h, q):
 
 @route('GET', '/api/radar')
 def api_radar(h, q):
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
+    market = main_market(q.get('market'), 'US')
     return h._send(200, {**reports.radar(S.db, market, settings=S.settings, **reports.radar_filters(S.settings, market)),
                          'trends': reports.search_trends(S.db), 'rising': reports.google_rising(S.db, market, S.settings)})
 
 
 @route('GET', '/api/opportunity_map')
 def api_opportunity_map(h, q):
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    market = main_market(q.get('market'), 'AU')
     return h._send(200, reports.opportunity_map(S.db, market))
 
 
@@ -1216,7 +1258,7 @@ def api_watchlist(h, q):
 
 @route('GET', '/api/health')
 def api_health(h, q):
-    return h._send(200, reports.health(S.db, S))
+    return h._send(200, {**reports.health(S.db, S), 'ai': ai_status()})
 
 
 @route('GET', '/api/alerts')
@@ -1229,7 +1271,7 @@ def api_watch(h, q):
     d = h._json()
     kind = d.get('kind') if d.get('kind') in storage.WATCH_KINDS else 'keyword'
     target = ' '.join(str(d.get('target') or '').split())[:120]
-    markets = [m for m in (d.get('markets') or [d.get('market')]) if m in ac.MARKETS]
+    markets = [m for m in (d.get('markets') or [d.get('market')]) if m in config.MARKETS]
     if not target or not markets:
         return h._send(400, {'error': 'What should be watched, and where?'})
     ids = []
@@ -1296,7 +1338,7 @@ def api_source_clear(h, q):
 
 @route('GET', '/api/report/product')
 def api_report_product(h, q):
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'US'
+    market = main_market(q.get('market'), 'US')
     asin = str(q.get('asin') or '').strip().upper()[:12]
     if not asin.isalnum():
         return h._send(400, {'error': 'Which product (ASIN)?'})
@@ -1306,7 +1348,7 @@ def api_report_product(h, q):
 @route('POST', '/api/report/product/refresh')
 def api_report_product_refresh(h, q):
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    market = main_market(d.get('market'), 'US')
     asin = str(d.get('asin') or '').strip().upper()[:12]
     if not asin.isalnum():
         return h._send(400, {'error': 'Which product (ASIN)?'})
@@ -1323,7 +1365,7 @@ def api_report_product_refresh(h, q):
 
 @route('GET', '/api/report/money')
 def api_report_money(h, q):
-    market = q.get('market') if q.get('market') in ac.MARKETS else 'AU'
+    market = main_market(q.get('market'), 'AU')
     kw = ' '.join(str(q.get('kw') or '').split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -1336,7 +1378,7 @@ def api_profit(h, q):
     from engine import profit as pf
     fxrates.rates()                                     # the fee tables convert with today's rates too
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    market = main_market(d.get('market'), 'US')
 
     def num(k, lo=0.0, hi=1e6):
         try:
@@ -1374,7 +1416,7 @@ def api_calibration(h, q):
 def api_radar_scan(h, q):
     """Read the market's Movers & Shakers and New Releases now (your own job, not background)."""
     market = h._json().get('market')
-    market = market if market in ac.MARKETS else 'US'
+    market = main_market(market, 'US')
 
     async def work(progress):
         progress('Reading Movers & Shakers and New Releases on Amazon %s...' % ac.MARKETS[market]['name'])
@@ -1396,7 +1438,7 @@ def api_discovery_qualify(h, q):
     Your own job: no daily budget, but a source that is pausing is skipped. Searching the other markets is the Check
     button's job."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    market = main_market(d.get('market'), 'US')
     asins = []
     for a in d.get('asins') if isinstance(d.get('asins'), list) else []:
         a = str(a).strip().upper()
@@ -1417,7 +1459,7 @@ def api_discovery_qualify(h, q):
 def api_pref(h, q):
     """Your choices for one product: your supplier price, your search phrase, a star, or Not for me."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else None
+    market = main_market(d.get('market'), None)
     asin = str(d.get('asin') or '').strip().upper()
     s = d.get('set') if isinstance(d.get('set'), dict) else {}
     if not market or not ASIN_RX.fullmatch(asin):
@@ -1459,7 +1501,7 @@ def api_discovery_variants(h, q):
     """Find the underserved version of a product's phrase: Amazon's longer suggestions for it, searched in the
     markets it could sell in next and ranked by their gap score (your own job)."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    market = main_market(d.get('market'), 'US')
     phrase = config.norm_kw(d.get('phrase') if isinstance(d.get('phrase'), str) else '')[:120]
     if not phrase:
         return h._send(400, {'error': 'Which search phrase?'})
@@ -1471,7 +1513,7 @@ def api_discovery_variants(h, q):
 def api_launch(h, q):
     """Where to launch: the same product, supplier price and first order compared across the markets searched."""
     d = h._json()
-    market = d.get('market') if d.get('market') in ac.MARKETS else 'US'
+    market = main_market(d.get('market'), 'US')
     kw = ' '.join(str(d.get('kw') or '').split())[:120]
     if not config.norm_kw(kw):
         return h._send(400, {'error': 'Which keyword?'})
@@ -1490,6 +1532,267 @@ def api_launch(h, q):
                                        dims if all(dims) else None, num('kg', 0.001, 500.0),
                                        'air' if d.get('freight_mode') == 'air' else 'sea',
                                        boom_arg(d) if isinstance(d.get('boom'), dict) else None))
+
+
+def _order_args(d):
+    """The profit calculator's fields: (cost US$ or None, units, dims or None, kg or None, freight mode)."""
+    def num(k, lo, hi):
+        try:
+            return max(lo, min(hi, float(d[k]))) if d.get(k) not in (None, '') else None
+        except (TypeError, ValueError):
+            return None
+    fxrates.rates()
+    cost = num('cogs', 0.0, 100000.0)
+    cur = d.get('cogs_currency') if d.get('cogs_currency') in fxrates.CURRENCIES else 'USD'
+    dims = [num(k, 0.1, 500.0) for k in ('l', 'w', 'h')]
+    return (fxrates.convert(cost, cur, 'USD') if cost else None, int(num('units', 1, 100000) or 300),
+            dims if all(dims) else None, num('kg', 0.001, 500.0), 'air' if d.get('freight_mode') == 'air' else 'sea')
+
+
+@route('POST', '/api/decide')
+def api_decide(h, q):
+    """Go or no-go for a keyword and its first year week by week: {market, kw, cogs, cogs_currency, units, l, w, h, kg,
+    freight_mode}. The decision is kept with the rules it was made under."""
+    d = h._json()
+    market = main_market(d.get('market'), 'US')
+    kw = ' '.join(str(d.get('kw') or '').split())[:120]
+    if not config.norm_kw(kw):
+        return h._send(400, {'error': 'Which keyword?'})
+    cost, units, dims, kg, mode = _order_args(d)
+    out = reports.decision(S.db, market, kw, S.settings, cost, units, dims, kg, mode)
+    out['previous'] = S.db.write(reports.record_decision, market, config.norm_kw(kw), out['decision'])
+    return h._send(200, out)
+
+
+@route('GET', '/api/decide/rules')
+def api_decide_rules(h, q):
+    from engine import decide as dc
+    return h._send(200, {'rules': S.db.read(reports.decide_rules), 'defaults': dc.merge_rules(),
+                         'restricted': list(dc.RESTRICTED), 'markets': list(dc.MARKETS)})
+
+
+@route('POST', '/api/decide/rules')
+def api_decide_rules_save(h, q):
+    """{rules: {key: {on, limit: {market: value}}}} (only valid values are kept) or {reset: true}."""
+    from engine import decide as dc
+    d = h._json()
+    mine = {} if d.get('reset') else dc.changes(S.db.read(reports.decide_rules))
+    for k, v in (d.get('rules') if isinstance(d.get('rules'), dict) else {}).items():
+        if k in dc.RULES and isinstance(v, dict):
+            e = mine.setdefault(k, {})
+            if 'on' in v:
+                e['on'] = bool(v['on'])
+            if isinstance(v.get('limit'), dict):
+                e['limit'] = {**e.get('limit', {}), **v['limit']}
+    merged = dc.merge_rules(mine)
+    S.db.write(storage.set_state, reports.RULES_KEY, dc.changes(merged))
+    return h._send(200, {'rules': merged})
+
+
+# ---------------- Market intelligence ----------------
+def _intel_args(q):
+    asin = str(q.get('asin') or '').strip().upper()
+    return (main_market(q.get('market'), 'AU'), ' '.join(str(q.get('kw') or '').split())[:120] or None,
+            asin if ASIN_RX.fullmatch(asin) else None)
+
+
+@route('GET', '/api/intel/sellers')
+def api_intel_sellers(h, q):
+    return h._send(200, intel.sellers(S.db, _intel_args(q)[0]))
+
+
+@route('GET', '/api/intel/brands')
+def api_intel_brands(h, q):
+    mk, kw, _ = _intel_args(q)
+    return h._send(200, intel.brands(S.db, mk, kw))
+
+
+@route('GET', '/api/intel/categories')
+def api_intel_categories(h, q):
+    return h._send(200, intel.categories(S.db))
+
+
+@route('GET', '/api/intel/origins')
+def api_intel_origins(h, q):
+    mk, kw, _ = _intel_args(q)
+    return h._send(200, intel.origins(S.db, mk, kw))
+
+
+@route('GET', '/api/intel/related')
+def api_intel_related(h, q):
+    mk, _, asin = _intel_args(q)
+    return h._send(200, intel.related(S.db, mk, asin))
+
+
+@route('GET', '/api/intel/ads')
+def api_intel_ads(h, q):
+    mk, kw, _ = _intel_args(q)
+    return h._send(200, intel.ads(S.db, mk, kw))
+
+
+@route('GET', '/api/intel/scorecard')
+def api_intel_scorecard(h, q):
+    mk, kw, asin = _intel_args(q)
+    if not asin:
+        return h._send(400, {'error': 'Type your listing\'s ASIN (10 letters and digits).'})
+    return h._send(200, intel.scorecard(S.db, mk, asin, kw))
+
+
+# ---------------- Global Gap Finder ----------------
+@route('GET', '/api/gaps')
+def api_gaps(h, q):
+    fxrates.rates()                                     # the fee tables behind the 20% margin use today's rates
+    out = reports.gaps_table(S.db, S.settings)
+    out.update(spapi={'saved': vault.has('spapi'), 'markets': S.spapi.markets() if S.spapi else []},
+               auto=bool(S.settings.get('gap_auto', True) and S.settings.get('auto_refresh', True)))
+    return h._send(200, out)
+
+
+@route('POST', '/api/gaps/run')
+def api_gaps_run(h, q):
+    """Your own Gap Finder run: the proof markets' Best Sellers (unless read today), then the next proven products in
+    Australia and the UAE."""
+    d = h._json()
+    markets = [m for m in (d.get('markets') or []) if m in config.TARGET_MARKETS] or list(config.TARGET_MARKETS)
+
+    async def work(progress):
+        out = await gapfinder.run(S, progress, markets, proof=d.get('proof', True) is not False, force=bool(d.get('force')))
+        table = await asyncio.to_thread(reports.gaps_table, S.db, S.settings)
+        return {**table, 'notes': out['notes']}
+    return h._send(200, {'job': S.new_job('gaps', work)})
+
+
+@route('POST', '/api/gaps/watch')
+def api_gaps_watch(h, q):
+    """Watch a lone exporter's listing: read again every day, with an alert when a second seller appears."""
+    d = h._json()
+    mk = d.get('market') if d.get('market') in config.TARGET_MARKETS else None
+    asin = str(d.get('asin') or '').strip().upper()
+    if not mk or not ASIN_RX.fullmatch(asin):
+        return h._send(400, {'error': 'Which listing?'})
+    wid = S.db.write(storage.add_watch, 'lone', mk, asin, ' '.join(str(d.get('title') or '').split())[:120] or asin)
+    S.sync_tasks()
+    return h._send(200, {'ok': True, 'id': wid})
+
+
+@route('GET', '/api/spapi')
+def api_spapi(h, q):
+    """Which SP-API keys are saved: regions only, never a key or token."""
+    c = S.spapi
+    return h._send(200, {'saved': vault.has('spapi'), 'markets': c.markets() if c else [],
+                         'regions': [{'id': r, 'name': n, 'saved': bool(c and (c.creds.get('refresh') or {}).get(r))}
+                                     for r, n in spapi.REGION_NAMES.items()],
+                         'calls': dict(c.calls) if c else {}, 'error': c.last_error if c else None})
+
+
+@route('POST', '/api/spapi')
+def api_spapi_save(h, q):
+    """Save the SP-API keys encrypted for this Windows user (a field left empty keeps the saved one), or forget them."""
+    d = h._json()
+    if d.get('forget'):
+        vault.forget('spapi')
+        S.spapi = None
+        return h._send(200, {'ok': True, 'saved': False})
+    try:
+        old = vault.load('spapi') or {}
+    except vault.VaultError:
+        old = {}
+    typed = d.get('refresh') if isinstance(d.get('refresh'), dict) else {}
+    merged = {'client_id': str(d.get('client_id') or '').strip() or old.get('client_id'),
+              'client_secret': str(d.get('client_secret') or '').strip() or old.get('client_secret'),
+              'refresh': {r: str(typed.get(r) or '').strip() or (old.get('refresh') or {}).get(r) for r in spapi.ENDPOINTS}}
+    try:
+        creds = spapi.clean_creds(merged)
+        vault.save('spapi', creds)
+    except (spapi.SpApiError, vault.VaultError) as e:
+        return h._send(400, {'error': str(e)})
+    S.spapi = spapi.SpApi(creds)
+    return h._send(200, {'ok': True, 'saved': True, 'markets': S.spapi.markets()})
+
+
+@route('POST', '/api/spapi/test')
+def api_spapi_test(h, q):
+    """Ask Amazon which marketplaces the saved keys can use, region by region."""
+    c = S.spapi
+    if not c:
+        return h._send(400, {'error': 'Save the SP-API keys first.'})
+
+    def test():
+        out = []
+        for r, name in spapi.REGION_NAMES.items():
+            if not (c.creds.get('refresh') or {}).get(r):
+                continue
+            try:
+                out.append({'region': name, 'ok': True, 'marketplaces': [n for _, n in c.participations(r) if n]})
+            except spapi.SpApiError as e:
+                out.append({'region': name, 'ok': False, 'error': str(e)})
+        return {'regions': out}
+
+    async def work(progress):
+        progress('Asking Amazon which marketplaces the keys can use…')
+        return await asyncio.to_thread(test)
+    return h._send(200, {'job': S.new_job('spapi', work)})
+
+
+# ---------------- AI: Ask AI and the MCP connector (both read-only) ----------------
+def mcp_setup():
+    """What to add to Claude Desktop's claude_desktop_config.json to use mcp_server.py with this copy of the app."""
+    entry = {'command': sys.executable, 'args': [str(Path(__file__).resolve().parent / 'mcp_server.py')]}
+    if os.environ.get('PC_APP_DIR'):
+        entry['env'] = {'PC_APP_DIR': str(config.APP_DIR)}
+    return {'config': json.dumps({'mcpServers': {'product-checker': entry}}, indent=2),
+            'file': r'%APPDATA%\Claude\claude_desktop_config.json'}
+
+
+def ai_status():
+    return ai_chat.status(S.db, S.settings, vault.has(ai_chat.VAULT), time.time())
+
+
+@route('GET', '/api/ai')
+def api_ai(h, q):
+    """Is Ask AI on (never the key), the model, this month's use against the cap, and the MCP connector setup."""
+    return h._send(200, {**ai_status(), 'mcp': mcp_setup()})
+
+
+@route('POST', '/api/ai')
+def api_ai_save(h, q):
+    """{key}: save the Anthropic API key encrypted for this Windows user; {forget: true}: remove it (Ask AI is off)."""
+    d = h._json()
+    if d.get('forget'):
+        vault.forget(ai_chat.VAULT)
+        return h._send(200, ai_status())
+    try:
+        vault.save(ai_chat.VAULT, {'key': ai_chat.clean_key(d.get('key'))})
+    except (ai_chat.AiError, vault.VaultError) as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, ai_status())
+
+
+@route('POST', '/api/ai/ask')
+def api_ai_ask(h, q):
+    """{question}: answered by Claude with the read-only tools, in a job. Counted against the monthly cap."""
+    question = h._json().get('question')
+    try:
+        saved = vault.load(ai_chat.VAULT) or {}
+    except vault.VaultError as e:
+        return h._send(400, {'error': str(e)})
+    if not saved.get('key'):
+        return h._send(400, {'error': 'Ask AI is off: save an Anthropic API key in Settings, AI first.'})
+    model, cap, month = S.settings['ai_model'], S.settings['ai_month_usd'], ai_chat.month_of(time.time())
+    spent = S.db.read(ai_chat.usage, month)['usd']
+    if spent >= cap:
+        return h._send(400, {'error': 'This month\'s AI budget (US$%.2f) is used up. Raise it in Settings, AI.' % cap})
+
+    def run(progress):
+        ctx = ai_tools.Ctx(S.db, S.settings, time.time())
+        out = ai_chat.ask(ctx, question, saved['key'], model, cap, spent, progress=progress,
+                          on_use=lambda i, o, u: S.db.write(ai_chat.add_usage, month, i, o, u))
+        return {**out, 'status': ai_status()}
+
+    async def work(progress):
+        progress('Thinking…')
+        return await asyncio.to_thread(run, progress)
+    return h._send(200, {'job': S.new_job('ai', work)})
 
 
 # ---------------- product board ----------------
@@ -1523,7 +1826,43 @@ def board_change(h, fn, *args, card=None, refresh=False, **kw):
 @route('GET', '/api/board')
 def api_board(h, q):
     ok, why = mailer.ready(S.settings, MAIL_SECRET)
-    return h._send(200, {**board.state(S.db, S.settings), 'mail': {'ready': ok, 'why': why}})
+    filters = S.db.read(board.saved_filters)
+    live = [m for m in config.MARKETS if S.spapi and S.spapi.has(m)]
+    return h._send(200, {**board.state(S.db, S.settings), 'mail': {'ready': ok, 'why': why}, 'filters': filters,
+                         'live': live})
+
+
+@route('GET', '/api/board/timeline')
+def api_board_timeline(h, q):
+    return h._send(200, board.timeline(S.db, S.settings))
+
+
+@route('POST', '/api/board/filters')
+def api_board_filters(h, q):
+    """{save: {name, q, mk, stage, overdue, tag}} or {remove: name}."""
+    d = h._json()
+    try:
+        return h._send(200, {'filters': S.db.write(board.save_filter, d.get('save') if isinstance(d.get('save'), dict) else None,
+                                                   d.get('remove'))})
+    except board.BoardError as e:
+        return h._send(400, {'error': str(e)})
+
+
+@route('POST', '/api/board/live')
+def api_board_live(h, q):
+    """Read units left and daily sales from Amazon (SP-API) now, for one card ({id}) or every card."""
+    if not S.spapi:
+        return h._send(400, {'error': 'Save your SP-API keys in Settings first; until then type the units left yourself.'})
+    cid = _int_arg(h._json().get('id'))
+
+    async def work(progress):
+        progress('Asking Amazon for your stock and sales…')
+        out = await asyncio.to_thread(board.sync_live, S.db, S.spapi, S.settings, None, cid)
+        if out['alerts'] and S.settings.get('board_notify', True):
+            await asyncio.to_thread(analysis.notify_new, S, out['alerts'])
+        out.pop('alerts', None)
+        return out
+    return h._send(200, {'job': S.new_job('board_live', work)})
 
 
 @route('GET', '/api/board/card')
@@ -1536,7 +1875,7 @@ def api_board_card(h, q):
 
 @route('POST', '/api/board/add')
 def api_board_add(h, q):
-    """Put a product on the board: {title, market, asin, kw, image}."""
+    """Put a product on the board: {title, market, asin, alibaba, kw, image}."""
     d = h._json()
     return board_change(h, lambda c: {**board.add_card(c, d, S.settings), 'watched': True})
 
@@ -1574,6 +1913,20 @@ def api_board_note(h, q):
     if d.get('remove') is not None:
         return board_change(h, board.remove_note, _int_arg(d.get('remove')))
     return board_change(h, board.add_note, _int_arg(d.get('id')), d.get('text'))
+
+
+@route('POST', '/api/board/strategy')
+def api_board_strategy(h, q):
+    """Launching strategy notes: {id, add: {by, text}}, {id, edit: {sid, by, text}} or {id, remove: sid}."""
+    d = h._json()
+    cid = _int_arg(d.get('id'))
+    if d.get('remove') is not None:
+        return board_change(h, board.remove_strategy, cid, _int_arg(d.get('remove')))
+    if isinstance(d.get('edit'), dict):
+        e = d['edit']
+        return board_change(h, board.edit_strategy, cid, _int_arg(e.get('sid')), e.get('by'), e.get('text'))
+    a = d.get('add') if isinstance(d.get('add'), dict) else {}
+    return board_change(h, board.add_strategy, cid, a.get('by'), a.get('text'))
 
 
 @route('POST', '/api/board/order')
@@ -1647,6 +2000,10 @@ def api_board_task(h, q):
     d = h._json()
     if d.get('cancel') is not None:
         return board_change(h, board.cancel_task, _int_arg(d.get('cancel')))
+    if d.get('move') is not None:
+        out = board_change(h, board.move_task, _int_arg(d.get('move')), d.get('due_day'), S.settings)
+        BOARD_WAKE.set()
+        return out
     if d.get('send') is not None:
         ok, why = mailer.ready(S.settings, MAIL_SECRET)
         if not ok:
@@ -1698,6 +2055,28 @@ def api_board_inform_send(h, q):
         return h._send(400, {'error': why})
     try:
         out = board.inform_send(S.db, S.settings, board_send, _ids(d.get('to')), d.get('message') or '')
+    except (board.BoardError, mailer.MailError, OSError) as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, out)
+
+
+@route('GET', '/api/board/deadlines')
+def api_board_deadlines(h, q):
+    """The deadlines email as it would go now (?to=1,2&message=...)."""
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    view = board.deadlines_view(S.db, S.settings, _ids(q.get('to')), q.get('message') or '')
+    return h._send(200, {**view, 'mail': {'ready': ok, 'why': why}})
+
+
+@route('POST', '/api/board/deadlines')
+def api_board_deadlines_send(h, q):
+    """'Inform deadlines': {to: [notifier ids], message} emails every product's deadline now."""
+    d = h._json()
+    ok, why = mailer.ready(S.settings, MAIL_SECRET)
+    if not ok:
+        return h._send(400, {'error': why})
+    try:
+        out = board.deadlines_send(S.db, S.settings, board_send, _ids(d.get('to')), d.get('message') or '')
     except (board.BoardError, mailer.MailError, OSError) as e:
         return h._send(400, {'error': str(e)})
     return h._send(200, out)
@@ -1757,7 +2136,7 @@ def api_mail_test(h, q):
 
 
 def board_send(to, subject, text, html, ics):
-    mailer.deliver(S.settings, MAIL_SECRET, to, subject, text, html, ics)
+    return mailer.outcome(mailer.deliver(S.settings, MAIL_SECRET, to, subject, text, html, ics))
 
 
 def board_loop():
@@ -1838,15 +2217,52 @@ def free_port():
 
 
 def already_running():
+    """(port, version) of the copy of the app already running on this data folder, or (None, None)."""
     try:
         port = int(PORT_FILE.read_text())
-        with socket.create_connection(('127.0.0.1', port), timeout=1) as c:
+        raw = b''
+        with socket.create_connection(('127.0.0.1', port), timeout=2) as c:
             c.sendall(b'GET /api/ping HTTP/1.0\r\nHost: 127.0.0.1:' + str(port).encode() + b'\r\n\r\n')
-            if b'"ok"' in c.recv(4096):
-                return port
+            while len(raw) < 65536:                              # headers and body can come in separate pieces
+                part = c.recv(4096)
+                if not part:
+                    break
+                raw += part
+        if b'"ok"' in raw:
+            m = re.search(rb'"version":\s*"([^"]+)"', raw)
+            return port, m.group(1).decode() if m else '0'
     except (OSError, ValueError):
         pass
-    return None
+    return None, None
+
+
+def _version_key(v):
+    return tuple(int(x) for x in re.findall(r'\d+', str(v or '0')))
+
+
+def replace_older(port, timeout=20):
+    """Ask an older copy of the app that is still running (an earlier folder, or kept running in the background) to
+    quit, with its own page's token, and wait until it has. True when it is gone."""
+    import http.client
+    base = '127.0.0.1:%d' % port
+    try:
+        c = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        c.request('GET', '/', headers={'Host': base})
+        page = c.getresponse().read().decode('utf-8', 'replace')
+        token = re.search(r'name="pc-token" content="([^"]+)"', page).group(1)
+        c.request('POST', '/api/quit', body=b'{}', headers={'Host': base, 'X-PC-Token': token,
+                                                            'Content-Type': 'application/json'})
+        c.getresponse().read()
+        c.close()
+    except (OSError, AttributeError, http.client.HTTPException) as e:
+        log.warning('could not ask the older copy to quit: %s', e)
+        return False
+    until = time.time() + timeout
+    while time.time() < until:
+        time.sleep(0.5)
+        if already_running()[0] is None:
+            return True
+    return False
 
 
 def main():
@@ -1854,14 +2270,25 @@ def main():
     setup_logging()
     background = '--background' in sys.argv
     no_window = '--no-window' in sys.argv or background
-    port = already_running()
+    port, running = already_running()
+    replaced = False
+    if port and _version_key(running) < _version_key(VERSION):
+        log.info('an older copy (%s) is running: closing it to start %s', running, VERSION)
+        replaced = replace_older(port)
+        if not replaced:
+            log.warning('the older copy did not quit: opening it instead')
+        port, running = already_running()
     if port:                                                     # bring the open app to the front instead
         if not no_window:
             cp.open_app_window('http://127.0.0.1:%d/' % port, APP_DIR / 'app-window')
         return
     import zlib
     instance = singleton.Instance('ProductCheckerV6-%08x' % zlib.crc32(str(APP_DIR).lower().encode()))   # one per data folder
-    if not instance.acquire():
+    for _ in range(20 if replaced else 1):                       # the old copy lets go of its lock as it exits
+        if instance.acquire():
+            break
+        time.sleep(0.5)
+    else:
         print('Product Checker is already starting.', flush=True)
         return
     if singleton.clear_stale_profile_lock(ac.PROFILE_DIR):

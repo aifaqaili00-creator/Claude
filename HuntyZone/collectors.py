@@ -10,6 +10,7 @@ import time
 import amazon_check as ac
 import config
 import file_rank as fr
+import gapfinder
 import ideas
 import product
 import reports
@@ -62,6 +63,15 @@ def task_specs(settings, watches):
     if any(w.get('enabled', 1) and w['kind'] in ('keyword', 'asin') for w in watches):
         for m in sorted({w['market'] for w in watches if w['kind'] in ('keyword', 'asin')}):
             specs.append({'kind': 'products', 'market': m, 'target': 'tracked', 'every_s': sc.EVERY['products'], 'priority': 5})
+    if settings.get('gap_auto', True):
+        for m in gapfinder.PROOF:
+            specs.append({'kind': 'proof', 'market': m, 'target': 'best', 'every_s': sc.EVERY['proof'], 'priority': 6})
+        for m in config.TARGET_MARKETS:
+            specs.append({'kind': 'gaps', 'market': m, 'target': 'proven', 'every_s': sc.EVERY['gaps'], 'priority': 5})
+    for m in sorted({w['market'] for w in watches if w['kind'] == 'lone' and w.get('enabled', 1)}):
+        specs.append({'kind': 'lone', 'market': m, 'target': 'watched', 'every_s': sc.EVERY['lone'], 'priority': 3})
+    if settings.get('board_live', True):
+        specs.append({'kind': 'board_live', 'market': '', 'target': 'spapi', 'every_s': sc.EVERY['board_live'], 'priority': 4})
     specs.append({'kind': 'import_scan', 'market': '', 'target': 'downloads', 'every_s': sc.EVERY['import_scan'], 'priority': 6})
     specs.append({'kind': 'maintenance', 'market': '', 'target': 'db', 'every_s': sc.EVERY['maintenance'], 'priority': 9})
     return specs
@@ -74,7 +84,36 @@ class Collectors:
 
     def handlers(self):
         return {'products': self.products, 'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
-                'import_scan': self.import_scan, 'maintenance': self.maintenance, 'qualify': self.qualify}
+                'import_scan': self.import_scan, 'maintenance': self.maintenance, 'qualify': self.qualify,
+                'proof': self.proof, 'gaps': self.gaps, 'lone': self.lone, 'board_live': self.board_live}
+
+    async def board_live(self, task):
+        """Product board: units left and daily sales from the SP-API (nothing to do without keys)."""
+        import board
+        client = getattr(self.S, 'spapi', None)
+        if not client:
+            return {'status': 'ok', 'note': 'no SP-API keys: units left are typed by you'}
+        out = await asyncio.to_thread(board.sync_live, self.S.db, client, self.S.settings)
+        if out['alerts'] and self.S.settings.get('board_notify', True):
+            import analysis
+            await asyncio.to_thread(analysis.notify_new, self.S, out['alerts'])
+        note = '%d card%s: %d new stock count%s, %d days of sales' % (
+            out['cards'], '' if out['cards'] == 1 else 's', out['counts'], '' if out['counts'] == 1 else 's', out['sales_days'])
+        if out['errors']:
+            note += '; ' + '; '.join(out['errors'])[:200]
+        return {'status': 'partial' if out['errors'] else 'ok', 'note': note}
+
+    async def proof(self, task):
+        """Gap Finder: Best Sellers of a proof market (USA, UK, Germany)."""
+        return await gapfinder.read_proof_lists(self.S, task['market'])
+
+    async def gaps(self, task):
+        """Gap Finder: the next proven products checked in Australia or the UAE."""
+        return await gapfinder.check_market(self.S, task['market'], gapfinder.CHECK_TOP)
+
+    async def lone(self, task):
+        """Gap Finder: the lone exporters you watch, read again."""
+        return await gapfinder.recheck_lone(self.S, task['market'])
 
     async def _categories(self, market, limit=LIST_CATEGORIES):
         chosen = self.S.settings.get('categories', {}).get(market) or []

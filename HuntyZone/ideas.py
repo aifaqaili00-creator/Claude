@@ -22,7 +22,7 @@ RISKY_CATEGORY = re.compile(r'select ?all|baby|beauty|book|clothing|fashion|shoe
 DEFAULT_US = [('home-garden', 'Home & Kitchen'), ('kitchen', 'Kitchen & Dining'), ('lawn-garden', 'Patio, Lawn & Garden'),
               ('sporting-goods', 'Sports & Outdoors'), ('pet-supplies', 'Pet Supplies'), ('office-products', 'Office Products'),
               ('hi', 'Tools & Home Improvement'), ('arts-crafts', 'Arts, Crafts & Sewing')]
-LISTS = {'movers': '/gp/movers-and-shakers', 'new': '/gp/new-releases'}
+LISTS = {'movers': '/gp/movers-and-shakers', 'new': '/gp/new-releases', 'best': '/gp/bestsellers'}
 COMPLETE = {   # Amazon search-suggestion service per marketplace
     'US': ('https://completion.amazon.com/api/2017/suggestions', 'ATVPDKIKX0DER', 'en_US'),
     'AU': ('https://completion.amazon.com.au/api/2017/suggestions', 'A39IBJ37TRP1C6', 'en_AU'),
@@ -89,6 +89,10 @@ DEFAULTS = {
     'AE': [('home', 'Home'), ('kitchen', 'Kitchen'), ('sporting', 'Sports'), ('sports', 'Sports'),
            ('pet-supplies', 'Pet Supplies'), ('office-products', 'Office Products'), ('garden', 'Garden'),
            ('home-improvement', 'Home Improvement')],
+    'GB': [('kitchen', 'Home & Kitchen'), ('diy', 'DIY & Tools'), ('outdoors', 'Garden'), ('sports', 'Sports & Outdoors'),
+           ('pet-supplies', 'Pet Supplies'), ('officeproduct', 'Stationery & Office Supplies')],
+    'DE': [('kitchen', 'Home & Kitchen'), ('diy', 'DIY & Tools'), ('garden', 'Garden'), ('sports', 'Sports & Outdoors'),
+           ('pet-supplies', 'Pet Supplies'), ('officeproduct', 'Stationery & Office Supplies')],
 }
 
 
@@ -173,11 +177,12 @@ COUNT_JS = "() => document.querySelectorAll('[id=\"gridItemRoot\"], .zg-grid-gen
 
 
 async def read_list(checker, code, kind, slug, name):
-    """One Movers & Shakers or New Releases page (up to 50 products). Raises ListMissing for an unknown slug."""
+    """One Movers & Shakers, New Releases or Best Sellers page (up to 50 products). Raises ListMissing for an unknown
+    slug."""
     site = ac.MARKETS[code]['site']
     page = await checker.ctx.new_page()
     try:
-        http = await checker._goto(page, '%s%s/%s' % (site, LISTS[kind], slug), code)
+        http = await checker._goto(page, ac.with_lang('%s%s/%s' % (site, LISTS[kind], slug), code), code)
         if http == 404 or not re.search(r'/%s(?:[/?#]|$)' % re.escape(slug), urlparse(page.url).path):
             raise ListMissing('%s has no %s list for "%s"' % (ac.MARKETS[code]['name'], kind, name))
         last, still = -1, 0

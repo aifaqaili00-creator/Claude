@@ -22,6 +22,7 @@ TZ = ZoneInfo('Asia/Dubai')
 DAY = 86400
 NOW = remind.at('2026-10-12', (10, 0), TZ)
 S = {**config.defaults(), 'mail_address': 'ali@gmail.com', 'mail_from_name': 'Ali Afa'}
+ALIBABA = 'https://www.alibaba.com/product-detail/bed.html'
 
 
 @pytest.fixture
@@ -49,7 +50,10 @@ def approve(db, cid, now=NOW):
 
 
 def add(db, approved=True, **kw):
-    cid = db.write(board.add_card, {'title': 'Calming Dog Bed', 'market': 'US', 'kw': 'calming dog bed', **kw}, S, NOW)['id']
+    """A product past its Idea (an ASIN made from its keyword and an Alibaba link), approved unless said otherwise."""
+    d = {'title': 'Calming Dog Bed', 'market': 'US', 'kw': 'calming dog bed', **kw}
+    asin = 'B0' + ''.join(ch for ch in d['kw'].upper() if ch.isalnum())[:8].ljust(8, 'X')
+    cid = db.write(board.add_card, {'asin': asin, 'alibaba': ALIBABA, **d}, S, NOW)['id']
     if approved:
         approve(db, cid)
     return cid
@@ -84,15 +88,18 @@ def test_a_product_goes_on_the_board_once_and_is_watched(db):
         {'id': cid, 'exists': True}
     d = detail(db, cid)
     c, o = d['card'], d['orders'][0]
-    assert c['stage'] == 'approval' and c['key'] == 'PB-%d' % cid and c['kw'] == 'calming dog bed' and c['asin'] == 'B0DOGBED01'
-    assert c['image'] == 'https://m.media-amazon.com/images/I/x.jpg' and c['unlocked'] == ['approval']
+    assert c['stage'] == 'idea' and c['key'] == 'PB-%d' % cid and c['kw'] == 'calming dog bed' and c['asin'] == 'B0DOGBED01'
+    assert c['image'] == 'https://m.media-amazon.com/images/I/x.jpg' and c['unlocked'] == ['idea']
+    assert c['idea']['missing'] == ['the Alibaba link'] and c['progress']['idea'] == 0.5
     assert o['cost_cur'] == 'AUD' and o['unit_cost'] == round(fxrates.convert(5.0, 'USD', 'AUD'), 2)
     assert [ln['market'] for ln in o['lines']] == ['US'] and o['status']['missing'][0] == 'units for USA'
     w = db.read(storage.watches)
-    assert [(x['kind'], x['market'], x['target'], x['stage']) for x in w] == [('keyword', 'US', 'calming dog bed', 'researching')]
+    assert [(x['kind'], x['market'], x['target'], x['stage']) for x in w] == [('keyword', 'US', 'calming dog bed', 'idea')]
+    assert db.write(board.update_card, cid, {'alibaba': ALIBABA}, S, NOW)['moved'] == 'approval'
+    assert [x['stage'] for x in db.read(storage.watches)] == ['researching']
     assert approve(db, cid)['trophies'] == ['Approved']
     c = detail(db, cid)['card']
-    assert c['stage'] == 'sourcing' and c['unlocked'] == ['approval', 'sourcing']
+    assert c['stage'] == 'sourcing' and c['unlocked'] == ['idea', 'approval', 'sourcing']
     assert [x['stage'] for x in db.read(storage.watches)] == ['sourcing']
     other = db.write(board.add_card, {'title': 'Lick Mat', 'market': 'AU', 'image': 'javascript:alert(1)'}, S, NOW)
     assert db.read(board._card, other['id'])['image'] is None and db.read(board._card, other['id'])['kw'] == 'lick mat'
@@ -113,7 +120,7 @@ def test_a_complete_order_wins_a_trophy_and_opens_launch(db):
     out = db.write(board.set_line, cid, 1, 'AU', {'ship_cost': 300, 'ship_cur': 'USD', 'ship_mode': 'air'}, S, NOW)
     assert out['trophies'] == ['Order ready']
     d = detail(db, cid)
-    assert d['card']['stage'] == 'launch' and d['card']['unlocked'] == ['approval', 'sourcing', 'launch']
+    assert d['card']['stage'] == 'launch' and d['card']['unlocked'] == ['idea', 'approval', 'sourcing', 'launch']
     assert d['card']['invested_usd'] == 300 * 6 + 450 + 200 * 6 + 300 and d['card']['milestones']['order_ready'] == NOW
     assert d['tasks']['sourcing']['done_at'] == NOW and {m['status'] for m in d['tasks']['sourcing']['mails']} == {'cancelled'}
     assert d['events'][0]['kind'] == 'trophy' and d['events'][0]['text'] == 'Order ready'
@@ -168,7 +175,7 @@ def test_launch_needs_every_hint_handled_and_a_live_day(db):
     assert db.write(board.update_card, cid, {'live': {'US': '2026-10-10'}}, S, NOW)['trophies'] == []
     assert db.write(board.set_hint, own['id'], 'done', 'ordered', S, NOW)['trophies'] == ['Launched']
     d = detail(db, cid)
-    assert d['card']['stage'] == 'reorder' and d['card']['unlocked'] == ['approval', 'sourcing', 'launch', 'reorder']
+    assert d['card']['stage'] == 'reorder' and d['card']['unlocked'] == list(board.rules.STAGES)
     assert d['data']['live'] == {'US': '2026-10-10'} and db.read(storage.watches)[0]['stage'] == 'launched'
     with pytest.raises(board.BoardError, match='your own'):
         db.write(board.remove_hint, hs[0]['id'])
@@ -280,6 +287,31 @@ def test_the_sender_sends_retries_and_reports(db):
     assert 'METHOD:REQUEST' in sent[-1][4] and 'ATTENDEE;CN="Sara Khan"' in sent[-1][4].replace('\r\n ', '')
 
 
+def test_emails_opened_in_the_browser_are_not_called_sent(db):
+    cid = add(db)
+    ids = people(db, ('Sara Khan', 'sara@example.com'))
+    db.write(board.set_task, cid, 'sourcing', {'days': 7, 'notify': ids}, S, NOW, TZ)
+    hows = []
+
+    def browser(to, subject, text, html, ics):
+        hows.append('calendar' if ics else 'opened')
+        return hows[-1]
+    assert board.tick(db, S, browser, NOW + 1, TZ)['sent'] == 1
+    assert detail(db, cid)['events'][0]['text'] == 'New task email opened in your browser: press Send to email Sara'
+    t = at('2026-10-19', 9)
+    board.tick(db, S, browser, t, TZ)
+    assert detail(db, cid)['events'][0]['text'] == 'Meeting invite opened in Google Calendar: press Save to invite Sara'
+    assert hows == ['opened', 'opened', 'calendar']
+    st = {m['kind']: m['status'] for m in detail(db, cid)['tasks']['sourcing']['mails']}
+    assert st == {'start': 'opened', 'reminder': 'opened', 'meeting': 'opened'} and board.pending_mail(db) == 0
+    db.write(board.set_line, cid, 1, 'US', {'units': 300}, S, t + 30)
+    out = board.inform_send(db, S, browser, None, '', t + 60)
+    assert out['opened'] is True and board.inform_view(db, S, None, '', t + 120)['last']['opened'] is True
+    assert detail(db, cid)['events'][0]['text'] == 'Product update opened in your browser: press Send to email Sara'
+    assert board.state(db, S, t + 120)['inform']['opened'] is True
+    assert board.inform_send(db, S, lambda *a: None, None, '', t + 180)['opened'] is False
+
+
 def test_late_emails_are_missed_and_finished_or_removed_products_send_none(db):
     ids = people(db, ('Sara', 'sara@example.com'))
     late = add(db)
@@ -306,7 +338,7 @@ def test_the_board_state_summary_and_refresh_after_runs(db):
     assert st['cards'][0]['stage'] == 'launch' and st['trophies'] == 2 and st['invested_usd'] == 2250
     assert st['recent'][0]['kind'] == 'trophy' and st['rev'] == board.rev()
     text = board.summary_text(db, S, NOW)
-    assert 'Launch & strategy (1)' in text and 'Trophies this week: Approved (Calming Dog Bed); Order ready (Calming Dog Bed)' in text
+    assert 'Launching strategy (1)' in text and 'Trophies this week: Approved (Calming Dog Bed); Order ready (Calming Dog Bed)' in text
     assert 'Invested so far: US$ 2,250' in text and 'Sourcing & PO (0)' in text
     assert board.refresh_for(db, S, [{'kind': 'watch_kw', 'market': 'US', 'target': 'Calming Dog Bed'}], NOW) == 1
     assert board.refresh_for(db, S, [{'kind': 'lists', 'market': 'US', 'target': 'all'}], NOW) == 0
@@ -396,6 +428,88 @@ def test_the_product_update_lists_every_product_and_goes_to_everyone(db):
     assert detail(db, bed)['events'][0]['text'] == 'Product update emailed to Ahmed and Sara'
 
 
+def test_the_approval_checks_say_what_the_research_found(db, monkeypatch):
+    cid = add(db, approved=False)
+    db.write(board.add_check, cid, 'Sample arrived and looks good', NOW)              # your own check: no research
+    items = detail(db, cid)['card']['approval']['items']
+    ids = [i['id'] for i in items]
+
+    def said():
+        r = detail(db, cid)['research']
+        return [(r[i]['state'], r[i]['why']) if i in r else None for i in ids]
+
+    first = ('unknown', 'Search "calming dog bed" in USA first: the research fills this in.')
+    price = 'Type the supplier price in the keyword report\'s profit calculator and tick Remember the cost.'
+    assert said() == [first, first, first, ('unknown', 'Alibaba link added. ' + price), first, first, None]
+    search(db)
+    r = said()
+    assert r[0] == ('pass', 'Page 1 sells at least 1,594 a month (floor 1,500).')
+    assert r[1] == ('pass', '2 listings on page 1 deliver fast.') and r[2] == ('unknown', price)
+    assert r[4] == ('pass', 'No restricted words in the top titles.') and r[6] is None
+    assert r[5] == ('unknown', 'The package size is not known yet: the keyword report reads it from the top listings.')
+    db.write(lambda c: storage.add_watch(c, 'keyword', 'US', 'calming dog bed', None, 24, NOW))
+    db.write(lambda c: c.execute("UPDATE watch SET cogs=6 WHERE kind='keyword' AND target='calming dog bed'"))
+    monkeypatch.setattr(board.reports, 'size_suggestion', lambda conn, mk, kw: {'dims_cm': [30, 20, 10], 'kg': 0.8,
+                                                                                  'searched': True})
+    r = said()
+    assert r[2][0] == 'fail' and r[2][1].startswith('With your product cost the margin is -')   # size feeds the FBA fee
+    assert r[3] == ('pass', 'Alibaba link added; the supplier price is about US$6.00 a unit.')
+    assert r[5] == ('pass', 'The usual package is 30 x 20 x 10 cm, 0.8 kg: large standard size.')
+    db.write(lambda c: storage.set_state(c, board.reports.RULES_KEY, {'fast_stock': {'on': False}}))
+    assert said()[1] is None                                                         # its rule is switched off
+    approve(db, cid)
+    assert detail(db, cid)['research'] == {}                                         # approved: nothing to check
+
+
+def test_each_card_says_its_next_step(db):
+    cid = db.write(board.add_card, {'title': 'Lick Mat', 'market': 'US', 'kw': 'lick mat'}, S, NOW)['id']
+
+    def step():
+        return board.state(db, S, NOW)['cards'][0]['next']
+
+    assert step() == {'text': 'Add the Amazon ASIN and the Alibaba link', 'tab': 'idea', 'tone': 'todo', 'order': None}
+    db.write(board.update_card, cid, {'asin': 'B0LICKMAT1', 'alibaba': ALIBABA}, S, NOW)
+    assert step() == {'text': 'Tick 6 approval checks', 'tab': 'approval', 'tone': 'todo', 'order': None}
+    approve(db, cid)
+    assert step() == {'text': 'Add the price per unit and 3 more', 'tab': 'sourcing', 'tone': 'todo', 'order': 1}
+    order(db, cid)
+    assert step()['tab'] == 'launch' and detail(db, cid)['card']['next'] == step()
+
+
+def test_inform_deadlines_emails_each_product_and_its_deadline(db):
+    bed = add(db)
+    mat = add(db, title='Lick Mat', kw='lick mat')
+    add(db, title='Sauna Hat', kw='sauna hat')                                                 # no deadline
+    with pytest.raises(board.BoardError, match='Notifier list'):
+        board.deadlines_send(db, S, lambda *a: None, None, '', NOW)
+    people(db, ('Sara Khan', 'sara@example.com'), ('Ahmed Ali', 'ahmed@example.com'))
+    with pytest.raises(board.BoardError, match='No product has a deadline'):
+        board.deadlines_send(db, S, lambda *a: None, None, '', NOW)
+    db.write(board.set_task, bed, 'sourcing', {'days': 7, 'note': 'Bring <samples>'}, S, NOW, TZ)    # Mon 19 Oct
+    db.write(board.set_task, mat, 'sourcing', {'days': 14}, S, NOW, TZ)                        # Mon 26 Oct
+    later = NOW + 8 * DAY                                                                      # Tue 20 Oct
+    view = board.deadlines_view(db, S, None, 'Tell me if a date slips', later)
+    assert view['count'] == 2 and view['late'] == 1 and view['none'] == ['Sauna Hat']
+    assert view['to'] == ['Ahmed Ali', 'Sara Khan'] and view['last']['sent_at'] is None
+    assert view['subject'] == 'Deadlines, Tue 20 Oct: 1 late, 1 coming up'
+    assert '1. Calming Dog Bed (USA): Sourcing & PO, was due Mon 19 Oct (1 day late)\n   Note: Bring <samples>' in view['text']
+    assert '2. Lick Mat (USA): Sourcing & PO, due Mon 26 Oct (in 6 days)' in view['text']
+    assert 'No deadline yet: Sauna Hat.' in view['text'] and 'Tell me if a date slips' in view['text']
+    assert 'Bring &lt;samples&gt;' in view['html'] and '<samples>' not in view['html']
+    with pytest.raises(board.BoardError, match='Pick who'):
+        board.deadlines_send(db, S, lambda *a: None, [], '', later)
+    sent = []
+    out = board.deadlines_send(db, S, lambda *a: sent.append(a), [view['notifiers'][1]['id']], '', later)
+    assert out == {'to': ['Sara Khan'], 'subject': view['subject'], 'count': 2, 'opened': False}
+    assert sent[0][0] == [('Sara Khan', 'sara@example.com')] and sent[0][4] is None and '<html>' in sent[0][3]
+    assert detail(db, bed)['events'][0]['text'] == 'Deadlines emailed to Sara'
+    assert board.deadlines_view(db, S, None, '', later)['last'] == {'sent_at': later, 'to': ['Sara Khan'], 'opened': False}
+    assert board.deadlines_send(db, S, lambda *a: 'opened', None, '', later + 60)['opened'] is True
+    assert detail(db, mat)['events'][0]['text'] == 'Deadlines email opened in your browser: press Send to email Ahmed and Sara'
+    db.write(board.archive_card, mat, True, NOW)                                               # archived: not listed
+    assert board.deadlines_view(db, S, None, '', later)['count'] == 1
+
+
 def test_the_product_update_goes_out_by_itself_once_editing_stops(db):
     people(db, ('Sara', 'sara@example.com'))
     bed = add(db)
@@ -483,3 +597,77 @@ def test_products_already_on_the_board_count_as_approved(db):
     db.write(lambda c: c.execute("UPDATE board_card SET stage='sourcing', data_json='{}' WHERE id=?", (cid,)))
     c = detail(db, cid)['card']
     assert c['stage'] == 'sourcing' and 'sourcing' in c['unlocked'] and c['milestones']['approved']
+
+
+def test_an_idea_moves_to_approval_once_it_has_both_links(db):
+    ids = people(db, ('Sara', 'sara@example.com'))
+    cid = db.write(board.add_card, {'title': 'Lick Mat', 'market': 'US', 'kw': 'lick mat'}, S, NOW)['id']
+    c = detail(db, cid)['card']
+    assert c['stage'] == 'idea' and c['unlocked'] == ['idea'] and c['progress']['idea'] == 0
+    assert c['idea']['missing'] == ['the Amazon ASIN', 'the Alibaba link']
+    assert 'Idea (1)\n- Lick Mat (USA): still needs the Amazon ASIN and the Alibaba link' in board.summary_text(db, S, NOW)
+    with pytest.raises(board.BoardError, match='Finish Idea: add the Amazon ASIN and the Alibaba link'):
+        db.write(board.move_card, cid, 'approval', None, NOW)
+    task = db.write(board.set_task, cid, 'idea', {'days': 3, 'notify': ids}, S, NOW, TZ)
+    assert 'the Amazon ASIN' in db.read(board.preview, task['task_id'], S, NOW, TZ)[0]['text']
+    assert db.write(board.update_card, cid, {'asin': 'B0LICKMAT1'}, S, NOW)['moved'] is None
+    out = db.write(board.update_card, cid, {'alibaba': ALIBABA}, S, NOW + 60)
+    assert out['moved'] == 'approval' and out['trophies'] == []
+    d = detail(db, cid)
+    assert d['card']['stage'] == 'approval' and d['card']['unlocked'] == ['idea', 'approval']
+    assert d['card']['milestones']['idea_done'] == NOW + 60 and d['card']['progress']['idea'] == 1
+    assert d['events'][0]['text'] == 'Moved to Approval: the Amazon ASIN and the Alibaba link are in'
+    assert d['tasks']['idea']['done_at'] == NOW + 60 and {m['status'] for m in d['tasks']['idea']['mails']} == {'cancelled'}
+    db.write(board.update_card, cid, {'alibaba': ''}, S, NOW + 120)              # taking a link out never locks it again
+    assert detail(db, cid)['card']['unlocked'] == ['idea', 'approval']
+    db.write(board.move_card, cid, 'idea', None, NOW + 180)
+    assert db.write(board.update_card, cid, {'alibaba': ALIBABA}, S, NOW + 240)['moved'] is None   # moved back by you: stays
+    both = db.write(board.add_card, {'title': 'Pet Stairs', 'market': 'AU', 'kw': 'pet stairs', 'asin': 'B0PETSTAIR',
+                                     'alibaba': ALIBABA}, S, NOW)
+    assert both['moved'] == 'approval' and detail(db, both['id'])['card']['stage'] == 'approval'
+    with pytest.raises(board.BoardError, match='https://'):
+        db.write(board.add_card, {'title': 'Sauna Hat', 'market': 'US', 'alibaba': 'www.alibaba.com/x'}, S, NOW)
+
+
+def test_approval_waits_for_the_idea(db):
+    cid = db.write(board.add_card, {'title': 'Lick Mat', 'market': 'US', 'kw': 'lick mat'}, S, NOW)['id']
+    assert approve(db, cid)['trophies'] == []                                    # every check ticked while still an idea
+    assert detail(db, cid)['card']['stage'] == 'idea'
+    out = db.write(board.update_card, cid, {'asin': 'B0LICKMAT1', 'alibaba': ALIBABA}, S, NOW + 60)
+    c = detail(db, cid)['card']
+    assert out['moved'] == 'sourcing' and out['trophies'] == ['Approved'] and c['stage'] == 'sourcing'
+    assert c['unlocked'] == ['idea', 'approval', 'sourcing']
+
+
+def test_products_already_on_the_board_count_as_ideas_done(db):
+    cid = add(db, approved=False)
+    data = db.read(board._card, cid)['data']
+    del data['milestones']['idea_done']
+    db.write(lambda c: c.execute('UPDATE board_card SET data_json=? WHERE id=?', (json.dumps(data), cid)))
+    c = detail(db, cid)['card']
+    assert c['stage'] == 'approval' and c['unlocked'] == ['idea', 'approval'] and c['progress']['idea'] == 1
+    db.write(board.move_card, cid, 'approval', 0.5, NOW)                        # still sorts within its column
+
+
+def test_launch_strategies_from_other_people(db):
+    cid = add(db)
+    db.write(board.add_strategy, cid, '  Sara Khan ', 'Coupon 20% in week 1\nThen Vine', NOW)
+    db.write(board.add_strategy, cid, '', 'Ads at US$ 0.80 a click', NOW + 60)
+    d = detail(db, cid)
+    assert [(s['id'], s['by'], s['text']) for s in d['strategy']] == [(2, '', 'Ads at US$ 0.80 a click'),
+                                                                        (1, 'Sara Khan', 'Coupon 20% in week 1\nThen Vine')]
+    assert [e['text'] for e in d['events'][:2]] == ['Launch strategy added', 'Launch strategy from Sara Khan added']
+    db.write(board.edit_strategy, cid, 1, 'Sara', 'Coupon 25% in week 1', NOW + 120)
+    s = detail(db, cid)['strategy'][1]
+    assert (s['by'], s['text'], s['at'], s['edited_at']) == ('Sara', 'Coupon 25% in week 1', NOW, NOW + 120)
+    db.write(board.remove_strategy, cid, 2, NOW + 180)
+    d = detail(db, cid)
+    assert [s['id'] for s in d['strategy']] == [1] and d['events'][0]['text'] == 'Launch strategy removed'
+    for bad in ((board.add_strategy, cid, 'Sara', '   '), (board.edit_strategy, cid, 9, 'x', 'y'),
+                (board.remove_strategy, cid, 2), (board.add_strategy, 99999, 'x', 'y')):
+        with pytest.raises(board.BoardError):
+            db.write(*bad)
+    for i in range(board.STRATEGY_MAX - 1):
+        db.write(board.add_strategy, cid, 'x', 'idea %d' % i, NOW)
+    with pytest.raises(board.BoardError, match='At most'):
+        db.write(board.add_strategy, cid, 'x', 'one too many', NOW)

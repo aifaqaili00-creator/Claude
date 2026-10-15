@@ -7,13 +7,14 @@
 <title>Product Checker</title>
 <link rel="icon" href="/favicon.svg">
 <script>
-/* Apply the saved theme before the first paint, so the window never flashes the wrong colours. */
+/* Apply the saved theme and the simple view before the first paint, so the window never flashes. */
 (function () {
-  var pref = 'light';
-  try { pref = localStorage.getItem('pcTheme') || 'light'; } catch (e) {}
+  var pref = 'light', all = false;
+  try { pref = localStorage.getItem('pcTheme') || 'light'; all = localStorage.getItem('pcDetails') === '1'; } catch (e) {}
   var dark = pref === 'dark' || (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   document.documentElement.setAttribute('data-theme-pref', pref);
+  if (!all && !/[?&]print=/.test(location.search)) document.documentElement.classList.add('simple');
 })();
 </script>
 <link rel="stylesheet" href="/ui/css/tokens.css">
@@ -40,10 +41,12 @@
   <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/></symbol>
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></symbol>
   <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M7 15l4-4 3 3 5-6"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7 10l5-5 5 5M5 20h14"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
@@ -58,6 +61,9 @@
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5L12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5L18 7M10 11v6M14 11v6"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="18.5" cy="12" r="1.1"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
   <!-- country flags (drawn: Windows shows flag emoji as two letters), 3:2 -->
   <defs><pattern id="f-us-stars" width="2.3" height="2.05" patternUnits="userSpaceOnUse" x=".2" y=".35"><circle cx="1.15" cy="1.02" r=".52" fill="#fff"/></pattern></defs>
   <symbol id="f-star" viewBox="-1 -1 2 2"><path d="M0-1L.225-.309H.951L.363.118L.588.809L0 .382L-.588.809L-.363.118L-.951-.309H-.225Z"/></symbol>
@@ -86,23 +92,32 @@
     </div>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="#/home" data-view="home" title="Home"><svg class="icon"><use href="#i-home"/></svg><span>Home</span><b class="count" id="alertCount" hidden></b></a>
-      <a href="#/radar" data-view="radar" title="Trend radar"><svg class="icon"><use href="#i-radar"/></svg><span>Trend radar</span></a>
-      <a href="#/watch" data-view="watch" title="Watchlist"><svg class="icon"><use href="#i-eye"/></svg><span>Watchlist</span></a>
-      <a href="#/board" data-view="board" title="Board"><svg class="icon"><use href="#i-board"/></svg><span>Board</span></a>
-      <div class="grp">Research</div>
-      <a href="#/check" data-view="check" title="Check sellers"><svg class="icon"><use href="#i-search"/></svg><span>Check sellers</span></a>
+      <div class="grp">1 · Find ideas</div>
       <a href="#/ideas" data-view="ideas" title="Product ideas"><svg class="icon"><use href="#i-bulb"/></svg><span>Product ideas</span></a>
+      <a href="#/radar" data-view="radar" title="Trend radar"><svg class="icon"><use href="#i-radar"/></svg><span>Trend radar</span></a>
+      <a href="#/gaps" data-view="gaps" title="Gap Finder"><svg class="icon"><use href="#i-globe"/></svg><span>Gap Finder</span></a>
+      <div class="grp">2 · Check an idea</div>
+      <a href="#/check" data-view="check" title="Check sellers"><svg class="icon"><use href="#i-search"/></svg><span>Check sellers</span></a>
       <a href="#/niche" data-view="niche" title="Niche keywords"><svg class="icon"><use href="#i-tags"/></svg><span>Niche keywords</span></a>
-      <div class="grp">Helium 10</div>
-      <a href="#/xray" data-view="xray" title="Xray analysis"><svg class="icon"><use href="#i-scan"/></svg><span>Xray analysis</span></a>
-      <a href="#/rank" data-view="rank" title="Rank a file"><svg class="icon"><use href="#i-file"/></svg><span>Rank a file</span></a>
-      <div class="grp">Your data</div>
-      <a href="#/library" data-view="library" title="Library"><svg class="icon"><use href="#i-clock"/></svg><span>Library</span></a>
-      <a href="#/health" data-view="health" title="Health"><svg class="icon"><use href="#i-pulse"/></svg><span>Health</span></a>
+      <a href="#/xray" data-view="xray" title="Xray analysis (Helium 10)"><svg class="icon"><use href="#i-scan"/></svg><span>Xray analysis</span></a>
+      <div class="grp">3 · Your products</div>
+      <a href="#/board" data-view="board" title="Board"><svg class="icon"><use href="#i-board"/></svg><span>Board</span></a>
+      <a href="#/watch" data-view="watch" title="Watchlist"><svg class="icon"><use href="#i-eye"/></svg><span>Watchlist</span></a>
+      <button type="button" class="nav-more" id="navMoreBtn" aria-expanded="false" aria-controls="navMore" title="More pages: Market intelligence, Ask AI, Rank a file, Library, Health"><svg class="icon"><use href="#i-more"/></svg><span>More</span><svg class="icon sm nav-chev"><use href="#i-chev"/></svg></button>
+      <div class="nav-sub" id="navMore" hidden>
+        <a href="#/intel" data-view="intel" title="Market intelligence"><svg class="icon"><use href="#i-chart"/></svg><span>Market intelligence</span></a>
+        <a href="#/ai" data-view="ai" title="Ask AI"><svg class="icon"><use href="#i-spark"/></svg><span>Ask AI</span></a>
+        <a href="#/rank" data-view="rank" title="Rank a file (Helium 10)"><svg class="icon"><use href="#i-file"/></svg><span>Rank a file</span></a>
+        <a href="#/library" data-view="library" title="Library"><svg class="icon"><use href="#i-clock"/></svg><span>Library</span></a>
+        <a href="#/health" data-view="health" title="Health"><svg class="icon"><use href="#i-pulse"/></svg><span>Health</span></a>
+      </div>
+      <hr class="nav-sep">
       <a href="#/settings" data-view="settings" title="Settings"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span></a>
     </nav>
     <div class="side-foot">
+      <label class="detsw" title="Show every chart, column and setting. Off: the simple view."><input type="checkbox" id="detailsSw" role="switch"><span>Show all details</span></label>
       <span id="checkerPill" class="pill weak"><i></i><span>Checker</span></span>
+      <span class="lbl" id="appVersion" title="Product Checker version"></span>
       <span class="lbl">Theme</span>
       <div class="seg theme-seg" id="themeSeg" role="group" aria-label="Theme">
         <button type="button" data-v="light" title="Light" aria-label="Light theme"><svg class="icon sm"><use href="#i-sun"/></svg></button>
@@ -118,7 +133,7 @@
       <div class="status" id="status"></div>
       <div class="row">
         <button class="btn ghost" id="btnFxPop" aria-haspopup="dialog" aria-expanded="false" aria-controls="fxPop" title="Convert between US$, A$, AED and €"><svg class="icon sm"><use href="#i-fx"/></svg>Currency</button>
-        <button class="btn ghost" id="btnShow" title="Show the background browser that runs the checks"><svg class="icon sm"><use href="#i-browser"/></svg>Checker browser</button>
+        <button class="btn ghost adv" id="btnShow" title="Show the background browser that runs the checks"><svg class="icon sm"><use href="#i-browser"/></svg>Checker browser</button>
         <button class="btn primary" id="btnH10" title="Opens in your own Chrome profile">Open Helium 10<svg class="icon sm"><use href="#i-external"/></svg></button>
       </div>
       <div class="pop" id="fxPop" hidden role="dialog" aria-labelledby="fxPopTitle">
@@ -174,6 +189,47 @@
       </section>
       <!-- Health -->
       <section class="view" id="v-health"><div id="healthOut" class="stackv"></div></section>
+      <!-- Gap Finder -->
+      <section class="view" id="v-gaps">
+        <div class="panel stackv">
+          <div class="row" style="justify-content:space-between">
+            <div class="row">
+              <div class="seg" id="gMk" role="group" aria-label="Market"><button type="button" data-v="" aria-pressed="true">Both</button><button type="button" data-v="AU" aria-pressed="false">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button></div>
+              <label class="small adv"><input type="checkbox" id="gAll"> Show crowded and not read</label>
+              <label class="small adv"><input type="checkbox" id="gWarn" checked> Show products with warnings</label>
+            </div>
+            <div class="row"><span class="small" id="gWhen"></span>
+              <button class="btn" id="gExcel"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
+              <button class="btn primary" id="gRun"><svg class="icon sm"><use href="#i-refresh"/></svg>Check now</button></div>
+          </div>
+          <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">A product is <b>proven</b> when it sells well in at least two of the USA, the UK and Germany
+            (a Best Sellers top 100 place, a “bought in past month” badge, the US sales curve or your Helium 10 exports). It is <b>open</b>
+            in Australia or the UAE when only one seller ships it from abroad, only Amazon sells it, every seller ships it from abroad,
+            or nobody sells it. A marketplace that could not be read shows as <b>Not read</b>, never as missing.</div></details>
+        </div>
+        <div class="progress" id="gProg"></div>
+        <div id="gapsOut" class="stackv"></div>
+      </section>
+      <!-- Ask AI -->
+      <section class="view" id="v-ai">
+        <div id="aiOut" class="stackv"></div>
+      </section>
+      <!-- Market intelligence -->
+      <section class="view" id="v-intel">
+        <div class="panel stackv">
+          <div class="row" style="justify-content:space-between;align-items:flex-end">
+            <div class="itabs" role="tablist" id="iTabs" aria-label="Views">
+              <button type="button" role="tab" data-tab="sellers">Sellers</button><button type="button" role="tab" data-tab="brands">Brands</button>
+              <button type="button" role="tab" data-tab="categories">Category gaps</button><button type="button" role="tab" data-tab="origins">Seller origins</button>
+              <button type="button" role="tab" data-tab="related">Related products</button><button type="button" role="tab" data-tab="ads">Ad watch</button>
+              <button type="button" role="tab" data-tab="scorecard">Listing scorecard</button>
+            </div>
+            <div class="seg" id="iMk" role="group" aria-label="Market"><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button><button type="button" data-v="US" aria-pressed="false">USA</button></div>
+          </div>
+          <div id="iMeans"></div>
+        </div>
+        <div id="intelOut" class="stackv"></div>
+      </section>
 
       <!-- Check sellers -->
       <section class="view" id="v-check">
@@ -232,7 +288,7 @@
             </div>
           </div>
           <div class="tablewrap"><table id="listTable"></table></div>
-          <p class="small" style="margin-top:8px">A green edge means it arrives within the fast window, so the stock is already in that country. Click a title to open it in your Chrome profile.</p>
+          <details class="explain" style="margin-top:8px"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How to read this</span></summary><div class="note">A green edge means it arrives within the fast window, so the stock is already in that country. Click a title to open it in your Chrome profile.</div></details>
         </div>
 
         <div class="panel empty" id="checkEmpty">
@@ -253,7 +309,7 @@
             </div>
           </div>
           <div class="tablewrap"><table id="bTable"></table></div>
-          <p class="small">Each cell: local and overseas sellers on page 1 and the typical price. <b>Buyers</b> come from “bought in past month” badges (an estimate). A green <b>gap</b> means 4 or fewer local sellers. Every product is kept in the Library and on its opportunity map.</p>
+          <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How to read this</span></summary><div class="note">Each cell: local and overseas sellers on page 1 and the typical price. <b>Buyers</b> come from “bought in past month” badges (an estimate). A green <b>gap</b> means 4 or fewer local sellers. Every product is kept in the Library and on its opportunity map.</div></details>
         </div>
       </section>
 
@@ -336,7 +392,7 @@
             <div class="row"><button class="btn" id="nTop">Select top 8</button><button class="btn primary" id="btnNiche">Check selected keywords</button></div>
           </div>
           <div class="tablewrap"><table id="nTable"></table></div>
-          <p class="small"><b>Popularity</b> = how many of the app's suggestion searches returned this keyword. Higher means shoppers type it more. <b>Demand</b> = the top “bought in past month” badge in that country's results.</p>
+          <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How to read this</span></summary><div class="note"><b>Popularity</b> = how many of the app's suggestion searches returned this keyword. Higher means shoppers type it more. <b>Demand</b> = the top “bought in past month” badge in that country's results.</div></details>
         </div>
         <div class="panel empty" id="nEmpty">
           <h2>Search a niche</h2>
@@ -397,7 +453,7 @@
               </div>
             </div>
             <div class="tablewrap"><table id="xTable"></table></div>
-            <p class="small" style="margin-top:8px"><b>Beatable</b> = sells at least the target with few enough reviews to compete. <b>Left</b> = price minus Amazon's referral fee for the category, the FBA fee from the export, and GST/VAT, before product cost and shipping.</p>
+            <details class="explain" style="margin-top:8px"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How to read this</span></summary><div class="note"><b>Beatable</b> = sells at least the target with few enough reviews to compete. <b>Left</b> = price minus Amazon's referral fee for the category, the FBA fee from the export, and GST/VAT, before product cost and shipping.</div></details>
           </div>
         </div>
       </section>
@@ -438,7 +494,7 @@
           <div class="kpis" id="rankKpis"></div>
           <div class="progress" id="batchProgress"></div>
           <div class="tablewrap"><table id="rankTable"></table></div>
-          <p class="small"><b>Good pick</b> = enough sales, few reviews, no warning flags. <b>Check first</b> = good numbers, but read the flags. <b>Local sellers</b> = how many Amazon listings deliver fast for that product. Few means opportunity.</p>
+          <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How to read this</span></summary><div class="note"><b>Good pick</b> = enough sales, few reviews, no warning flags. <b>Check first</b> = good numbers, but read the flags. <b>Local sellers</b> = how many Amazon listings deliver fast for that product. Few means opportunity.</div></details>
         </div>
       </section>
 
@@ -491,6 +547,7 @@
         <div class="sgrid">
           <div class="panel stackv">
             <h2>General</h2>
+            <label class="small"><input type="checkbox" id="detailsSw2"><span><b>Show all details:</b> every chart, column and setting. Off is the simple view, with only what you need to decide.</span></label>
             <div class="field"><span class="lbl">Theme</span>
               <div class="seg" id="themeSeg2">
                 <button type="button" data-v="light"><svg class="icon sm"><use href="#i-sun"/></svg>Light</button>
@@ -501,8 +558,8 @@
               <div class="row"><select id="profile" style="flex:1; min-width:0"></select><button class="btn" id="btnProfiles">Refresh</button></div>
             </div>
             <div class="row"><button class="btn" id="btnTestProfile">Open Helium 10 in this profile<svg class="icon sm"><use href="#i-external"/></svg></button></div>
-            <div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
-            The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div>
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
+            The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div></details>
           </div>
           <div class="panel stackv" id="curPanel">
             <h2>Currency</h2>
@@ -512,18 +569,18 @@
               <div class="small">Used by <b>Profit?</b> on idea and radar cards and by the profit calculator in keyword reports.</div></div>
             <div class="field"><label for="setMargin">Margin to keep (%)</label><input type="number" id="setMargin" data-set="target_margin_pct" min="5" max="60" step="1" style="width:90px">
               <div class="small">Radar and idea rows show the most you can pay your supplier per piece and still keep this share of the price.</div></div>
-            <div class="tablewrap" style="box-shadow:none"><table class="fxmatrix" id="fxMatrix" aria-label="Exchange rates"></table></div>
-            <div class="row" style="justify-content:space-between"><span class="small" id="fxAsOf"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
+            <div class="tablewrap adv" style="box-shadow:none"><table class="fxmatrix" id="fxMatrix" aria-label="Exchange rates"></table></div>
+            <div class="row adv" style="justify-content:space-between"><span class="small" id="fxAsOf"></span><button class="btn slim" id="btnFx">Refresh rates</button></div>
           </div>
           <div class="panel stackv">
             <h2>Price range for product ideas</h2>
             <div class="pricebar" id="sPrice"></div>
             <div class="small" id="fxLine"></div>
-            <div class="note">Product ideas and the Trend radar show only products that sell on Amazon within this range.
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">Product ideas and the Trend radar show only products that sell on Amazon within this range.
             It is converted to US dollars, Australian dollars and UAE dirhams automatically with the European Central Bank's daily rates
-            (the dirham is fixed to the US dollar at 3.6725).</div>
+            (the dirham is fixed to the US dollar at 3.6725).</div></details>
           </div>
-          <div class="panel stackv">
+          <div class="panel stackv adv">
             <h2>Delivery locations</h2>
             <div class="row">
               <div class="field"><label for="locAU">Australia postcode</label><input type="text" id="locAU" style="width:110px"></div>
@@ -533,7 +590,7 @@
             <div class="row"><button class="btn" id="btnLoc">Set locations now</button><span class="small" id="locNote"></span></div>
             <div class="small">Set automatically on the first check. If one stays orange, press <b>Checker browser</b>, click “Deliver to” on that Amazon tab and set it once.</div>
           </div>
-          <div class="panel stackv">
+          <div class="panel stackv adv">
             <h2>Checks</h2>
             <div class="row">
               <div class="field"><label for="fastDays">Fast = within (days)</label><input type="number" id="fastDays" min="1" max="10"></div>
@@ -546,21 +603,76 @@
           <div class="panel stackv" id="autoPanel">
             <h2>Automatic refresh</h2>
             <label class="small"><input type="checkbox" data-set="auto_refresh"> Refresh watched keywords, Amazon lists and Google Trends automatically</label>
-            <label class="small"><input type="checkbox" data-set="auto_qualify"> Fill in what the radar’s top products miss once a day (search phrase, Google Trends, product page, a search in Australia / UAE)</label>
+            <label class="small adv"><input type="checkbox" data-set="auto_qualify"> Fill in what the radar’s top products miss once a day (search phrase, Google Trends, product page, a search in Australia / UAE)</label>
             <label class="small"><input type="checkbox" data-set="keep_running"> Keep refreshing after I close the window</label>
             <label class="small"><input type="checkbox" data-set="start_with_windows"> Start with Windows (in the background)</label>
-            <label class="small"><input type="checkbox" data-set="pause_on_battery"> Pause on battery</label>
-            <label class="small"><input type="checkbox" data-set="trends_enabled"> Use Google Trends</label>
-            <div class="row">
+            <label class="small adv"><input type="checkbox" data-set="pause_on_battery"> Pause on battery</label>
+            <label class="small adv"><input type="checkbox" data-set="trends_enabled"> Use Google Trends</label>
+            <div class="row adv">
               <div class="field"><label for="setQs">No notifications from (hour)</label><input type="number" id="setQs" data-set="quiet_start" min="0" max="23"></div>
               <div class="field"><label for="setQe">until (hour)</label><input type="number" id="setQe" data-set="quiet_end" min="0" max="23"></div>
               <div class="field"><label for="setSev">Notify from</label><select id="setSev" data-set="toast_min_severity"><option value="1">every alert</option><option value="2">important</option><option value="3">urgent only</option></select></div>
             </div>
-            <div class="field"><label for="setImp">Also import Helium 10 files from this folder</label><input type="text" id="setImp" data-set="import_folder" placeholder="C:\Users\you\Documents\Helium 10"></div>
+            <div class="field adv"><label for="setImp">Also import Helium 10 files from this folder</label><input type="text" id="setImp" data-set="import_folder" placeholder="C:\Users\you\Documents\Helium 10"></div>
             <div class="field"><span class="lbl">Registered for GST / VAT (changes the profit maths)</span>
               <div class="row"><label class="small"><input type="checkbox" id="regAU"> Australia (GST)</label><label class="small"><input type="checkbox" id="regAE"> UAE (VAT)</label></div></div>
-            <div class="small">Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; the marketplace just pauses and Home tells you.</div>
+            <div class="small adv">Background work is polite: a few pages at a time, daily limits per marketplace, and it waits whenever you run something yourself. A captcha never pops up in the background; the marketplace just pauses and Home tells you.</div>
             <div class="row"><button class="btn" id="btnQuit">Quit completely</button></div>
+          </div>
+          <div class="panel stackv adv" id="gapPanel">
+            <h2>Gap Finder</h2>
+            <label class="small"><input type="checkbox" data-set="gap_auto"> Look for gaps every day with the automatic refresh</label>
+            <div class="field"><span class="lbl">“Sells well” means at least this many sold a month</span>
+              <div class="row">
+                <div class="field"><label for="setProofUS">USA</label><input type="number" id="setProofUS" data-set="proof_us" min="10" max="100000" style="width:100px"></div>
+                <div class="field"><label for="setProofGB">UK</label><input type="number" id="setProofGB" data-set="proof_gb" min="10" max="100000" style="width:100px"></div>
+                <div class="field"><label for="setProofDE">Germany</label><input type="number" id="setProofDE" data-set="proof_de" min="10" max="100000" style="width:100px"></div>
+              </div></div>
+            <div class="row">
+              <div class="field"><label for="locGB">UK postcode</label><input type="text" id="locGB" style="width:110px"></div>
+              <div class="field"><label for="locDE">Germany postcode</label><input type="text" id="locDE" style="width:110px"></div>
+            </div>
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">A Best Sellers top 100 place also counts as selling well. The UK and Germany are read only
+              as proof (their Best Sellers lists, a few product pages), never for fees or keyword reports.</div></details>
+          </div>
+          <div class="panel stackv adv" id="spPanel">
+            <h2>Amazon Selling Partner API (optional)</h2>
+            <div class="small" id="spState" aria-live="polite"></div>
+            <div class="field"><label for="spId">Client ID</label><input type="text" id="spId" autocomplete="off" spellcheck="false" placeholder="amzn1.application-oa2-client…"></div>
+            <div class="field"><label for="spSecret">Client secret</label><input type="password" id="spSecret" autocomplete="new-password"></div>
+            <div class="field"><label for="spNA">Refresh token: North America (USA)</label><input type="password" id="spNA" autocomplete="new-password" placeholder="Atzr|…"></div>
+            <div class="field"><label for="spEU">Refresh token: Europe (UAE)</label><input type="password" id="spEU" autocomplete="new-password" placeholder="Atzr|…"></div>
+            <div class="field"><label for="spFE">Refresh token: Far East (Australia)</label><input type="password" id="spFE" autocomplete="new-password" placeholder="Atzr|…"></div>
+            <div class="row"><button class="btn primary" id="spSave">Save keys</button><button class="btn" id="spTest">Test connection</button><button class="btn ghost" id="spForget">Forget keys</button></div>
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">With your own seller keys the Gap Finder asks Amazon directly who sells a listing (offers, FBA,
+              where it ships from) instead of reading its page. The keys are kept encrypted for your Windows user on this PC only, never in
+              settings.json, and are never shown again. A field left empty keeps the key saved before. Without keys, pages are read as before.</div></details>
+          </div>
+          <div class="panel stackv adv" id="rulesPanel">
+            <h2>Go or no-go rules</h2>
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">The deal-breakers and warnings behind <b>Go or no-go</b> in each keyword report (Money). A deal-breaker that
+              fails makes a keyword a No-go whatever its score; a warning lowers Go to Maybe. Set the limits for each market, or switch a rule off.
+              Every decision keeps the rules it was made under, so a report says when a keyword was decided under other rules.</div></details>
+            <div id="rulesOut" class="stackv rrules"></div>
+            <div class="row"><button class="btn ghost" id="rulesReset">Back to the built-in rules</button></div>
+          </div>
+          <div class="panel stackv adv" id="aiPanel">
+            <h2>AI (optional)</h2>
+            <div class="small" id="aiState" aria-live="polite"></div>
+            <div class="field"><label for="aiKey">Anthropic API key (for Ask AI)</label><input type="password" id="aiKey" autocomplete="new-password" placeholder="sk-ant-…" spellcheck="false"></div>
+            <div class="row"><button class="btn primary" id="aiSave">Save key</button><button class="btn ghost" id="aiForget">Forget key</button></div>
+            <div class="row">
+              <div class="field"><label for="aiModel">Model</label><input type="text" id="aiModel" data-set="ai_model" list="aiModels" spellcheck="false" style="width:220px">
+                <datalist id="aiModels"><option value="claude-sonnet-4-5"><option value="claude-haiku-4-5"><option value="claude-opus-4-1"></datalist></div>
+              <div class="field"><label for="aiCap">Most it may cost a month (US$)</label><input type="number" id="aiCap" data-set="ai_month_usd" min="0.5" max="500" step="0.5"></div>
+            </div>
+            <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">Ask AI is off until you save a key. Claude then answers questions about your saved research and board, using
+              read-only tools: it cannot read Amazon pages, click, email or buy. Each question costs a few cents (Health shows this month's total); at the
+              monthly limit Ask AI stops until next month. The key is kept encrypted for your Windows user on this PC only and is never shown again.</div></details>
+            <h3>Use it from Claude Desktop instead (MCP connector, no key needed here)</h3>
+            <div class="small">In Claude Desktop: Settings, Developer, Edit Config. Add this to <code id="mcpFile"></code> and restart Claude:</div>
+            <pre class="mcpcfg" id="mcpCfg"></pre>
+            <div class="row"><button class="btn" id="mcpCopy">Copy</button></div>
           </div>
           <div class="panel stackv" id="mailPanel">
             <h2>Email for reminders</h2>
@@ -573,7 +685,7 @@
             <div class="field"><label for="mailAddr">Your email address</label><input type="text" id="mailAddr" data-set="mail_address" placeholder="you@gmail.com or you@outlook.com" autocomplete="email" spellcheck="false"></div>
             <div class="field"><label for="mailName">Your name in the emails</label><input type="text" id="mailName" data-set="mail_from_name" maxlength="80"></div>
             <div class="stackv" id="mailBrowser">
-              <div class="field"><label for="mailProfile">Open emails in</label><select id="mailProfile" data-set="mail_profile"></select></div>
+              <div class="field"><label for="mailProfile">Browser profile</label><select id="mailProfile" data-set="mail_profile"></select></div>
               <div class="field"><label for="mailWeb">Email website</label>
                 <select id="mailWeb" data-set="mail_web">
                   <option value="auto">Find it from my email address</option>
@@ -582,7 +694,8 @@
                   <option value="office">Outlook for work or school (Microsoft 365)</option>
                 </select></div>
               <div class="small" id="mailWhere"></div>
-              <div class="note">When an email is due, it opens filled in, in the browser profile above, where you are already signed in. Check it and press <b>Send</b>. The meeting time and link are in the text; a calendar invite can only be attached when Gmail sends by itself.</div>
+              <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>How it works</span></summary><div class="note">When an email is due, it opens filled in, in the browser profile above, where you are already signed in. Check it and press <b>Send</b>.
+              With Gmail, the update meeting opens as a <b>Google Calendar</b> event with the people already added as guests: press <b>Save</b> and Google emails them the invitation. With Outlook, the meeting comes as an email with the time and link.</div></details>
             </div>
             <div class="stackv" id="mailSmtp">
               <div class="field"><label for="mailPass">Gmail app password</label>
@@ -603,39 +716,45 @@
                 </div></details>
             </div>
             <div class="row"><button class="btn" id="mailTest">Send me a test email</button><span class="small" id="mailTestOut" role="status"></span></div>
-            <div class="row">
+            <div class="row adv">
               <div class="field"><label for="mailHour">Send at (hour)</label><input type="number" id="mailHour" data-set="mail_send_hour" min="0" max="23"></div>
               <div class="field"><label for="mailBack">Remind days before</label><input type="number" id="mailBack" data-set="mail_remind_days" min="1" max="14"></div>
               <div class="field"><label for="mailMeet">Meeting at</label><input type="text" id="mailMeet" data-set="mail_meet_time" placeholder="15:00" style="width:80px"></div>
               <div class="field"><label for="mailMins">Minutes</label><input type="number" id="mailMins" data-set="mail_meet_minutes" min="15" max="180" step="5"></div>
             </div>
-            <div class="field"><label for="mailLink">Meeting link (optional: Zoom, Meet or Teams)</label><input type="text" id="mailLink" data-set="mail_meet_link" placeholder="https://"></div>
-            <label class="small"><input type="checkbox" data-set="mail_start_email"> Email the people as soon as I set a deadline</label>
-            <div class="note">Emails go out only while Product Checker runs. It keeps running in the background while emails are waiting; turn on <b>Start with Windows</b> so it starts again after a restart.</div>
+            <div class="field adv"><label for="mailLink">Meeting link (optional: Zoom, Meet or Teams)</label><input type="text" id="mailLink" data-set="mail_meet_link" placeholder="https://"></div>
+            <label class="small adv"><input type="checkbox" data-set="mail_start_email"> Email the people as soon as I set a deadline</label>
+            <div class="note adv">Emails go out only while Product Checker runs. It keeps running in the background while emails are waiting; turn on <b>Start with Windows</b> so it starts again after a restart.</div>
           </div>
-          <div class="panel stackv" id="boardPanel">
+          <div class="panel stackv adv" id="boardPanel">
             <h2>Product board</h2>
             <div class="row">
               <div class="field"><label for="setLow">Stock turns red at (% of the shipment left)</label><input type="number" id="setLow" data-set="board_low_pct" min="5" max="90"></div>
             </div>
             <label class="small"><input type="checkbox" data-set="board_notify"> Windows notification when stock turns red or a re-order is due</label>
+            <label class="small"><input type="checkbox" data-set="board_live"> With SP-API keys saved (Gap Finder panel): read units left and daily sales from Amazon every 4 hours</label>
             <label class="small"><input type="checkbox" data-set="board_inform_auto"> Email the product update to everyone on the Notifier list when I add or change a product</label>
             <div class="row">
               <div class="field"><label for="setInformWait">Send it once nothing changed for (minutes)</label><input type="number" id="setInformWait" data-set="board_inform_wait" min="5" max="240"></div>
             </div>
           </div>
-          <div class="panel stackv">
+          <div class="panel stackv adv">
             <h2>Background browser</h2>
             <div class="row"><span id="bState" class="pill"></span>
               <button class="btn" id="btnShow2">Show</button><button class="btn" id="btnHide">Hide</button><button class="btn" id="btnRestart">Restart</button></div>
             <div class="log" id="log"></div>
+          </div>
+          <div class="panel stackv simple-only">
+            <h2>More settings</h2>
+            <div class="small">Delivery locations, checks, Gap Finder, Amazon Selling Partner API, go or no-go rules, AI, the product board and the background browser are hidden in the simple view.</div>
+            <div class="row"><button type="button" class="btn" id="detailsOn">Show all settings</button></div>
           </div>
         </div>
       </section>
     </main>
   </div>
 </div>
-<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite" popover="manual"></div>
 
 <dialog id="pdfDlg" class="dlg" aria-labelledby="pdfTitle">
   <form method="dialog" class="stackv" style="gap:12px">
@@ -660,5 +779,9 @@
 <script src="/ui/js/views/health.js"></script>
 <script src="/ui/js/views/product.js"></script>
 <script src="/ui/js/views/board.js"></script>
+<script src="/ui/js/views/gaps.js"></script>
+<script src="/ui/js/views/intel.js"></script>
+<script src="/ui/js/views/ai.js"></script>
+<script src="/ui/js/views/rules.js"></script>
 </body>
 </html>

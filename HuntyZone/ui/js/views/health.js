@@ -3,7 +3,8 @@
    Also binds the Automatic refresh settings panel. */
 (() => {
   view('health', {title: 'Health', sub: 'Sources, budgets, cooldowns and recent refreshes', onShow: () => load()});
-  const NAME = s => s.replace('amazon:', 'Amazon ').replace('complete:', 'Amazon suggestions ').replace('google', 'Google Trends');
+  const NAME = s => s.replace('amazon:', 'Amazon ').replace('complete:', 'Amazon suggestions ').replace('google', 'Google Trends')
+    .replace(/ GB$/, ' UK').replace(/ DE$/, ' Germany');
 
   async function load() {
     let h;
@@ -15,6 +16,7 @@
         <div class="kpi"><span class="eyebrow">Google Trends</span><span class="v">${tr.paused ? 'Paused' : 'OK'}</span><span class="s">${tr.paused ? esc(tr.reason) + ' · until ' + new Date(tr.until * 1000).toLocaleTimeString() : 'one request every 6–10 s'}</span></div>
         <div class="kpi"><span class="eyebrow">History database</span><span class="v">${h.db_mb} MB</span><span class="s">${num(h.counts.serp_snapshot)} searches · ${num(h.counts.trends_sample)} Trends samples</span></div>
         <div class="kpi"><span class="eyebrow">Checker browser</span><span class="v">${esc((h.browser || {}).state || '–')}</span><span class="s">${esc((h.browser || {}).error || '')}</span></div>
+        ${h.ai ? `<div class="kpi"><span class="eyebrow">Ask AI this month</span><span class="v">${h.ai.on ? 'US$' + h.ai.used.usd.toFixed(2) : 'Off'}</span><span class="s">${h.ai.on ? `of US$${h.ai.cap_usd.toFixed(2)} · ${num(h.ai.used.calls)} calls · ${num(h.ai.used.in + h.ai.used.out)} tokens` : 'no API key saved'}</span></div>` : ''}
       </div>
       <div class="panel"><h3 style="margin-bottom:8px">Sources today</h3><div class="tablewrap"><table><thead><tr><th>Source</th><th class="r">Used today</th><th>Background budgets (used / limit, skipped)</th><th>Status</th><th></th></tr></thead><tbody>
         ${Object.entries(h.sources).map(([s, v]) => `<tr><td><b>${esc(NAME(s))}</b></td><td class="r">${v.used_today} / ${v.daily}</td>
@@ -22,16 +24,17 @@
           <td>${v.cooldown_until ? `<span class="pill warn">${icon('warn')}paused until ${new Date(v.cooldown_until * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span><div class="sub">${esc(v.reason || '')}</div>` : '<span class="pill good"><i></i>ok</span>'}</td>
           <td>${v.cooldown_until ? `<button class="btn slim" data-clear="${esc(s)}">Try again now</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div></div>
-      <div class="panel"><h3 style="margin-bottom:8px">Scheduled work</h3><div class="tablewrap"><table><thead><tr><th>Task</th><th>Market</th><th>Target</th><th>Last result</th><th>Last run</th><th>Next run</th></tr></thead><tbody>
+      <div class="panel adv"><h3 style="margin-bottom:8px">Scheduled work</h3><div class="tablewrap"><table><thead><tr><th>Task</th><th>Market</th><th>Target</th><th>Last result</th><th>Last run</th><th>Next run</th></tr></thead><tbody>
         ${h.tasks.map(t => `<tr><td>${esc(t.kind)}</td><td>${esc(t.market || '')}</td><td>${esc(t.target)}</td>
           <td>${t.last_status ? `<span class="pill ${['ok', 'empty', 'partial'].includes(t.last_status) ? 'good' : 'warn'}"><i></i>${esc(t.last_status)}</span>` : '<span class="muted small">not yet</span>'}</td>
           <td>${t.last_run_at ? ago(t.last_run_at) : '–'}</td><td>${new Date(t.next_run_at * 1000).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Nothing scheduled. Turn on automatic refresh in Settings.</td></tr>'}
       </tbody></table></div></div>
-      <div class="panel"><h3 style="margin-bottom:8px">Recent refreshes</h3><div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Trigger</th><th>Result</th><th class="r">OK</th><th class="r">Failed</th><th class="r">Blocked</th></tr></thead><tbody>
+      <div class="panel adv"><h3 style="margin-bottom:8px">Recent refreshes</h3><div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Trigger</th><th>Result</th><th class="r">OK</th><th class="r">Failed</th><th class="r">Blocked</th></tr></thead><tbody>
         ${h.runs.map(r => `<tr><td>${ago(r.started_at)}</td><td>${esc(r.kind)}</td><td>${esc(r.trigger)}</td><td>${esc(r.status)}</td><td class="r">${r.n_ok || 0}</td><td class="r">${r.n_fail || 0}</td><td class="r">${r.n_blocked || 0}</td></tr>`).join('')}
       </tbody></table></div></div>
-      <div class="panel" id="calibOut"><h3>Sales curves</h3><div class="small">Loading…</div></div>
-      <p class="small">Database: ${esc(h.db_path)} (backups in its backup folder).</p>`;
+      <div class="panel adv" id="calibOut"><h3>Sales curves</h3><div class="small">Loading…</div></div>
+      <p class="small adv">Database: ${esc(h.db_path)} (backups in its backup folder).</p>
+      <div class="simple-only small muted">${icon('info')} Scheduled work, recent refreshes and the sales curves are hidden in the simple view: turn on <b>Show all details</b> (bottom left) to see them.</div>`;
     calibration();
   }
   async function calibration() {

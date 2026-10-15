@@ -16,7 +16,7 @@ def ts(y, m, d, h=0, mi=0):
 def test_merge_fills_defaults_and_clamps():
     s = config.merge({'pages': 9, 'cache_hours': 'x', 'top': 1, 'theme': 'neon', 'locations': {'AU': '3000', 'XX': '1'}})
     assert s['pages'] == 3 and s['cache_hours'] == 6 and s['top'] == 5 and s['theme'] == 'light'
-    assert s['locations'] == {'US': '10001', 'AU': '3000', 'AE': 'Dubai'}
+    assert s['locations'] == {'US': '10001', 'AU': '3000', 'AE': 'Dubai', 'GB': 'SW1A 1AA', 'DE': '10115'}
     assert config.merge(None) == config.defaults()
 
 
@@ -53,6 +53,12 @@ def test_every_settings_field_on_the_page_is_a_real_setting():
     keys = set(re.findall(r'data-set="([^"]+)"', html))
     assert {'board_low_pct', 'board_notify', 'mail_address', 'auto_refresh'} <= keys
     assert keys <= set(config.defaults())
+
+
+def test_the_simple_view_is_the_default():
+    assert config.defaults()['show_details'] is False
+    assert config.validate({'show_details': 'true'})[0]['show_details'] is True
+    assert config.merge({'show_details': 1})['show_details'] is True
 
 
 def test_norm_kw():

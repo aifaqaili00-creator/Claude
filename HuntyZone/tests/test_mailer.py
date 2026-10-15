@@ -155,3 +155,70 @@ def test_deliver_opens_the_email_in_the_chosen_profile(monkeypatch):
         mailer.deliver(s, None, [('', 'not-an-address')], 'S', 'T', opener=lambda u, pid: None)
     with pytest.raises(mailer.MailError, match='Nobody'):
         mailer.deliver(s, None, [], 'S', 'T', opener=lambda u, pid: None)
+
+
+def test_automatic_profile_is_the_one_signed_in_with_your_address():
+    s = {'mail_profile': '', 'profile': 'edge:Default', 'mail_address': ' AFAQ@gmail.com'}
+    assert mailer.mail_profile(s, PROFILES)['name'] == 'Afaq'
+    assert mailer.mail_profile({**s, 'mail_address': 'nobody@gmail.com'}, PROFILES)['id'] == 'edge:Default'
+    assert mailer.mail_profile({**s, 'mail_profile': 'edge:Default'}, PROFILES)['id'] == 'edge:Default'   # your pick wins
+    assert mailer.mail_profile({**s, 'mail_profile': 'chrome:Gone', 'profile': ''}, PROFILES)['name'] == 'Afaq'
+    assert mailer.mail_profile({'profile': 'chrome:Gone'}, PROFILES) == {}
+    assert mailer.google_account({'mail_address': 'x'}, PROFILES[1]) == 'afaq@gmail.com'
+
+
+def test_gmail_and_calendar_links_open_your_google_account():
+    from urllib.parse import parse_qs, urlparse
+    q = parse_qs(urlparse(mailer.compose_url('gmail', [('', 'sara@x.com')], 'S', 'B', account='afaq@gmail.com')).query)
+    assert q['authuser'] == ['afaq@gmail.com']
+    assert 'authuser' not in parse_qs(urlparse(mailer.compose_url('gmail', [('', 'sara@x.com')], 'S', 'B')).query)
+    ev = {'start': 1_760_871_600, 'end': 1_760_873_400, 'summary': 'Update meeting:\nPO', 'description': 'Hi,\nagenda',
+          'location': 'https://meet.google.com/abc'}
+    u = urlparse(mailer.calendar_url(ev, ['sara@x.com', 'li@y.com'], 'afaq@gmail.com'))
+    q = parse_qs(u.query)
+    assert u.netloc == 'calendar.google.com' and q['action'] == ['TEMPLATE'] and q['text'] == ['Update meeting: PO']
+    assert q['dates'] == ['20251019T110000Z/20251019T113000Z'] and q['details'] == ['Hi,\nagenda']
+    assert q['add'] == ['sara@x.com,li@y.com'] and q['location'] == ['https://meet.google.com/abc']
+    assert q['authuser'] == ['afaq@gmail.com']
+    long = mailer.calendar_url({**ev, 'description': 'x' * 20000, 'location': ''}, ['sara@x.com'])
+    q = parse_qs(urlparse(long).query)
+    assert len(long) < 9000 and 'cut' in q['details'][0] and 'location' not in q and 'authuser' not in q
+
+
+def test_a_meeting_opens_as_a_google_calendar_event(monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    from engine import remind
+    mailer._sent.clear()
+    monkeypatch.setattr(mailer.cp, 'list_profiles', lambda: PROFILES)
+    invite = remind.ics('uid-1', 1_760_871_600, 30, 'Update meeting: Sourcing & PO', 'Hi Sara,\nSee you.',
+                        ('Ali', 'afaq@gmail.com'), [('Sara', 'sara@x.com')], 'https://meet.google.com/abc', stamp=1)
+    opened = []
+    s = {'mail_address': 'afaq@gmail.com'}
+    url = mailer.deliver(s, None, [('Sara', 'sara@x.com')], 'Update meeting', 'text', None, invite,
+                         opener=lambda u, pid: opened.append((u, pid)))
+    q = parse_qs(urlparse(url).query)
+    assert opened == [(url, 'chrome:Profile 2')] and mailer.outcome(url) == 'calendar'
+    assert q['add'] == ['sara@x.com'] and q['text'] == ['Update meeting: Sourcing & PO'] and q['details'] == ['Hi Sara,\nSee you.']
+    out = mailer.deliver({'mail_address': 'me@outlook.com'}, None, [('Sara', 'sara@x.com')], 'Update meeting', 'text',
+                         None, invite, opener=lambda u, pid: opened.append((u, pid)))
+    assert urlparse(out).netloc == 'outlook.live.com' and mailer.outcome(out) == 'opened'      # Outlook: the email
+    plain = mailer.deliver(s, None, [('Sara', 'sara@x.com')], 'Reminder', 'text', opener=lambda u, pid: None)
+    assert urlparse(plain).netloc == 'mail.google.com' and mailer.outcome(plain) == 'opened'
+    assert mailer.outcome(mailer.build(ACCT, [('', 'sara@x.com')], 's', 't')) == 'sent'
+
+
+def test_no_email_is_sent_or_opened_on_a_pc_with_the_switch(tmp_path, monkeypatch, fake_dpapi):
+    opened, sent = [], []
+    monkeypatch.setattr(mailer.cp, 'open_url', lambda u, pid='': opened.append(u))      # never the real browser
+    monkeypatch.setattr(mailer, '_smtp', lambda a, p, m: sent.append(m))
+    monkeypatch.setattr(mailer.cp, 'list_profiles', lambda: PROFILES)
+    monkeypatch.setenv('PC_NO_EMAIL', '1')
+    p = tmp_path / 'mail.secret'
+    mailer.save_password(p, 'abcdefghijklmnop')
+    for s in ({'mail_address': 'afaq@gmail.com'}, SETTINGS):
+        with pytest.raises(mailer.MailError, match='switched off'):
+            mailer.deliver(s, p, [('Sara', 'sara@x.com')], 'Hi', 'text')
+    assert opened == [] and sent == []
+    monkeypatch.delenv('PC_NO_EMAIL')
+    mailer.deliver(SETTINGS, p, [('Sara', 'sara@x.com')], 'Hi', 'text')
+    assert len(sent) == 1 and opened == []

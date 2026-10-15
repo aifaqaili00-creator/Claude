@@ -19,15 +19,19 @@ SOURCES = {
     'amazon:US': {'concurrency': 2, 'gap': (2.0, 5.0), 'daily': 200},
     'amazon:AU': {'concurrency': 2, 'gap': (2.0, 5.0), 'daily': 120},
     'amazon:AE': {'concurrency': 2, 'gap': (2.0, 5.0), 'daily': 100},
+    'amazon:GB': {'concurrency': 1, 'gap': (3.0, 6.0), 'daily': 30},          # proof markets: Best Sellers and Movers & Shakers lists
+    'amazon:DE': {'concurrency': 1, 'gap': (3.0, 6.0), 'daily': 30},
     'google': {'concurrency': 1, 'gap': (6.0, 10.0), 'daily': 120},
     'complete:US': {'concurrency': 1, 'gap': (1.0, 1.5), 'daily': 600},
     'complete:AU': {'concurrency': 1, 'gap': (1.0, 1.5), 'daily': 600},
     'complete:AE': {'concurrency': 1, 'gap': (1.0, 1.5), 'daily': 600},
 }
 QUOTAS = {
-    'amazon:US': {'lists': 32, 'watch_kw': 30, 'products': 60, 'qualify': 30},
-    'amazon:AU': {'lists': 16, 'watch_kw': 30, 'products': 30, 'qualify': 20},
-    'amazon:AE': {'lists': 16, 'watch_kw': 30, 'products': 20, 'qualify': 15},
+    'amazon:US': {'lists': 32, 'watch_kw': 30, 'products': 60, 'qualify': 30, 'proof': 10, 'gaps': 10},
+    'amazon:AU': {'lists': 16, 'watch_kw': 30, 'products': 30, 'qualify': 20, 'gaps': 40, 'lone': 20},
+    'amazon:AE': {'lists': 16, 'watch_kw': 30, 'products': 20, 'qualify': 15, 'gaps': 30, 'lone': 20},
+    'amazon:GB': {'proof': 18, 'gaps': 5},
+    'amazon:DE': {'proof': 18, 'gaps': 5},
     'google': {'trends': 60, 'qualify': 30, 'related': 20},
 }
 LADDERS = {

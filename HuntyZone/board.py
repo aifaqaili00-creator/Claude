@@ -1,4 +1,4 @@
-"""The product board: your products from sourcing to re-order. Cards, their orders and shipments, stock counts,
+"""The product board: your products from idea to re-order. Cards, their orders and shipments, stock counts,
 launch hints from the app's research, notes, deadlines and the reminder emails those send. Functions that take
 `conn` run inside db.read / db.write; the ones that take `db` open their own. Rules live in engine.board,
 engine.hints and engine.remind."""
@@ -19,6 +19,8 @@ from engine import hints as hintmod
 from engine import inform
 from engine import launch as lch
 from engine import planner, profit, remind
+from engine import fees
+from engine.trendfeat import MONTH_NAMES as MONTH_ABBR
 
 COLORS = ('blue', 'violet', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'gray')
 IMAGE_RX = re.compile(r'^https://(?:[a-z0-9-]+\.)*(?:media-amazon|ssl-images-amazon)\.com/[^\s"\'<>]{1,400}$')
@@ -103,6 +105,8 @@ def _card(conn, card_id):
     if 'approval' not in c['data']:                     # on the board before the Approval step: counts as approved
         c['data']['approval'] = {'items': []}
         c['data']['milestones'].setdefault('approved', c.get('created_at') or 1)
+    if c['stage'] != 'idea':                            # on the board before the Idea step: counts as done
+        c['data']['milestones'].setdefault('idea_done', c.get('created_at') or 1)
     return c
 
 
@@ -178,8 +182,9 @@ def _name(mk):
 
 # ---------- cards ----------
 def add_card(conn, d, settings, now=None):
-    """Put a product on the board in Approval (a checklist; once every check is ticked it moves to Sourcing & PO): order #1 for its own market (your saved supplier price filled
-    in) and a watch on its keyword. The same product twice returns the card already there."""
+    """Put a product on the board as an Idea: once it has its Amazon ASIN and Alibaba link it moves on to Approval by
+    itself (given both, it starts there). Also order #1 for its own market (your saved supplier price filled in) and a
+    watch on its keyword. The same product twice returns the card already there."""
     now = int(now or time.time())
     market = _market(d.get('market'))
     title = _text(d.get('title'), 160)
@@ -187,6 +192,9 @@ def add_card(conn, d, settings, now=None):
         raise BoardError('Give the product a name.')
     asin = str(d.get('asin') or '').strip().upper()
     asin = asin if ASIN_RX.match(asin) else None
+    alibaba = str(d.get('alibaba') or '').strip()
+    if alibaba and (len(alibaba) > 500 or not LINK_RX.match(alibaba)):
+        raise BoardError('Paste the whole Alibaba link, starting with https://')
     kw = config.norm_kw(d.get('kw') or '')[:120] or config.norm_kw(' '.join(title.split()[:6]))[:120]
     if not kw:
         raise BoardError('Which search words does it sell under?')
@@ -196,12 +204,14 @@ def add_card(conn, d, settings, now=None):
                         ('asin=?' if asin else 'asin IS NULL AND kw=?'), (market, asin or kw)).fetchone()
     if same:
         return {'id': same[0], 'exists': True}
-    pos = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='approval'").fetchone()[0]
+    pos = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='idea'").fetchone()[0]
     data = {'milestones': {}, 'targets': {}, 'live': {},
             'approval': {'items': [{'id': i + 1, 'text': t, 'done': None} for i, t in enumerate(rules.APPROVAL_CHECKS)]}}
+    if alibaba:
+        data['links'] = {'alibaba': alibaba}
     cid = conn.execute('INSERT INTO board_card(title, market, asin, kw, image, color, stage, pos, data_json, created_at, '
                        'updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                       (title, market, asin, kw, image, 'blue', 'approval', pos, json.dumps(data), now, now)).lastrowid
+                       (title, market, asin, kw, image, 'blue', 'idea', pos, json.dumps(data), now, now)).lastrowid
     cost_cur = settings.get('cost_currency') or 'USD'
     unit = None
     if asin:
@@ -210,9 +220,9 @@ def add_card(conn, d, settings, now=None):
     oid = conn.execute('INSERT INTO board_order(card_id, n, unit_cost, cost_cur, created_at) VALUES (?,?,?,?,?)',
                        (cid, 1, unit, cost_cur, now)).lastrowid
     conn.execute("INSERT INTO board_line(order_id, market, ship_cur, steps_json) VALUES (?,?,'USD','{}')", (oid, market))
-    _watch(conn, kw, market, 'researching', now)
-    _event(conn, cid, 'created', 'Added to the board, waiting for approval', now)
-    return {'id': cid, 'exists': False}
+    _watch(conn, kw, market, 'idea', now)
+    _event(conn, cid, 'created', 'Added to the board as an idea', now)
+    return {'id': cid, 'exists': False, 'moved': _idea_if_done(conn, cid, now)['moved']}
 
 
 def update_card(conn, card_id, d, settings, now=None):
@@ -268,10 +278,16 @@ def update_card(conn, card_id, d, settings, now=None):
                 c['data'][key][mk] = val
             if key == 'live' and val:
                 _event(conn, card_id, 'live', 'Live on Amazon %s since %s' % (_name(mk), remind.nice_day(val)), now)
+    if 'tags' in d:
+        tags = rules.clean_tags(d['tags'] if isinstance(d['tags'], list) else str(d['tags'] or '').split(','))
+        if tags != c['data'].get('tags', []):
+            c['data']['tags'] = tags
+            _event(conn, card_id, 'edit', 'Tags: %s' % ', '.join(tags) if tags else 'Tags removed', now, merge=True)
     fresh = _card(conn, card_id)
     fresh['data'] = c['data']
     _save(conn, fresh, now)
-    return {'id': card_id, 'watched': watched, **_settle(conn, card_id, settings, now)}
+    idea, out = _idea_if_done(conn, card_id, now), _settle(conn, card_id, settings, now)
+    return {'id': card_id, 'watched': watched, 'moved': idea['moved'], 'trophies': idea['trophies'] + out['trophies']}
 
 
 def move_card(conn, card_id, stage, pos=None, now=None):
@@ -280,8 +296,9 @@ def move_card(conn, card_id, stage, pos=None, now=None):
     if stage not in rules.STAGES:
         raise BoardError('Unknown stage.')
     if stage not in rules.unlocked(c['data']['milestones']):
-        raise BoardError('Finish %s first.' % {'sourcing': 'Approval: tick every check', 'launch': 'Sourcing & PO'}
-                         .get(stage, 'Launch & strategy'))
+        raise BoardError('Finish %s first.' % {'approval': 'Idea: add the Amazon ASIN and the Alibaba link',
+                                                'sourcing': 'Approval: tick every check', 'launch': 'Sourcing & PO'}
+                         .get(stage, 'Launching strategy'))
     p = _number(pos, -1e9, 1e9, 'Position')
     if p is None:
         p = conn.execute('SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage=?', (stage,)).fetchone()[0]
@@ -293,15 +310,22 @@ def move_card(conn, card_id, stage, pos=None, now=None):
 
 
 def archive_card(conn, card_id, archived=True, now=None):
-    """Remove a product from the board (or put it back). Its scheduled emails are cancelled."""
+    """Remove a product from the board (or put it back). Its scheduled emails are cancelled; putting it back restores
+    the deadlines that removing it cancelled, with their emails still to come."""
     now = int(now or time.time())
-    _card(conn, card_id)
+    c = _card(conn, card_id)
     conn.execute('UPDATE board_card SET archived_at=? WHERE id=?', (now if archived else None, card_id))
     if archived:
         conn.execute("UPDATE board_mail SET status='cancelled', error='product removed from the board' WHERE status='scheduled' "
                      'AND task_id IN (SELECT id FROM board_task WHERE card_id=?)', (card_id,))
         conn.execute('UPDATE board_task SET cancelled_at=? WHERE card_id=? AND done_at IS NULL AND cancelled_at IS NULL',
                      (now, card_id))
+    elif c['archived_at']:
+        for (tid,) in conn.execute('SELECT id FROM board_task WHERE card_id=? AND cancelled_at=?',
+                                   (card_id, c['archived_at'])).fetchall():
+            conn.execute('UPDATE board_task SET cancelled_at=NULL WHERE id=?', (tid,))
+            conn.execute("UPDATE board_mail SET status='scheduled', error=NULL WHERE task_id=? AND status='cancelled' "
+                         "AND error='product removed from the board' AND send_at>?", (tid, now))
     _event(conn, card_id, 'archived' if archived else 'restored',
            'Removed from the board' if archived else 'Put back on the board', now)
     return {'id': card_id}
@@ -342,6 +366,63 @@ def remove_note(conn, event_id):
         raise BoardError('That note is not on the board.')
     conn.execute('DELETE FROM board_event WHERE id=?', (event_id,))
     return {'id': r[0]}
+
+
+# ---------- launching strategy ----------
+STRATEGY_MAX = 50
+
+
+def _strategy(c, sid):
+    s = next((x for x in c['data'].get('strategy') or [] if x['id'] == sid), None)
+    if not s:
+        raise BoardError('That strategy is not on this product.')
+    return s
+
+
+def _strategy_text(text):
+    t = _text(text, 4000)
+    if not t:
+        raise BoardError('Write the strategy first.')
+    return t
+
+
+def _from(by):
+    return ' from ' + by if by else ''
+
+
+def add_strategy(conn, card_id, by, text, now=None):
+    """A launch strategy someone gave you, on the card's Launching strategy tab: who it came from (optional) and what
+    it says."""
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    t, who = _strategy_text(text), _text(by, 80)
+    have = c['data'].setdefault('strategy', [])
+    if len(have) >= STRATEGY_MAX:
+        raise BoardError('At most %d strategies on one product.' % STRATEGY_MAX)
+    have.append({'id': max([x['id'] for x in have] or [0]) + 1, 'by': who, 'text': t, 'at': now})
+    _save(conn, c, now)
+    _event(conn, card_id, 'strategy', 'Launch strategy%s added' % _from(who), now)
+    return {'id': card_id}
+
+
+def edit_strategy(conn, card_id, sid, by, text, now=None):
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    s = _strategy(c, sid)
+    s.update(by=_text(by, 80), text=_strategy_text(text), edited_at=now)
+    _save(conn, c, now)
+    _event(conn, card_id, 'strategy', 'Launch strategy%s changed' % _from(s['by']), now, merge=True)
+    return {'id': card_id}
+
+
+def remove_strategy(conn, card_id, sid, now=None):
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    s = _strategy(c, sid)
+    c['data']['strategy'] = [x for x in c['data']['strategy'] if x['id'] != sid]
+    _save(conn, c, now)
+    _event(conn, card_id, 'strategy', 'Launch strategy%s removed' % _from(s['by']), now)
+    return {'id': card_id}
 
 
 # ---------- orders and shipments ----------
@@ -435,23 +516,31 @@ def _stock(conn, card, orders, mk, settings, today):
     o, ln = _current_line(conn, orders, mk)
     if not ln:
         return None
-    rows = conn.execute('SELECT ts, units_left, id FROM board_stock WHERE line_id=? ORDER BY ts, id', (ln['id'],)).fetchall()
+    rows = conn.execute('SELECT ts, units_left, id, source FROM board_stock WHERE line_id=? ORDER BY ts, id',
+                        (ln['id'],)).fetchall()
     counts = [(r[0], r[1]) for r in rows]
     sent = ln['arrived_units'] or ln['units']
     left = counts[-1][1] if counts else None
     counted = dt.date.fromtimestamp(counts[-1][0]).isoformat() if counts else None
-    rate = rules.sell_rate(counts, sent, ln['steps'].get('arrived'))
+    sales = [(r[0], r[1]) for r in conn.execute('SELECT day, units FROM board_sales WHERE card_id=? AND market=? '
+                                               'ORDER BY day', (card['id'], mk))]
+    by_sales = rules.sales_rate(sales, today)
+    rate = by_sales if by_sales is not None else rules.sell_rate(counts, sent, ln['steps'].get('arrived'))
     lead = planner.lead_days(mk, ln['ship_mode'] or 'sea')
     fc = rules.forecast(left, rate, lead, counted)
     st = rules.stock_status(sent, left, settings.get('board_low_pct', 30), fc['reorder_by'], today)
     target = card['data']['targets'].get(mk)
+    live = next((r[0] for r in reversed(rows) if r[3] == 'spapi'), None)
     return {'market': mk, 'line_id': ln['id'], 'n': o['n'], 'sent': sent, 'arrived': ln['steps'].get('arrived'),
             'counts': [list(r) for r in rows[-12:]], 'left': left, 'counted': counted, 'rate': rate, 'lead_days': lead,
+            'rate_src': 'Amazon orders' if by_sales is not None else 'your counts' if rate is not None else None,
+            'live_at': live, 'sales': [list(x) for x in sales[-30:]],
             **fc, **st, 'target': target, 'target_progress': rules.target_progress(rate, target)}
 
 
-def add_count(conn, line_id, units_left, settings, now=None):
-    """How many units are left of a shipment. Returns new Home alerts: stock turned red, or the re-order day came."""
+def add_count(conn, line_id, units_left, settings, now=None, source=None):
+    """How many units are left of a shipment (typed by you, or source 'spapi' from Amazon). Returns new Home alerts:
+    stock turned red, or the re-order day came."""
     now = int(now or time.time())
     r = conn.execute('SELECT l.*, o.card_id, o.n FROM board_line l JOIN board_order o ON o.id=l.order_id WHERE l.id=?',
                      (line_id,)).fetchone()
@@ -460,13 +549,89 @@ def add_count(conn, line_id, units_left, settings, now=None):
     left = _number(units_left, 0, 1_000_000, 'Units left', whole=True)
     if left is None:
         raise BoardError('How many units are left?')
-    conn.execute('INSERT INTO board_stock(line_id, ts, units_left) VALUES (?,?,?)', (line_id, now, left))
+    conn.execute('INSERT INTO board_stock(line_id, ts, units_left, source) VALUES (?,?,?,?)', (line_id, now, left, source))
     c = _card(conn, r['card_id'])
     s = _stock(conn, c, _orders(conn, c['id']), r['market'], settings, dt.date.fromtimestamp(now))
-    _event(conn, c['id'], 'stock', '%s: %s left%s' % (_name(r['market']), '{:,}'.format(left),
-                                                      ' (%d%%)' % round(s['pct']) if s and s['pct'] is not None else ''),
-           now, merge=True)
+    _event(conn, c['id'], 'stock', '%s: %s left%s%s' % (_name(r['market']), '{:,}'.format(left),
+                                                        ' (%d%%)' % round(s['pct']) if s and s['pct'] is not None else '',
+                                                        ', from Amazon' if source == 'spapi' else ''), now, merge=True)
     return {'id': c['id'], 'alerts': _stock_alerts(conn, c, s, now) if s else []}
+
+
+# ---------- live stock and sales from Amazon (SP-API) ----------
+LIVE_REPEAT_S = 12 * 3600          # the same count from Amazon is not stored again within 12 hours
+SALES_DAYS = 35
+
+
+def live_count(conn, card_id, market, units, settings, now=None):
+    """Amazon's FBA stock of a card's product in one market, as a count on the shipment selling now. None when the
+    card has no shipment there or the count did not change in the last 12 hours."""
+    now = int(now or time.time())
+    c = _card(conn, card_id)
+    o, ln = _current_line(conn, _orders(conn, card_id), market)
+    if not ln:
+        return None
+    last = conn.execute('SELECT ts, units_left FROM board_stock WHERE line_id=? ORDER BY ts DESC, id DESC LIMIT 1',
+                        (ln['id'],)).fetchone()
+    if last and last[1] == units and now - last[0] < LIVE_REPEAT_S:
+        return None
+    return add_count(conn, ln['id'], units, settings, now, 'spapi') | {'card': c['title']}
+
+
+def save_sales(conn, card_id, market, days, now=None):
+    """Amazon's units ordered a day [('YYYY-MM-DD', units)] for a card in one market (a day read again replaces it)."""
+    now = int(now or time.time())
+    for d, u in days or ():
+        conn.execute('INSERT OR REPLACE INTO board_sales(card_id, market, day, units, ts) VALUES (?,?,?,?,?)',
+                     (card_id, market, d, int(u), now))
+    return len(days or ())
+
+
+def sync_live(db, client, settings, now=None, card_id=None):
+    """Fill the Re-order stage from the SP-API: units left (FBA stock that is ready to sell) and the daily sales of every
+    card with an ASIN, in each market its keys cover. Blocking (the SP-API is plain HTTP): run it in a thread.
+    Returns {'cards', 'counts', 'sales_days', 'alerts', 'errors'}."""
+    import spapi
+    now = int(now or time.time())
+    out = {'cards': 0, 'counts': 0, 'sales_days': 0, 'alerts': [], 'errors': []}
+    if client is None:
+        return out
+    cards = db.read(lambda conn: [dict(r) for r in conn.execute(
+        'SELECT id, asin, market FROM board_card WHERE archived_at IS NULL AND asin IS NOT NULL' +
+        (' AND id=?' if card_id else ''), (card_id,) if card_id else ())])
+    if not cards:
+        return out
+    by_mk = {}
+    for c in cards:
+        mks = db.read(lambda conn, i=c['id']: [ln['market'] for o in _orders(conn, i) for ln in o['lines']]) or [c['market']]
+        for mk in dict.fromkeys(mks):
+            if client.has(mk):
+                by_mk.setdefault(mk, []).append(c)
+    for mk, cs in by_mk.items():
+        try:
+            stock = client.inventory_by_asin(mk)
+        except spapi.SpApiError as e:
+            out['errors'].append('%s stock: %s' % (_name(mk), e))
+            stock = {}
+        from zoneinfo import ZoneInfo
+        today = remind.today(now, ZoneInfo(config.MARKET_TZ[mk]))
+        interval = spapi.day_interval(today - dt.timedelta(days=SALES_DAYS), today, config.MARKET_TZ[mk])
+        for c in cs:
+            out['cards'] += 1
+            inv = stock.get(c['asin'])
+            if inv is not None:
+                r = db.write(live_count, c['id'], mk, inv['fulfillable'], settings, now)
+                if r:
+                    out['counts'] += 1
+                    out['alerts'] += r['alerts']
+            try:
+                days = spapi.parse_order_metrics(client.order_metrics(mk, interval, config.MARKET_TZ[mk], asin=c['asin']))
+                out['sales_days'] += db.write(save_sales, c['id'], mk, days, now)
+            except spapi.SpApiError as e:
+                out['errors'].append('%s sales: %s' % (_name(mk), e))
+    if out['counts'] or out['sales_days']:
+        bump()
+    return out
 
 
 def remove_count(conn, count_id, now=None):
@@ -554,7 +719,7 @@ def remove_check(conn, card_id, item_id, now=None):
 def _approve_if_done(conn, card_id, now):
     c = _card(conn, card_id)
     ms = c['data']['milestones']
-    if ms.get('approved') or not rules.approval_status(_approval(c)['items'])['complete']:
+    if ms.get('approved') or not ms.get('idea_done') or not rules.approval_status(_approval(c)['items'])['complete']:
         return {'trophies': []}
     ms['approved'] = now
     _finish(conn, card_id, 'approval', now)
@@ -569,6 +734,26 @@ def _approve_if_done(conn, card_id, now):
 
 
 # ---------- milestones ----------
+def _idea_if_done(conn, card_id, now):
+    """An idea with its Amazon ASIN and Alibaba link is done: it moves on to Approval, and straight through it when
+    every check was ticked already. Returns {'moved': the stage it moved to or None, 'trophies'}."""
+    c = _card(conn, card_id)
+    ms = c['data']['milestones']
+    if ms.get('idea_done') or not rules.idea_status(c['asin'], (c['data'].get('links') or {}).get('alibaba'))['complete']:
+        return {'moved': None, 'trophies': []}
+    ms['idea_done'] = now
+    _finish(conn, card_id, 'idea', now)
+    moved = None
+    if c['stage'] == 'idea':
+        c['stage'], moved = 'approval', 'approval'
+        c['pos'] = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='approval'").fetchone()[0]
+        _event(conn, card_id, 'moved', 'Moved to Approval: the Amazon ASIN and the Alibaba link are in', now)
+    _save(conn, c, now)
+    _watch(conn, c['kw'], c['market'], 'researching', now)
+    won = _approve_if_done(conn, card_id, now)['trophies']
+    return {'moved': 'sourcing' if won else moved, 'trophies': won}
+
+
 def _finish(conn, card_id, stage, now):
     """A stage is done: its deadline is met and its scheduled emails are cancelled."""
     for t in conn.execute('SELECT id FROM board_task WHERE card_id=? AND stage=? AND done_at IS NULL AND cancelled_at IS NULL',
@@ -579,7 +764,7 @@ def _finish(conn, card_id, stage, now):
 
 
 def _settle(conn, card_id, settings, now):
-    """Hand out the trophies a card has earned and move it on: Order ready opens Launch & strategy, Launched opens
+    """Hand out the trophies a card has earned and move it on: Order ready opens Launching strategy, Launched opens
     Re-order, every re-order that is complete counts. Returns {'trophies': [names]}."""
     c, per_usd = _card(conn, card_id), _per_usd()
     ms, won = c['data']['milestones'], []
@@ -815,6 +1000,31 @@ def cancel_task(conn, task_id, now=None):
     return {'id': t['card_id']}
 
 
+def move_task(conn, task_id, due_day, settings, now=None, tz=None):
+    """A deadline's new due day (dragged on the timeline): the same people, note and meeting; its reminder and meeting
+    emails not sent yet move with it, and a 'new task' email that already went is not sent again."""
+    now = int(now or time.time())
+    t = conn.execute('SELECT * FROM board_task WHERE id=? AND done_at IS NULL AND cancelled_at IS NULL', (task_id,)).fetchone()
+    if not t:
+        raise BoardError('That deadline is done or gone.')
+    due = rules.day(_when(due_day, 'Due day'))
+    if not due or due <= remind.today(now, tz):
+        raise BoardError('The due day must be after today.')
+    days = (due - rules.day(t['start_day'])).days
+    if days < 1:
+        raise BoardError('The due day must be after the day the deadline was set.')
+    sch = remind.schedule(t['start_day'], days, now, settings.get('mail_send_hour', 9), settings.get('mail_remind_days', 3),
+                          False, t['meet_time'], tz)
+    conn.execute("UPDATE board_mail SET status='cancelled', error='the due day moved' WHERE task_id=? AND status='scheduled' "
+                 "AND kind!='start'", (task_id,))
+    if json.loads(t['notify_json'] or '[]'):
+        for kind, ts in sch['mails']:
+            conn.execute('INSERT INTO board_mail(task_id, kind, send_at) VALUES (?,?,?)', (task_id, kind, ts))
+    conn.execute('UPDATE board_task SET days=?, due_day=?, meet_start=? WHERE id=?', (days, sch['due_day'], sch['meet_start'], task_id))
+    _event(conn, t['card_id'], 'task', '%s now due %s' % (rules.STAGE_NAMES[t['stage']], remind.nice_day(sch['due_day'])), now)
+    return {'id': t['card_id'], 'due_day': sch['due_day']}
+
+
 def send_now(conn, task_id, now=None):
     """'Send reminder now': the scheduled reminder goes out at the next send (a new one if none is waiting)."""
     now = int(now or time.time())
@@ -833,6 +1043,8 @@ def send_now(conn, task_id, now=None):
 
 def _todo(conn, card, stage, settings, per_usd, now):
     """What is still open in a stage, in plain lines for the emails."""
+    if stage == 'idea':
+        return rules.idea_status(card['asin'], (card['data'].get('links') or {}).get('alibaba'))['missing']
     orders = _orders(conn, card['id'])
     if stage == 'sourcing':
         return rules.sourcing_status(orders[0], orders[0]['lines'], per_usd)['missing'] if orders else []
@@ -895,12 +1107,18 @@ def _mail_done(conn, mail_id, status, now, error=None):
     conn.execute('UPDATE board_mail SET status=?, error=? WHERE id=?', (status, error, mail_id))
 
 
-def _mail_sent(conn, ctx, now):
+def _mail_sent(conn, ctx, now, how=None):
+    """how: what the sender did, 'sent', 'opened' (ready to send in your browser) or 'calendar' (a Google Calendar
+    event to save); None counts as sent."""
     m = ctx['mail']
-    conn.execute("UPDATE board_mail SET status='sent', sent_at=?, attempts=attempts+1, error=NULL, to_json=?, subject=? "
-                 'WHERE id=?', (now, json.dumps([e for _, e in ctx['to']]), ctx['subject'], m['id']))
-    _event(conn, ctx['card_id'], 'mail', '%s emailed to %s' % (KIND_NAMES[m['kind']], remind.join_names([n for n, _ in ctx['to']])),
-           now)
+    opened = how in ('opened', 'calendar')
+    conn.execute('UPDATE board_mail SET status=?, sent_at=?, attempts=attempts+1, error=NULL, to_json=?, subject=? '
+                 'WHERE id=?', ('opened' if opened else 'sent', now, json.dumps([e for _, e in ctx['to']]),
+                                ctx['subject'], m['id']))
+    who = remind.join_names([n for n, _ in ctx['to']])
+    text = ('%s opened in Google Calendar: press Save to invite %s' if how == 'calendar' else
+            '%s opened in your browser: press Send to email %s' if opened else '%s emailed to %s')
+    _event(conn, ctx['card_id'], 'mail', text % (KIND_NAMES[m['kind']], who), now)
 
 
 def _mail_failed(conn, ctx, error, now):
@@ -948,8 +1166,8 @@ def _all_stock_alerts(conn, settings, now):
 def tick(db, settings, send, now=None, tz=None, inform_ok=True):
     """Send the reminder emails that are due, raise the stock alerts whose day came and send the automatic product
     update once its waiting time is over (inform_ok: the Gmail is set up). send(to, subject, text, html, ics) raises on
-    failure (mailer.deliver). Returns {'sent', 'failed', 'missed', 'alerts' (new on Home), 'next' (when to look again
-    for the product update, or None)}."""
+    failure (mailer.deliver) and may return what it did ('sent', 'opened' or 'calendar', see _mail_sent). Returns
+    {'sent', 'failed', 'missed', 'alerts' (new on Home), 'next' (when to look again for the product update, or None)}."""
     out = {'sent': 0, 'failed': 0, 'missed': 0, 'alerts': [], 'next': None}
     if not _send_lock.acquire(blocking=False):
         return out
@@ -969,13 +1187,13 @@ def tick(db, settings, send, now=None, tz=None, inform_ok=True):
                 db.write(_mail_done, mid, 'cancelled', now, 'nobody to email')
             else:
                 try:
-                    send(ctx['to'], ctx['subject'], ctx['text'], ctx['html'], ctx['ics'])
+                    how = send(ctx['to'], ctx['subject'], ctx['text'], ctx['html'], ctx['ics'])
                 except Exception as e:                       # noqa: BLE001 - reported on the card and on Home
                     out['failed'] += 1
                     out['alerts'] += db.write(_mail_failed, ctx, str(e)[:300] or e.__class__.__name__, now)
                 else:
                     out['sent'] += 1
-                    db.write(_mail_sent, ctx, now)
+                    db.write(_mail_sent, ctx, now, how)
         out['alerts'] += db.write(_all_stock_alerts, settings, now)
         out['next'], more = _inform_auto(db, settings, send, now, inform_ok)
         out['alerts'] += more
@@ -1058,20 +1276,24 @@ def inform_view(db, settings, to_ids=None, message='', now=None):
     last, auto = m['last'], bool(settings.get('board_inform_auto', True))
     return {'subject': m['subject'], 'text': m['text'], 'html': m['html'], 'changes': m['changes'], 'count': len(m['items']),
             'to': [n for n, _ in m['to']], 'notifiers': m['people'],
-            'last': {'sent_at': last.get('sent_at'), 'to': last.get('to') or [], 'auto': bool(last.get('auto'))},
+            'last': {'sent_at': last.get('sent_at'), 'to': last.get('to') or [], 'auto': bool(last.get('auto')),
+                     'opened': bool(last.get('opened'))},
             'auto': auto, 'wait_min': int(settings.get('board_inform_wait', 15)),
             'next_at': _inform_next(wait, settings) if auto and wait and not wait.get('gave_up') else None,
             'error': (wait or {}).get('error')}
 
 
-def _inform_sent(conn, m, now, auto):
+def _inform_sent(conn, m, now, auto, how=None):
+    opened = how in ('opened', 'calendar')
     storage.set_state(conn, INFORM_KEY, {'at': now, 'sent_at': now, 'snapshot': m['snapshot'], 'auto': auto,
-                                         'to': [n for n, _ in m['to']], 'subject': m['subject']})
+                                         'to': [n for n, _ in m['to']], 'subject': m['subject'], 'opened': opened})
     storage.set_state(conn, INFORM_WAIT_KEY, None)
     who = remind.join_names([n for n, _ in m['to']])
+    text = ('Product update opened in your browser: press Send to email %s' if opened else
+            'Product update emailed to %s') % who
     for c in m['changes']:
         if c['kind'] != 'removed':
-            _event(conn, int(c['id']), 'mail', 'Product update emailed to %s' % who, now)
+            _event(conn, int(c['id']), 'mail', text, now)
 
 
 def _inform_send(db, settings, send, to_ids, message, now, auto=False):
@@ -1080,10 +1302,11 @@ def _inform_send(db, settings, send, to_ids, message, now, auto=False):
         raise BoardError('Pick who to email.' if m['people'] else 'Add people to your Notifier list first.')
     if not m['items']:
         raise BoardError('There are no products on the board yet.')
-    send(m['to'], m['subject'], m['text'], m['html'], None)
-    db.write(_inform_sent, m, now, auto)
+    how = send(m['to'], m['subject'], m['text'], m['html'], None)
+    db.write(_inform_sent, m, now, auto, how)
     bump()
-    return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'changes': len(m['changes'])}
+    return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'changes': len(m['changes']),
+            'opened': how in ('opened', 'calendar')}
 
 
 def inform_send(db, settings, send, to_ids=None, message='', now=None):
@@ -1153,6 +1376,73 @@ def inform_waiting(db, settings):
     return bool(wait and not wait.get('gave_up') and db.read(notifiers))
 
 
+# ---------- the deadlines email (Inform deadlines) ----------
+DEADLINES_KEY = 'board_deadlines'    # ui_state: the last deadlines email {'sent_at', 'to', 'subject', 'opened'}
+
+
+def deadline_items(conn):
+    """Every open deadline on the board, the soonest first, and the products without one: (items, titles)."""
+    items, none = [], []
+    for r in conn.execute('SELECT id, title, market FROM board_card WHERE archived_at IS NULL ORDER BY pos, id').fetchall():
+        open_ = [t for t in _tasks(conn, r['id']).values() if not t['done_at']]
+        items += [{'id': r['id'], 'title': r['title'], 'market': r['market'], 'stage': t['stage'], 'due_day': t['due_day'],
+                   'note': t['note']} for t in open_]
+        if not open_:
+            none.append(r['title'])
+    items.sort(key=lambda i: (i['due_day'], i['title'].lower()))
+    return items, none
+
+
+def _deadlines_mail(conn, settings, to_ids, message, now):
+    people = notifiers(conn)
+    pick = people if to_ids is None else [p for p in people if p['id'] in set(to_ids)]
+    items, none = deadline_items(conn)
+    subject, text, page = inform.deadline_texts(items, {'owner': _owner(settings), 'to_names': [p['name'] for p in pick],
+                                                        'message': message, 'now': now, 'none': none})
+    return {'to': [(p['name'], p['email']) for p in pick], 'people': people, 'items': items, 'none': none,
+            'subject': subject, 'text': text, 'html': page, 'last': storage.get_state(conn, DEADLINES_KEY) or {}}
+
+
+def deadlines_view(db, settings, to_ids=None, message='', now=None):
+    """The deadlines email as it would go now, and when the last one went."""
+    now = int(now or time.time())
+    m = db.read(_deadlines_mail, settings, to_ids, _text(message, 1000), now)
+    today, last = remind.today(now), m['last']
+    return {'subject': m['subject'], 'text': m['text'], 'html': m['html'], 'count': len(m['items']),
+            'late': sum(1 for i in m['items'] if rules.day(i['due_day']) < today), 'none': m['none'],
+            'to': [n for n, _ in m['to']], 'notifiers': m['people'],
+            'last': {'sent_at': last.get('sent_at'), 'to': last.get('to') or [], 'opened': bool(last.get('opened'))}}
+
+
+def _deadlines_sent(conn, m, now, opened):
+    storage.set_state(conn, DEADLINES_KEY, {'sent_at': now, 'to': [n for n, _ in m['to']], 'subject': m['subject'],
+                                            'opened': opened})
+    who = remind.join_names([n for n, _ in m['to']])
+    text = ('Deadlines email opened in your browser: press Send to email %s' if opened else 'Deadlines emailed to %s') % who
+    for cid in dict.fromkeys(i['id'] for i in m['items']):
+        _event(conn, cid, 'mail', text, now)
+
+
+def deadlines_send(db, settings, send, to_ids=None, message='', now=None):
+    """'Inform deadlines': email every product's open deadline now, next to the product update and the reminder
+    emails each deadline sends. send(to, subject, text, html, ics) raises on failure."""
+    if not _send_lock.acquire(timeout=120):
+        raise BoardError('Emails are going out right now; try again in a moment.')
+    try:
+        now = int(now or time.time())
+        m = db.read(_deadlines_mail, settings, to_ids, _text(message, 1000), now)
+        if not m['to']:
+            raise BoardError('Pick who to email.' if m['people'] else 'Add people to your Notifier list first.')
+        if not m['items']:
+            raise BoardError('No product has a deadline yet: open a product and press Set a deadline.')
+        opened = send(m['to'], m['subject'], m['text'], m['html'], None) in ('opened', 'calendar')
+        db.write(_deadlines_sent, m, now, opened)
+        bump()
+        return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'count': len(m['items']), 'opened': opened}
+    finally:
+        _send_lock.release()
+
+
 # ---------- reading the board ----------
 def _tasks(conn, card_id):
     out = {}
@@ -1170,33 +1460,61 @@ def _summary(conn, c, settings, per_usd, now):
     orders, hs = _orders(conn, c['id']), _hints(conn, c['id'])
     today = dt.date.fromtimestamp(now)
     ms = c['data']['milestones']
+    idea = rules.idea_status(c['asin'], (c['data'].get('links') or {}).get('alibaba'))
     first = rules.sourcing_status(orders[0], orders[0]['lines'], per_usd) if orders else None
     ls = rules.launch_status(hs, c['data']['live'])
     markets = []
+    stocks = []
     for mk in _markets(orders, c):
         s = _stock(conn, c, orders, mk, settings, today) if ms.get('order_ready') else None
         units = next((ln['units'] for ln in orders[0]['lines'] if ln['market'] == mk), None) if orders else None
         markets.append({'market': mk, 'units': units, 'stock': {k: s[k] for k in ('pct', 'level', 'order_now', 'left',
                                                                                      'reorder_by')} if s else None})
+        if s:
+            stocks.append(s)
     tasks = _tasks(conn, c['id'])
     task = tasks.get(c['stage'])
     nxt = min((m for m in (task or {}).get('mails', []) if m['status'] == 'scheduled'), key=lambda m: m['send_at'],
               default=None)
+    etas = [e for e in (_eta(ln) for o in orders for ln in o['lines']) if e]
+    due = rules.due_state(task['due_day'], bool(task['done_at']), today) if task else None
+    dates = [{'kind': 'reorder', 'day': s['reorder_by'], 'market': s['market']} for s in stocks if s['reorder_by']]
+    if task and not task['done_at']:
+        dates.append({'kind': 'due', 'day': task['due_day']})
+    dates += [{'kind': 'eta', 'day': e} for e in etas]
+    dates += [{'kind': 'order_by', 'day': x['day'], 'market': x['market'], 'mode': x['mode']}
+              for x in _season_order(conn, c, orders, today)]
+    progress = {'idea': 1.0 if ms.get('idea_done') else idea['progress'],
+                'approval': 1.0 if ms.get('approved') else rules.approval_status(c['data']['approval']['items'])['progress'],
+                'sourcing': 1.0 if ms.get('order_ready') else first['progress'] if first else 0.0,
+                'launch': 1.0 if ms.get('launched') else ls['progress'] if ms.get('order_ready') else 0.0,
+                'reorder': min(1.0, int(ms.get('reorders') or 0) / 1.0) if ms.get('launched') else 0.0}
+    late = due == 'late' or any(s['order_now'] for s in stocks)
+    mini = next((s for s in stocks if s['counts'] or s['sales']), None)
+    step = rules.next_step(ms, idea, rules.approval_status(c['data']['approval']['items']),
+                           first or rules.sourcing_status({}, [], per_usd), ls, stocks,
+                           [{'n': o['n'], 'missing': rules.sourcing_status(o, o['lines'], per_usd)['missing']}
+                            for o in orders[1:] if not o['ready_at']])
     return {'id': c['id'], 'key': 'PB-%d' % c['id'], 'title': c['title'], 'market': c['market'], 'asin': c['asin'],
             'kw': c['kw'], 'image': c['image'], 'color': c['color'], 'stage': c['stage'], 'pos': c['pos'],
             'created_at': c['created_at'], 'updated_at': c['updated_at'], 'archived_at': c['archived_at'],
-            'milestones': ms, 'unlocked': rules.unlocked(ms), 'markets': markets,
+            'milestones': ms, 'unlocked': rules.unlocked(ms), 'markets': markets, 'idea': idea,
             'invested_usd': round(sum(rules.sourcing_status(o, o['lines'], per_usd)['known_usd'] for o in orders), 2),
             'approval': {**rules.approval_status(c['data']['approval']['items']), 'items': c['data']['approval']['items']},
-            'progress': {'approval': 1.0 if ms.get('approved') else
-                         rules.approval_status(c['data']['approval']['items'])['progress'],
-                         'sourcing': 1.0 if ms.get('order_ready') else first['progress'] if first else 0.0,
-                         'launch': 1.0 if ms.get('launched') else ls['progress'] if ms.get('order_ready') else 0.0,
-                         'reorder': min(1.0, int(ms.get('reorders') or 0) / 1.0) if ms.get('launched') else 0.0},
+            'progress': progress, 'ring': rules.ring(progress, late), 'late': late,
+            'countdown': rules.countdown(dates, today), 'tags': c['data'].get('tags', []),
+            'links': {'alibaba': (c['data'].get('links') or {}).get('alibaba')},
+            'mini': {'market': mini['market'], 'counts': [[x[0], x[1]] for x in mini['counts']], 'sent': mini['sent'],
+                     'low_pct': settings.get('board_low_pct', 30), 'sales': mini['sales'],
+                     'target': mini['target'], 'live_at': mini['live_at']} if mini else None,
+            'edit': {'n': orders[0]['n'] if orders else 1,
+                     'unit_cost': orders[0]['unit_cost'] if orders else None, 'cost_cur': orders[0]['cost_cur'] if orders else None,
+                     'units': {ln['market']: ln['units'] for ln in orders[0]['lines']} if orders else {},
+                     'live': c['data']['live'], 'due_day': task['due_day'] if task and not task['done_at'] else None,
+                     'task_id': task['id'] if task and not task['done_at'] else None},
             'hints': {'done': ls['done'], 'total': ls['total'], 'moved': sum(1 for h in hs if h['moved'])},
-            'missing': first['missing'] if first and not ms.get('order_ready') else [],
-            'task': {'id': task['id'], 'due_day': task['due_day'],
-                     'due': rules.due_state(task['due_day'], bool(task['done_at']), today),
+            'missing': first['missing'] if first and not ms.get('order_ready') else [], 'next': step,
+            'task': {'id': task['id'], 'due_day': task['due_day'], 'due': due,
                      'next_mail': {'kind': nxt['kind'], 'send_at': nxt['send_at']} if nxt else None} if task else None}
 
 
@@ -1221,9 +1539,128 @@ def state(db, settings, now=None):
                 'invested_usd': round(sum(c['invested_usd'] for c in cards), 2),
                 'low': sum(1 for c in cards for m in c['markets'] if (m['stock'] or {}).get('level') == 'red'),
                 'late': sum(1 for c in cards if (c['task'] or {}).get('due') == 'late'), 'rev': rev(),
-                'inform': {'sent_at': last.get('sent_at'), 'to': last.get('to') or [],
+                'inform': {'sent_at': last.get('sent_at'), 'to': last.get('to') or [], 'opened': bool(last.get('opened')),
                            'next_at': _inform_next(wait, settings) if waiting else None}}
     return db.read(build)
+
+
+def timeline(db, settings, now=None):
+    """Every date on the board for the timeline: deadlines, shipment steps, expected arrival at Amazon, go-live days and
+    re-order days (engine.board.timeline_events)."""
+    now = int(now or time.time())
+
+    def build(conn):
+        today = dt.date.fromtimestamp(now)
+        items = []
+        for (cid,) in conn.execute('SELECT id FROM board_card WHERE archived_at IS NULL ORDER BY pos, id').fetchall():
+            c = _card(conn, cid)
+            orders = _orders(conn, cid)
+            tasks = [{'id': t['id'], 'stage': s, 'due_day': t['due_day'], 'start_day': t['start_day'], 'done': bool(t['done_at'])}
+                     for s, t in _tasks(conn, cid).items()]
+            lines = [{'n': o['n'], 'market': ln['market'], 'steps': ln['steps'], 'eta': _eta(ln)} for o in orders for ln in o['lines']]
+            reorder = []
+            if c['data']['milestones'].get('order_ready'):
+                for mk in _markets(orders, c):
+                    s = _stock(conn, c, orders, mk, settings, today)
+                    if s and s['reorder_by']:
+                        reorder.append({'market': mk, 'day': s['reorder_by']})
+            items.append({'id': cid, 'title': c['title'], 'color': c['color'], 'stage': c['stage'], 'tasks': tasks,
+                          'lines': lines, 'live': c['data']['live'], 'reorder': reorder,
+                          'order_by': _season_order(conn, c, orders, today)})
+        return {'events': rules.timeline_events(items, today), 'today': today.isoformat()}
+    return db.read(build)
+
+
+def _season_order(conn, c, orders, today):
+    """For a product not ordered yet: the last day to order for its next seasonal peak in each market, by sea (by air
+    when sea is too late), from the launch planner and the keyword's Google Trends season. [] when the season is not
+    reliable or not read, or once a deposit is paid."""
+    if c['data']['milestones'].get('order_ready') or not c['kw'] or \
+            any(ln['steps'].get('deposit') for o in orders for ln in o['lines']):
+        return []
+    out = []
+    for mk in _markets(orders, c):
+        s = (storage.trends_feature(conn, c['kw'], mk) or {}).get('seasonality') or {}
+        if not s.get('reliable'):
+            continue
+        p = planner.plan(s.get('si'), s.get('strength'), True, s.get('peak_month'), today.isoformat(), market=mk)
+        mode = {'ok': 'sea', 'next_year': 'sea', 'too_late': 'air'}.get(p['status'])
+        if mode and (p.get(mode) or {}).get('order_by'):
+            out.append({'market': mk, 'day': p[mode]['order_by'], 'mode': mode,
+                        'peak': MONTH_ABBR[p['peak_month'] - 1] if p.get('peak_month') else None})
+    return out
+
+
+FILTERS_KEY = 'board_filters'
+
+
+def saved_filters(conn):
+    return storage.get_state(conn, FILTERS_KEY, []) or []
+
+
+def save_filter(conn, f=None, remove=None):
+    """Keep a named filter of the board (text, market, stage, overdue, tag), or remove one by name. Up to 12."""
+    have = [x for x in saved_filters(conn) if x.get('name') != remove]
+    if f:
+        name = _text(f.get('name'), 40)
+        if not name:
+            raise BoardError('Give the filter a name.')
+        keep = {'name': name, 'q': _text(f.get('q'), 80) or '', 'mk': f.get('mk') if f.get('mk') in config.MARKETS else '',
+                'stage': f.get('stage') if f.get('stage') in rules.STAGES else '', 'overdue': bool(f.get('overdue')),
+                'tag': _text(f.get('tag'), 24) or ''}
+        have = [x for x in have if x.get('name') != name][:11] + [keep]
+    storage.set_state(conn, FILTERS_KEY, have)
+    return have
+
+
+# ---------- what the research says about the approval checks ----------
+CHECK_RULES = {0: 'demand_floor', 1: 'fast_stock', 2: 'margin_floor', 4: 'restricted'}     # APPROVAL_CHECKS index: rule
+
+
+def approval_research(db, card, settings, per_usd, now=None):
+    """What the stored research says about each standard approval check while the product waits for approval:
+    {item id: {'state': 'pass', 'fail' or 'unknown', 'why'}}. Checks you wrote yourself get nothing, nor do the ones
+    whose Go/No-go rule is switched off. The supplier price is the order's, else the one the keyword report
+    remembers. Nothing is fetched."""
+    ids = {rules.APPROVAL_CHECKS.index(i['text']): i['id'] for i in card['approval']['items']
+           if i['text'] in rules.APPROVAL_CHECKS}
+    if card['milestones'].get('approved') or not ids:
+        return {}
+    mk, kw, ed = card['market'], config.norm_kw(card['kw']), card['edit']
+
+    def read(conn):
+        w = conn.execute("SELECT cogs FROM watch WHERE kind='keyword' AND market=? AND target=? AND cogs > 0",
+                         (mk, kw)).fetchone()
+        return (w[0] if w else None), reports.size_suggestion(conn, mk, kw), reports.decide_rules(conn)
+    saved, size, on = db.read(read)
+    cost = (rules.to_usd(ed['unit_cost'], ed['cost_cur'] or 'USD', per_usd) if ed['unit_cost'] else None) or saved
+    d = reports.decision(db, mk, kw, settings, cogs_usd=cost, dims=size['dims_cm'], kg=size['kg'], now=now)
+    found = {r['key']: r for r in d['decision']['rules']}
+    first = {'state': 'unknown', 'why': 'Search "%s" in %s first: the research fills this in.' % (kw, _name(mk))}
+    price = 'Type the supplier price in the keyword report\'s profit calculator and tick Remember the cost.'
+    out = {}
+    for n, key in CHECK_RULES.items():
+        if n in ids and on[key]['on']:
+            r = found.get(key)
+            out[ids[n]] = first if not d['facts'] or not r else \
+                {'state': r['state'], 'why': price if key == 'margin_floor' and r['state'] == 'unknown' else r['why']}
+    if 3 in ids:
+        out[ids[3]] = {'state': 'unknown', 'why': 'Add the Alibaba link on the Idea tab.'} if not card['links']['alibaba'] \
+            else {'state': 'pass', 'why': 'Alibaba link added; the supplier price is about US$%.2f a unit.' % cost} if cost \
+            else {'state': 'unknown', 'why': 'Alibaba link added. ' + price}
+    if 5 in ids:
+        tier = fees.size_tier(mk, size['dims_cm'], size['kg']) if size['dims_cm'] and size['kg'] else None
+        if not size['searched']:
+            out[ids[5]] = first
+        elif not tier or not tier['storage']:
+            out[ids[5]] = {'state': 'unknown', 'why': 'The package size is not known yet: the keyword report reads it from '
+                                                      'the top listings.'}
+        else:
+            box = '%s cm, %g kg' % (' x '.join('%g' % x for x in size['dims_cm']), size['kg'])
+            big = tier['storage'] != 'standard'
+            out[ids[5]] = {'state': 'fail' if big else 'pass', 'why': 'The usual package is %s: %s%s.' % (
+                box, tier['label'].lower(), ', so higher FBA fees' if big else ' size')}
+    return out
 
 
 def card_detail(db, card_id, settings, now=None):
@@ -1262,9 +1699,12 @@ def card_detail(db, card_id, settings, now=None):
                 'launch': rules.launch_status(hs, c['data']['live']), 'markets': markets, 'money': money, 'team': team,
                 'stock': [s for s in (_stock(conn, c, orders, mk, settings, today) for mk in markets) if s],
                 'tasks': _tasks(conn, card_id), 'notifiers': notifiers(conn),
+                'strategy': list(reversed(c['data'].get('strategy') or [])),
                 'events': [dict(r) for r in conn.execute('SELECT id, ts, kind, text FROM board_event WHERE card_id=? '
                                                          'ORDER BY ts DESC, id DESC LIMIT 80', (card_id,))]}
-    return db.read(build)
+    out = db.read(build)
+    out['research'] = approval_research(db, out['card'], settings, per_usd, now)
+    return out
 
 
 def _eta(ln):
@@ -1306,7 +1746,9 @@ def summary_text(db, settings, now=None):
         lines.append('%s (%d)' % (rules.STAGE_NAMES[stage], len(cards)))
         for c in cards:
             bits = []
-            if stage == 'approval':
+            if stage == 'idea':
+                bits.append('ready' if c['milestones'].get('idea_done') else 'still needs ' + ' and '.join(c['idea']['missing']))
+            elif stage == 'approval':
                 a = c['approval']
                 bits.append('%d of %d checks ticked' % (a['done'], a['total']))
             elif stage == 'sourcing':

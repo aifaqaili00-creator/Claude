@@ -54,7 +54,7 @@ def test_what_changed_between_two_updates():
         item(3, 'Sauna Hat')])
     ch = inform.changes(old, new)
     assert [c['kind'] for c in ch] == ['changed', 'new', 'removed']
-    assert ch[0]['text'] == ('Calming Dog Bed: moved to Launch & strategy; USA units 300 \u2192 500; UAE added (50 units); '
+    assert ch[0]['text'] == ('Calming Dog Bed: moved to Launching strategy; USA units 300 \u2192 500; UAE added (50 units); '
                              'Australia taken out; Sourcing ETA Mon 19 Oct \u2192 Fri 23 Oct; arrived at Amazon in USA on '
                              'Tue 20 Oct; new Alibaba link')
     assert ch[1]['text'] == 'New: Sauna Hat' and ch[2]['text'] == 'Removed: Lick Mat' and ch[2]['id'] == '2'
@@ -85,3 +85,23 @@ def test_the_email_lists_every_product_and_what_changed():
     assert 'You get it when products are added or changed.' in page
     many = [{'kind': k, 'title': 't', 'id': str(i), 'text': 'x'} for i, k in enumerate(['new', 'changed', 'changed', 'removed'])]
     assert inform.subject([item()], many, '2026-10-12') == 'Product update, Mon 12 Oct: 1 new, 2 changed, 1 removed'
+
+
+def test_the_deadlines_email_says_how_late_or_how_soon_each_deadline_is():
+    assert inform.due_text('2026-10-09', '2026-10-12') == 'was due Fri 9 Oct (3 days late)'
+    assert inform.due_text('2026-10-11', '2026-10-12') == 'was due Sun 11 Oct (1 day late)'
+    assert inform.due_text('2026-10-12', '2026-10-12') == 'due today, Mon 12 Oct'
+    assert inform.due_text('2026-10-13', '2026-10-12') == 'due Tue 13 Oct (in 1 day)'
+    items = [{'title': 'Dog <Bed>', 'market': 'US', 'stage': 'sourcing', 'due_day': '2026-10-09', 'note': 'Samples first'},
+             {'title': 'Lick Mat', 'market': 'AU', 'stage': 'approval', 'due_day': '2026-10-12', 'note': None}]
+    ctx = {'owner': 'Ali Afa', 'to_names': ['Sara Khan', 'Li'], 'message': 'Call me', 'now': NOW, 'none': ['Sauna Hat']}
+    subject, text, page = inform.deadline_texts(items, ctx)
+    assert subject == 'Deadlines, Mon 12 Oct: 1 late, 1 coming up'
+    assert text.startswith('Hi Sara and Li,\n') and 'Note from Ali Afa:\nCall me' in text and text.endswith('Thanks,\nAli Afa\n')
+    assert '1. Dog <Bed> (USA): Sourcing & PO, was due Fri 9 Oct (3 days late)\n   Note: Samples first\n' in text
+    assert '2. Lick Mat (Australia): Approval, due today, Mon 12 Oct' in text and 'No deadline yet: Sauna Hat.' in text
+    assert 'Dog &lt;Bed&gt;' in page and '<Bed>' not in page and 'Deadlines \u00b7 Mon 12 Oct' in page
+    assert 'color:#b42318;font-weight:600">was due Fri 9 Oct' in page and '2 deadlines on the board' in page
+    subject, text, page = inform.deadline_texts([], {'owner': 'Ali', 'now': NOW, 'none': ['Sauna Hat']})
+    assert subject == 'Deadlines, Mon 12 Oct: none set' and text.startswith('Hi,\n\nNo product on our board has a deadline yet.')
+    assert '<th' not in page and 'No deadline yet: Sauna Hat.' in page

@@ -25,6 +25,12 @@ PRODUCT_JS = r"""
   document.querySelectorAll('#detailBullets_feature_div li, #detailBulletsWrapper_feature_div li').forEach(li => {
     const t = txt(li); const m = t.match(/^([^:]{2,60}?)\s*:\s*(.+)$/); if (m && !(m[1] in rows)) rows[m[1]] = m[2];
   });
+  document.querySelectorAll('#productOverview_feature_div tr, #poExpander tr').forEach(tr => {
+    const td = tr.querySelectorAll('td'); const k = txt(td[0]), v = txt(td[1]); if (k && v && !(k in rows)) rows[k] = v;
+  });
+  const safety = [...document.querySelectorAll('#important-information .a-section, #productSafety_feature_div, #safetyInformation_feature_div, [id*="safety" i] h4, [id*="safety" i] h5')]
+    .map(txt).filter(Boolean).join(' | ').slice(0, 800);
+  const sds = [...document.querySelectorAll('a[href]')].some(a => /safety data sheet|\bsds\b|dangerous goods|hazmat/i.test(txt(a)));
   const bsrLinks = [...document.querySelectorAll('a[href*="/gp/bestsellers/"]')].map(a => a.getAttribute('href') || '');
   const tab = {};
   document.querySelectorAll('#tabular-buybox .tabular-buybox-text, #tabular-buybox tr').forEach(e => {
@@ -34,6 +40,25 @@ PRODUCT_JS = r"""
   });
   const img = q('#landingImage, #imgBlkFront');
   const seller = q('#sellerProfileTriggerId, #merchantInfoFeature_feature_div a[href*="seller="], #tabular-buybox a[href*="seller="], #merchant-info a[href*="seller="]');
+  const related = [];
+  for (const c of document.querySelectorAll('[data-a-carousel-options], .a-carousel-container, #similarities_feature_div, #sims-fbt, #frequentlyBoughtTogether_feature_div')) {
+    let p = c, head = '';
+    for (let i = 0; i < 8 && p && !head; i++) { const h = p.querySelector('h2, h3, .a-carousel-heading'); if (h) head = txt(h); p = p.parentElement; }
+    if (!head || related.some(r => r.el.contains(c))) continue;
+    const items = [], seen = new Set();
+    for (const x of c.querySelectorAll('[data-asin], a[href*="/dp/"]')) {
+      const a = x.getAttribute('data-asin') || ((x.getAttribute('href') || '').match(/\/dp\/([A-Z0-9]{10})/) || [])[1];
+      if (!a || !/^[A-Z0-9]{10}$/.test(a) || seen.has(a)) continue;
+      seen.add(a);
+      const im = x.querySelector('img[alt]') || (x.closest('li') || x).querySelector('img[alt]');
+      items.push({asin: a, title: (im ? im.getAttribute('alt') : txt(x)).slice(0, 200)});
+    }
+    if (items.length) related.push({el: c, head: head.slice(0, 120), items: items.slice(0, 16)});
+  }
+  const listing = {images: document.querySelectorAll('#altImages li.imageThumbnail, #altImages .imageThumbnail').length,
+    video: !!q('#altImages .videoThumbnail, #altImages .videoBlockIngress, .videoBlockIngress'),
+    aplus: !!q('#aplus .aplus-v2, #aplus_feature_div .aplus-module, #aplus .aplus-module, #aplusBrandStory_feature_div .aplus-module'),
+    bullets: document.querySelectorAll('#feature-bullets li').length};
   return {
     title: txt(q('#productTitle')),
     price: txt(q('#corePrice_feature_div .a-offscreen, #corePriceDisplay_desktop_feature_div .a-offscreen, #price_inside_buybox, #priceblock_ourprice, .a-price .a-offscreen')),
@@ -48,6 +73,10 @@ PRODUCT_JS = r"""
     image: img ? (img.getAttribute('data-old-hires') || img.getAttribute('src') || '') : '',
     seller_link: seller ? seller.getAttribute('href') || '' : '', byline: txt(q('#bylineInfo')),
     rows, bsr_links: bsrLinks.slice(0, 20),
+    availability: txt(q('#availability, #outOfStock, #availabilityInsideBuyBox_feature_div')).slice(0, 200),
+    merchant_id: (q('#merchantID, input[name="merchantID"]') || {}).value || '',
+    bullets: txt(q('#feature-bullets')).slice(0, 1500), safety, sds,
+    related: related.map(({el, ...r}) => r), listing,
   };
 }
 """
@@ -72,7 +101,8 @@ REVIEWS_JS = r"""
   return {items, signed_in: acct ? !/sign in/i.test(acct) : null};
 }
 """
-COUNTRY = {'AU': 'australia', 'AE': 'united arab emirates', 'US': 'united states'}     # "Reviewed in Australia on ..."
+COUNTRY = {'AU': 'australia', 'AE': 'united arab emirates', 'US': 'united states', 'GB': 'united kingdom',
+           'DE': 'germany'}                                                                 # "Reviewed in Australia on ..."
 STARS = re.compile(r'(\d(?:[.,]\d)?)\s*out of\s*5', re.I)
 REVIEW_JUNK = re.compile(r'the media could not be loaded\.?|read (?:more|less)\s*$', re.I)
 
@@ -92,6 +122,17 @@ SELLER_JS = r"""
 }
 """
 BRAND_KEYS = ('brand', 'brand name', 'manufacturer')
+FORM_KEYS = ('item form', 'form', 'product form')
+UNAVAILABLE = re.compile(r'currently unavailable|temporarily out of stock|out of stock|not available|derzeit nicht verfügbar',
+                         re.I)
+SAFETY_WORDS = re.compile(r'safety data sheet|\bsds\b|dangerous goods|hazmat|hazardous|flammable|corrosive|\bghs\b|'
+                          r'keep out of reach of children|for external use only|harmful if swallowed|warning', re.I)
+# Carousel headings on a product page -> what the link means (the "customers also bought" graph)
+RELATED = (('fbt', re.compile(r'frequently bought together|bought together', re.I)),
+           ('bought', re.compile(r'customers who bought this (?:item|product) also bought|customers also bought', re.I)),
+           ('viewed', re.compile(r'customers who viewed this (?:item|product) also viewed|customers also viewed|'
+                                 r'compare with similar items', re.I)),
+           ('sponsored', re.compile(r'products related to this item|sponsored', re.I)))
 
 
 RANK = re.compile(r'#?\s*([\d][\d,.]*)\s+in\s+([^#(\n]+?)(?=\s*\(|\s*#|$)', re.I)
@@ -257,6 +298,51 @@ def parse_seller(raw):
             'status': 'ok' if name or detail else 'empty'}
 
 
+def availability(raw):
+    """False when the page says nobody sells it now ("Currently unavailable"), True when it shows a price or a seller,
+    None when it cannot tell."""
+    if UNAVAILABLE.search(raw.get('availability') or ''):
+        return False
+    if ac.parse_price(raw.get('price')) or (raw.get('sold_by') or '').strip():
+        return True
+    return None
+
+
+def safety_signals(raw):
+    """What the page says about safety: its safety lines and a Safety Data Sheet link (dangerous-goods signals)."""
+    out = [m.group(0).lower() for m in SAFETY_WORDS.finditer(raw.get('safety') or '')]
+    if raw.get('sds'):
+        out.append('safety data sheet')
+    return list(dict.fromkeys(out))[:8]
+
+
+def parse_related(blocks, asin=None):
+    """The page's carousels [{'head', 'items': [{'asin', 'title'}]}] -> {'bought' | 'viewed' | 'fbt' | 'sponsored':
+    [{'asin', 'title'}]}; other carousels (Best Sellers, reviews with images...) are left out, and so is the page's own
+    ASIN."""
+    out = {}
+    for b in blocks or []:
+        kind = next((k for k, rx in RELATED if rx.search(b.get('head') or '')), None)
+        if not kind:
+            continue
+        have = {x['asin'] for x in out.get(kind, [])}
+        for it in b.get('items') or []:
+            a = str(it.get('asin') or '').upper()
+            if re.fullmatch(r'[A-Z0-9]{10}', a) and a != asin and a not in have:
+                have.add(a)
+                out.setdefault(kind, []).append({'asin': a, 'title': ' '.join(str(it.get('title') or '').split())[:200]})
+    return out
+
+
+def parse_listing(raw):
+    """What the Listing scorecard compares: images, a video, A+ content, bullet points and the title's length."""
+    li = raw.get('listing') or {}
+    if not li and not raw.get('title'):
+        return None
+    return {'images': int(li.get('images') or 0), 'video': bool(li.get('video')), 'aplus': bool(li.get('aplus')),
+            'bullets': int(li.get('bullets') or 0), 'title_len': len(raw.get('title') or '')}
+
+
 def parse_product(raw, code, today=None):
     """Raw page text -> one product snapshot (numbers only; missing things are None)."""
     from engine import badge
@@ -269,7 +355,9 @@ def parse_product(raw, code, today=None):
     days = ac.delivery_days(delivery, today or config.market_today(code))
     sold_by, ships_from = (raw.get('sold_by') or '')[:120], (raw.get('ships_from') or '')[:120]
     cls = ac.classify({'days': days, 'delivery': delivery, 'prime': 'amazon' in ships_from.lower()})
-    offers = re.search(r'\((\d[\d,]*)\)|(\d[\d,]*)\s+(?:new|offers|options)', raw.get('offers') or '', re.I)
+    otext = raw.get('offers') or ''
+    offers = re.search(r'\bnew\s*\((\d[\d,]*)\)', otext, re.I) or \
+        re.search(r'(\d[\d,]*)\s+(?:new|offers|options)\b', otext, re.I) or re.search(r'\((\d[\d,]*)\)', otext)
     seller = re.search(r'[?&]seller=([A-Za-z0-9]{6,20})', raw.get('seller_link') or '')
     return {
         'title': (raw.get('title') or '')[:300], 'image': raw.get('image') or '',
@@ -278,7 +366,7 @@ def parse_product(raw, code, today=None):
         'badge_low': badge.parse_badge(raw.get('badge')),
         'root_rank': ranks[0][0] if ranks else None, 'root_name': ranks[0][1] if ranks else None,
         'root_node': root_node(raw.get('bsr_links')), 'sub_ranks': [{'rank': r, 'name': n} for r, n in ranks[1:]],
-        'offers': int((offers.group(1) or offers.group(2)).replace(',', '')) if offers else None,
+        'offers': int(offers.group(1).replace(',', '')) if offers else None,
         'buybox_seller': clean_seller(sold_by), 'ships_from': ships_from or None,
         'sold_by_amazon': 1 if 'amazon' in sold_by.lower() else 0,
         'seller_id': seller.group(1).upper() if seller else None, 'fulfillment': fulfillment(sold_by, ships_from),
@@ -289,11 +377,16 @@ def parse_product(raw, code, today=None):
         'pkg_cm': dims, 'pkg_kg': weight,
         'review_items': parse_reviews(raw['review_items'], code) if 'review_items' in raw else None,
         'signed_in': raw.get('signed_in'),
+        'available': availability(raw), 'merchant_id': (raw.get('merchant_id') or '').strip().upper()[:20] or None,
+        'item_form': (_row(rows, FORM_KEYS) or '')[:60] or None, 'bullets': (raw.get('bullets') or '')[:1500],
+        'safety': safety_signals(raw), 'related': parse_related(raw.get('related')), 'listing': parse_listing(raw),
     }
 
 
 def page_status(p):
     """ok when the page had a title and a rank; partial without a rank (layout canary); empty_suspect otherwise."""
+    if p.get('status') == 'missing':
+        return 'missing'
     if not p['title']:
         return 'empty_suspect'
     return 'ok' if p['root_rank'] else 'partial'
@@ -301,14 +394,23 @@ def page_status(p):
 
 async def read_product(checker, asin, code, reviews=False):
     """Open /dp/ASIN in the background browser and read it. With `reviews`, wait for the reviews section too (it can
-    load late), so the reviews it shows are kept."""
+    load late), so the reviews it shows are kept. An ASIN Amazon does not have there comes back with status 'missing'."""
     await checker.start()
     page = await checker.ctx.new_page()
     try:
-        await checker._goto(page, '%s/dp/%s%s' % (ac.MARKETS[code]['site'], asin, '?language=en_AE' if code == 'AE' else ''),
-                            code)
+        http = await checker._goto(page, ac.with_lang('%s/dp/%s' % (ac.MARKETS[code]['site'], asin), code), code)
+        if http == 404:
+            p = parse_product({}, code)
+            p['status'] = 'missing'
+            return p
         try:
             await page.wait_for_selector('#productTitle', timeout=6000)
+        except Exception:
+            pass
+        try:                                             # the "customers also bought" carousels load as they scroll in
+            for _ in range(4):
+                await page.mouse.wheel(0, 1800)
+                await page.wait_for_timeout(350)
         except Exception:
             pass
         if reviews:
@@ -324,14 +426,15 @@ async def read_product(checker, asin, code, reviews=False):
     finally:
         await page.close()
     p = parse_product(raw, code)
+    p['related'] = parse_related(raw.get('related'), asin)
     p['status'] = page_status(p)
     return p
 
 
 def critical_url(code, asin):
     """The listing's 1-3 star reviews on Amazon, most helpful first."""
-    return '%s/product-reviews/%s/?filterByStar=critical&sortBy=helpful&reviewerType=all_reviews%s' % (
-        ac.MARKETS[code]['site'], asin, '&language=en_AE' if code == 'AE' else '')
+    return ac.with_lang('%s/product-reviews/%s/?filterByStar=critical&sortBy=helpful&reviewerType=all_reviews' % (
+        ac.MARKETS[code]['site'], asin), code)
 
 
 async def read_critical_reviews(checker, asin, code):
@@ -355,7 +458,7 @@ async def read_critical_reviews(checker, asin, code):
 
 def seller_url(code, seller_id):
     """A seller's profile page on Amazon (store name, business address, feedback)."""
-    return '%s/sp?seller=%s%s' % (ac.MARKETS[code]['site'], seller_id, '&language=en_AE' if code == 'AE' else '')
+    return ac.with_lang('%s/sp?seller=%s' % (ac.MARKETS[code]['site'], seller_id), code)
 
 
 async def read_seller(checker, seller_id, code):

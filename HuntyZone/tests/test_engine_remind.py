@@ -87,6 +87,19 @@ def test_the_invite_is_a_valid_calendar_request():
     assert 'CN="ahmed@example.com"' in flat and 'LOCATION:https://meet.google.com/x' in flat
 
 
+def test_the_invite_reads_back_for_google_calendar():
+    desc = 'Hi Sara,\n"Sourcing & PO" is due; let\'s meet: 15:00, room 2\\B ' + 'é' * 80
+    s = remind.ics('pc-board-task-7@product-checker', at('2026-10-19', 15), 45, 'Update: meeting; now, ok', desc,
+                   ('Ali: Afa', 'ali@gmail.com'), [('Sara; Khan', 'sara@example.com'), ('', 'ahmed@example.com')],
+                   'https://meet.google.com/x?a=1;b=2', stamp=NOW)
+    ev = remind.read_ics(s)
+    assert ev['start'] == at('2026-10-19', 15) and ev['end'] == at('2026-10-19', 15, 45)
+    assert ev['summary'] == 'Update: meeting; now, ok' and ev['description'] == desc
+    assert ev['location'] == 'https://meet.google.com/x?a=1;b=2' and ev['organizer'] == ('Ali: Afa', 'ali@gmail.com')
+    assert ev['attendees'] == [('Sara; Khan', 'sara@example.com'), ('ahmed@example.com', 'ahmed@example.com')]
+    assert remind.read_ics('')['start'] is None and remind.read_ics('BEGIN:VEVENT\r\nDTSTART:soon\r\n')['start'] is None
+
+
 def test_names_and_days():
     assert remind.join_names(['Sara Khan']) == 'Sara'
     assert remind.join_names(['Sara', 'Ahmed', 'Li Wei']) == 'Sara, Ahmed and Li'

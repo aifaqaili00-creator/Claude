@@ -13,8 +13,13 @@ TARGETS = {
     'AU': {'currency': 'A$', 'price': (25, 70), 'sales': 100, 'reviews': 230},
     'AE': {'currency': 'AED', 'price': (60, 260), 'sales': 50, 'reviews': 115},
     'US': {'currency': 'US$', 'price': (20, 60), 'sales': 300, 'reviews': 300},
+    'GB': {'currency': '£', 'price': (15, 45), 'sales': 100, 'reviews': 300},       # proof markets: Rank a file only
+    'DE': {'currency': '€', 'price': (18, 50), 'sales': 100, 'reviews': 300},
 }
-MARKET_NAMES = {'AU': 'Australia', 'AE': 'UAE', 'US': 'USA'}
+MARKET_NAMES = {'AU': 'Australia', 'AE': 'UAE', 'US': 'USA', 'GB': 'UK', 'DE': 'Germany'}
+NAME_KEYS = (('AU', ('AU_', '_AU', 'AUSTRALIA')), ('AE', ('AE_', '_AE', 'UAE')), ('GB', ('UK_', '_UK', 'GB_', '_GB')),
+             ('DE', ('DE_', '_DE', 'GERMANY')), ('US', ('US_', '_US', 'USA')))
+URL_KEYS = (('amazon.com.au', 'AU'), ('amazon.ae', 'AE'), ('amazon.co.uk', 'GB'), ('amazon.de', 'DE'), ('amazon.com/', 'US'))
 
 # canonical column -> names used by Helium 10 exports (compared after normalising)
 ALIASES = {
@@ -117,18 +122,16 @@ def map_columns(df):
 
 
 def detect_market(df, cols, filename=''):
+    """The marketplace of an export: from its file name, then its product links; Australia when neither says."""
     name = Path(filename).name.upper()
-    for code, keys in (('AU', ('AU_', '_AU', 'AUSTRALIA')), ('AE', ('AE_', '_AE', 'UAE')), ('US', ('US_', '_US', 'USA'))):
+    for code, keys in NAME_KEYS:
         if any(k in name for k in keys):
             return code
     if 'url' in cols:
         urls = ' '.join(df[cols['url']].astype(str).head(20))
-        if 'amazon.com.au' in urls:
-            return 'AU'
-        if 'amazon.ae' in urls:
-            return 'AE'
-        if 'amazon.com/' in urls:
-            return 'US'
+        for site, code in URL_KEYS:
+            if site in urls:
+                return code
     return 'AU'
 
 
@@ -204,7 +207,7 @@ def score(d, T):
 def rank(path, market='auto', top=10):
     """Read the file and return (market, top_df, all_df, summary_text)."""
     mk, d = prepare(path, market)
-    T = TARGETS[mk]
+    T = TARGETS.get(mk, TARGETS['US'])                          # UK / Germany exports use the US targets
     d = score(d, T)
     order = {'Good pick': 0, 'Check first': 1, 'Close': 2, 'Skip': 3}
     d['_o'] = d['verdict'].map(order)

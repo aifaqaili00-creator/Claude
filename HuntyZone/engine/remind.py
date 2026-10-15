@@ -195,3 +195,49 @@ def ics(uid, start, minutes, summary, description, organizer, attendees, locatio
                      % (_param(name or email), email))
     lines += ['END:VEVENT', 'END:VCALENDAR']
     return '\r\n'.join(_fold(x) for x in lines) + '\r\n'
+
+
+def _split_outside_quotes(s, sep):
+    out, cur, quoted = [], '', False
+    for ch in s:
+        if ch == '"':
+            quoted = not quoted
+        if ch == sep and not quoted:
+            out.append(cur)
+            cur = ''
+        else:
+            cur += ch
+    return out + [cur]
+
+
+def _unesc(s):
+    return re.sub(r'\\([\\;,nN])', lambda m: '\n' if m.group(1) in 'nN' else m.group(1), s)
+
+
+def read_ics(text):
+    """The meeting in an invitation made by ics(): {'start', 'end' (unix), 'summary', 'description', 'location',
+    'organizer' (name, email), 'attendees' [(name, email)]}. 'start' is None when the text has no meeting."""
+    out = {'start': None, 'end': None, 'summary': '', 'description': '', 'location': '', 'organizer': ('', ''),
+           'attendees': []}
+    for line in re.sub(r'\r?\n[ \t]', '', str(text or '')).splitlines():
+        parts = _split_outside_quotes(line, ':')
+        if len(parts) < 2:
+            continue
+        head, value = _split_outside_quotes(parts[0], ';'), ':'.join(parts[1:])
+        name = head[0].upper()
+        params = {k.upper(): v.strip('"') for k, _, v in (p.partition('=') for p in head[1:])}
+        if name in ('DTSTART', 'DTEND'):
+            try:
+                ts = int(dt.datetime.strptime(value.strip(), '%Y%m%dT%H%M%SZ').replace(tzinfo=dt.timezone.utc).timestamp())
+            except ValueError:
+                continue
+            out['start' if name == 'DTSTART' else 'end'] = ts
+        elif name in ('SUMMARY', 'DESCRIPTION', 'LOCATION'):
+            out[name.lower()] = _unesc(value)
+        elif name in ('ORGANIZER', 'ATTENDEE'):
+            person = (params.get('CN', ''), re.sub(r'^mailto:', '', value.strip(), flags=re.I))
+            if name == 'ORGANIZER':
+                out['organizer'] = person
+            else:
+                out['attendees'].append(person)
+    return out
