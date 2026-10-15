@@ -1,0 +1,72 @@
+/* Colour, type and shape tokens. Light is the default; <html data-theme> is always set by the page.
+   tests/test_contrast.py checks every text token below for at least 4.5:1 contrast in both themes. */
+:root, :root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f6f7f9;
+  --surface: #ffffff;
+  --sunk: #f1f3f6;
+  --hover: #f7f8fa;
+  --line: #e6e9ee;
+  --line-strong: #d0d5dd;
+  --ink: #101828;
+  --ink-2: #475467;
+  --muted: #5d6679;
+  --accent: #1f63d0;
+  --accent-fill: #1f63d0;
+  --accent-ink: #ffffff;
+  --accent-soft: #eaf1fd;
+  --accent-strong: #174ea6;
+  --accent-ring: rgba(31, 99, 208, .22);
+
+  /* status: only for verdicts, always with an icon or a label */
+  --good: #17b26a; --good-text: #067647; --good-soft: #ecfdf3;
+  --warn: #f79009; --warn-text: #93370d; --warn-soft: #fffaeb;
+  --bad: #f04438;  --bad-text: #b42318;  --bad-soft: #fef3f2;
+  --weak-text: #475467; --weak-soft: #f2f4f7;
+
+  /* chart series (dataviz reference palette, fixed order) */
+  --s-demand: #2a78d6; --s-overseas: #eb6834; --s-local: #1baf7a; --s-4: #eda100;
+  --s-5: #e87ba4; --s-6: #008300; --s-7: #6250d6; --s-8: #e34948; --s-other: #a3a9b4;
+  --grid: #eceef2; --axis: #c3c8d1;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md: 0 4px 12px -2px rgba(16, 24, 40, .08), 0 2px 4px -2px rgba(16, 24, 40, .04);
+  --shadow-lg: 0 12px 32px -6px rgba(16, 24, 40, .18);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0f1115;
+  --surface: #171a21;
+  --sunk: #1f232b;
+  --hover: #1c2028;
+  --line: #2a2f39;
+  --line-strong: #3a404c;
+  --ink: #f0f2f5;
+  --ink-2: #c3c8d1;
+  --muted: #9aa3b2;
+  --accent: #7cb0ff;
+  --accent-fill: #2f6fd6;
+  --accent-ink: #ffffff;
+  --accent-soft: #1b2a45;
+  --accent-strong: #a9cbff;
+  --accent-ring: rgba(124, 176, 255, .30);
+
+  --good: #17b26a; --good-text: #47cd89; --good-soft: #0f2a1d;
+  --warn: #f79009; --warn-text: #fdb022; --warn-soft: #2e2108;
+  --bad: #f04438;  --bad-text: #f97066;  --bad-soft: #331a18;
+  --weak-text: #c3c8d1; --weak-soft: #232831;
+
+  --s-demand: #3987e5; --s-overseas: #d95926; --s-local: #199e70; --s-4: #c98500;
+  --s-5: #d55181; --s-6: #008300; --s-7: #9085e9; --s-8: #e66767; --s-other: #6b7280;
+  --grid: #242932; --axis: #3a404c;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-md: 0 4px 14px -2px rgba(0, 0, 0, .45);
+  --shadow-lg: 0 14px 36px -6px rgba(0, 0, 0, .6);
+}
+:root {
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+  --r-sm: 6px; --r: 8px; --r-lg: 12px;
+}
