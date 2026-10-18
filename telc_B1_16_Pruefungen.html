@@ -43,6 +43,11 @@ button[aria-pressed="true"], .sel { background: var(--accent); color: var(--bg);
 .text { white-space: pre-wrap; }
 .hl { display: grid; grid-template-columns: 2em 1fr; gap: 2px 6px; font-size: .95rem; }
 .adimg { width: 100%; height: auto; border-radius: 6px; display: block; }
+.ftimer { position: fixed; z-index: 10; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; box-shadow: 0 4px 14px rgb(0 0 0 / .18); flex-wrap: nowrap; }
+.ftimer .big { font-size: 1.25rem; }
+.ftimer.low .big { color: var(--bad); }
+.wrap { padding-bottom: 90px; }
 .ads { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
 .ad { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; font-size: .9rem; white-space: pre-wrap; }
 .ad b { color: var(--accent); }
@@ -101,23 +106,31 @@ function wireChoices(root) {
     r.querySelectorAll(".choice").forEach(x => x.setAttribute("aria-pressed", x === b)); r.dataset.ans = b.dataset.v; }));
 }
 function grade(root, items, sec) {
-  let s = 0;
+  let s = 0, pts = 0, max = 0;
+  const P = it => { const id = it.id;
+    if (id.startsWith("l1") || id.startsWith("l2")) return 5;
+    if (id.startsWith("l3")) return 2.5;
+    if (id.startsWith("s")) return 1.5;
+    const n = +id.slice(1); return n <= 45 ? 5 : n <= 55 ? 2.5 : 5; };
   items.forEach(it => {
     const r = root.querySelector(`[data-q="${it.id}"]`), card = root.querySelector(`#c_${it.id}`);
-    const got = r.dataset.ans, ok = got === it.key; if (ok) s++;
+    const got = r.dataset.ans, ok = got === it.key; max += P(it); if (ok) { s++; pts += P(it); }
     card.classList.toggle("ok", ok); card.classList.toggle("bad", !ok);
     let fb = card.querySelector(".fb"); if (!fb) { fb = document.createElement("div"); fb.className = "fb"; card.appendChild(fb); }
     fb.innerHTML = `<b>${ok ? "✓" : "✗"} Lösung: ${esc(it.keyLabel || it.key)}</b> — ${esc(it.why || "")}` + (it.script ? `<div class="script">„${esc(it.script)}"</div>` : "");
   });
-  root.querySelector(".score").textContent = best(sec, s, items.length);
+  const pct = Math.round(pts / max * 100);
+  root.querySelector(".score").innerHTML = best(sec, s, items.length) +
+    `<div style="font-size:1rem">telc points: <b>${pts} / ${max}</b> (${pct} %) · ${pct >= 60 ? "✓ pass level (60 %)" : "✗ below 60 %"}</div>` +
+    `<div class="muted" style="font-size:.85rem;font-family:var(--body)">telc B1: Lesen 75 · Sprachbausteine 30 · Hören 75 · Schreiben 45 = 225 written points; you need 135 (60 %). Lesen 1–2: 5 per item · Lesen 3: 2.5 · Sprachbausteine: 1.5 · Hören 1 + 3: 5 · Hören 2: 2.5.</div>`;
 }
-function timerHTML(min) { return `<div class="row"><button id="tstart">⏱ Start ${min}-min timer</button><span class="big" id="tclock">${min}:00</span></div>`; }
+function timerHTML(min) { return `<div class="row ftimer"><button id="tstart">⏱ Start ${min}-min timer</button><span class="big" id="tclock">${min}:00</span></div>`; }
 let tInt = null;
 function wireTimer(min) {
   const b = $("#tstart"); if (!b) return;
   b.onclick = () => { clearInterval(tInt); let left = min * 60; b.disabled = true;
     tInt = setInterval(() => { left--; const c = $("#tclock"); if (!c) return clearInterval(tInt);
-      c.textContent = `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`; if (left <= 0) { clearInterval(tInt); c.textContent = "Time is up!"; } }, 1000); };
+      c.textContent = `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`; if (left <= 60) c.parentElement.classList.add("low"); if (left <= 0) { clearInterval(tInt); c.textContent = "Time is up!"; } }, 1000); };
 }
 const fill = (t, f) => esc(t).replace(/\[(\d\d)\]/g, (_, n) => f(+n));
 
