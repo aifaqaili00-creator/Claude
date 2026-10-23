@@ -46,6 +46,9 @@ button[aria-pressed="true"], .sel { background: var(--accent); color: var(--bg);
 .ftimer { position: fixed; z-index: 10; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px));
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; box-shadow: 0 4px 14px rgb(0 0 0 / .18); flex-wrap: nowrap; }
 .ftimer .big { font-size: 1.25rem; }
+.hbox { align-items: center; gap: 10px; max-width: min(320px, calc(100vw - 32px)); }
+.hbox .big { font-size: 1.05rem; }
+.replay { font-size: .85rem; padding: 5px 10px; }
 .ftimer.low .big { color: var(--bad); }
 .wrap { padding-bottom: 90px; }
 .ads { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
@@ -105,7 +108,7 @@ function wireChoices(root) {
   root.querySelectorAll("[data-q]").forEach(r => r.querySelectorAll(".choice").forEach(b => b.onclick = () => {
     r.querySelectorAll(".choice").forEach(x => x.setAttribute("aria-pressed", x === b)); r.dataset.ans = b.dataset.v; }));
 }
-function grade(root, items, sec) {
+function grade(root, items, sec, scoreEl) {
   let s = 0, pts = 0, max = 0;
   const P = it => { const id = it.id;
     if (id.startsWith("l1") || id.startsWith("l2")) return 5;
@@ -120,7 +123,7 @@ function grade(root, items, sec) {
     fb.innerHTML = `<b>${ok ? "✓" : "✗"} Lösung: ${esc(it.keyLabel || it.key)}</b> — ${esc(it.why || "")}` + (it.script ? `<div class="script">„${esc(it.script)}"</div>` : "");
   });
   const pct = Math.round(pts / max * 100);
-  root.querySelector(".score").innerHTML = best(sec, s, items.length) +
+  (scoreEl || root.querySelector(".score")).innerHTML = best(sec, s, items.length) +
     `<div style="font-size:1rem">telc points: <b>${pts} / ${max}</b> (${pct} %) · ${pct >= 60 ? "✓ pass level (60 %)" : "✗ below 60 %"}</div>` +
     `<div class="muted" style="font-size:.85rem;font-family:var(--body)">telc B1: Lesen 75 · Sprachbausteine 30 · Hören 75 · Schreiben 45 = 225 written points; you need 135 (60 %). Lesen 1–2: 5 per item · Lesen 3: 2.5 · Sprachbausteine: 1.5 · Hören 1 + 3: 5 · Hören 2: 2.5.</div>`;
 }
@@ -192,7 +195,7 @@ function wait(T, sec, label) {
   return new Promise(res => { let left = sec;
     const tick = () => { if (T.stop) return res(); const st = $("#hstat"); if (st) st.textContent = `${label}: ${left} s`; if (left-- <= 0) return res(); setTimeout(tick, 1000); }; tick(); });
 }
-function stopAudio() { run.stop = true; if ("speechSynthesis" in window) speechSynthesis.cancel(); clearInterval(tInt); }
+function stopAudio() { run.stop = true; stopClock(); if ("speechSynthesis" in window) speechSynthesis.cancel(); clearInterval(tInt); }
 function mark(ns) { document.querySelectorAll(".now").forEach(x => x.classList.remove("now")); ns.forEach(n => { const c = $("#c_h" + n); if (c) { c.classList.add("now"); } }); if (ns.length) { const c = $("#c_h" + ns[0]); c && c.scrollIntoView({ block: "center", behavior: "smooth" }); } }
 const status = t => { const s = $("#hstat"); if (s) s.textContent = t; };
 
@@ -221,29 +224,70 @@ async function runPart(T, e, p) {
   }
 }
 async function runListen(parts) {
-  stopAudio(); const T = run = { stop: false };
+  stopAudio(); const T = run = { stop: false }; startClock();
   await new Promise(r => setTimeout(r, 150));
   const e = EXAMS[cur];
   for (const p of parts) { if (T.stop) break; await runPart(T, e, p); }
-  if (!T.stop) { status("Finished. Press Check answers."); mark([]); }
+  if (!T.stop) { status("Finished – verify each Teil"); mark([]); stopClock(); }
 }
+
+// Practice replay of one item. Part 2: the question/answer pair that best matches the statement.
+function interviewPart(e, n) {
+  // Rare words in the statement count more; items follow the order of the interview, so stay near the expected position.
+  const items = e.hoeren2.items, k = items.findIndex(x => x.n === n), L = e.hoeren2.lines, N = L.length;
+  const low = L.map(l => l[1].toLowerCase()), words = [...new Set(items[k].s.toLowerCase().match(/[a-zäöüß]{4,}/g) || [])];
+  const expected = (k + 0.5) / items.length * N;
+  let best = -1e9, bi = 0;
+  for (let i = 0; i < N; i++) {
+    const txt = low[i] + " " + (low[i + 1] || "");
+    let sc = words.reduce((a, w) => txt.includes(w) ? a + 1 / low.filter(t => t.includes(w)).length : a, 0);
+    sc -= 1.5 * Math.abs(i - expected) / N;
+    if (sc > best) { best = sc; bi = i; }
+  }
+  return L.slice(Math.max(0, bi - 1), bi + 3);
+}
+async function replayItem(e, n) {
+  stopAudio(); const T = run = { stop: false }; startClock();
+  await new Promise(r => setTimeout(r, 150)); mark([n]);
+  const x = [...e.hoeren1, ...e.hoeren3].find(y => y.n === n);
+  status(`Replay ${n}`);
+  if (x) await say(T, x.t);
+  else for (const [w, t] of interviewPart(e, n)) { if (T.stop) break; await say(T, t, w); }
+  if (!T.stop) { status("Replay finished"); stopClock(); }
+}
+let clockInt = null, clockStart = 0;
+function startClock() { clearInterval(clockInt); clockStart = Date.now();
+  clockInt = setInterval(() => { const el = $("#helapsed"); if (!el) return clearInterval(clockInt);
+    const t = Math.floor((Date.now() - clockStart) / 1000); el.textContent = `Total ${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; }, 1000); }
+function stopClock() { clearInterval(clockInt); }
 
 R.h = e => {
   const all = [...e.hoeren1.map(x => ({...x, script:x.t})), ...e.hoeren2.items, ...e.hoeren3.map(x => ({...x, script:x.t}))];
-  const card = x => `<div class="card" id="c_h${x.n}"><div><span class="num">${x.n}</span><b>${esc(x.s)}</b></div>${choices("h"+x.n, ["r","f"], v => v === "r" ? "richtig" : "falsch")}</div>`;
+  const items = all.map(x => ({ id:"h"+x.n, n:x.n, key:x.a, why:x.e, script:x.script, keyLabel: x.a === "r" ? "richtig" : "falsch" }));
+  const card = (x, replay) => `<div class="card" id="c_h${x.n}"><div><span class="num">${x.n}</span><b>${esc(x.s)}</b></div>${choices("h"+x.n, ["r","f"], v => v === "r" ? "richtig" : "falsch")}
+    <div class="row"><button class="replay" data-n="${x.n}">↻ ${replay}</button></div></div>`;
+  const verify = p => `<div class="row"><button class="primary verify" data-p="${p}">✓ Verify Teil ${p}</button></div><div class="score" id="hs${p}" aria-live="polite"></div>`;
   const dialog = e.hoeren2.lines.map(([w,t]) => `${e.hoeren2.speakers["ABC".indexOf(w)] || w}: ${t}`).join("\n");
   return { html: `<h2>Hörverstehen</h2>
-   <div class="rules">Like the real exam: spoken instructions, 30 s / 60 s reading time, Part 1 once, Parts 2 and 3 twice. Do not stop. Speed:
+   <div class="rules">Like the real exam: spoken instructions, 30 s / 60 s reading time, Part 1 once, Parts 2 and 3 twice. In the exam you cannot replay – use <b>↻</b> only for practice after you have answered. Speed:
     <select id="speed"><option value="0.75">very slow</option><option value="0.85">slower</option><option value="0.95" selected>exam speed</option><option value="1.05">faster</option></select></div>
-   <div class="row"><button class="primary" id="hall">▶ Full listening exam</button><button id="hp1">Teil 1</button><button id="hp2">Teil 2</button><button id="hp3">Teil 3</button><button id="hstop">■ Stop</button></div>
-   <div class="big" id="hstat" aria-live="polite">Ready</div>
+   <div class="row"><button class="primary" id="hall">▶ Full listening exam</button><button id="hp1">Teil 1</button><button id="hp2">Teil 2</button><button id="hp3">Teil 3</button></div>
    ${!voices.length ? `<div class="rules">If you hear no German voice, add a German voice in your device's text-to-speech settings.</div>` : ""}
-   <h3>Teil 1 (41–45) · once</h3>${e.hoeren1.map(card).join("")}
-   <h3>Teil 2 (46–55) · twice</h3><div class="muted">${esc(e.hoeren2.intro || "")}</div>${e.hoeren2.items.map(card).join("")}
-   <h3>Teil 3 (56–60) · twice</h3>${e.hoeren3.map(card).join("")}
-   <details class="card"><summary>Interview transcript (after the test)</summary><div class="script">${esc(dialog)}</div></details>`,
-   items: all.map(x => ({ id:"h"+x.n, key:x.a, why:x.e, script:x.script, keyLabel: x.a === "r" ? "richtig" : "falsch" })),
-   after() { $("#hall").onclick = () => runListen([1,2,3]); [1,2,3].forEach(p => $("#hp"+p).onclick = () => runListen([p])); $("#hstop").onclick = () => { stopAudio(); status("Stopped"); }; } };
+   <h3>Teil 1 (41–45) · once</h3>${e.hoeren1.map(x => card(x, "Replay this text")).join("")}${verify(1)}
+   <h3>Teil 2 (46–55) · twice</h3><div class="muted">${esc(e.hoeren2.intro || "")}</div>${e.hoeren2.items.map(x => card(x, "Replay this part of the interview")).join("")}${verify(2)}
+   <h3>Teil 3 (56–60) · twice</h3>${e.hoeren3.map(x => card(x, "Replay this text")).join("")}${verify(3)}
+   <details class="card"><summary>Interview transcript (after the test)</summary><div class="script">${esc(dialog)}</div></details>
+   <div class="ftimer hbox"><div><div class="big" id="hstat" aria-live="polite">Ready</div><div class="muted" id="helapsed">Total 0:00</div></div><button id="hstop" aria-label="Stop">■</button></div>`,
+   items,
+   after() {
+     $("#hall").onclick = () => runListen([1,2,3]); [1,2,3].forEach(p => $("#hp"+p).onclick = () => runListen([p]));
+     $("#hstop").onclick = () => { stopAudio(); status("Stopped"); };
+     const v = $("#view");
+     v.querySelectorAll(".verify").forEach(b => b.onclick = () => {
+       const p = +b.dataset.p, part = items.filter(it => p === 1 ? it.n <= 45 : p === 2 ? it.n >= 46 && it.n <= 55 : it.n >= 56);
+       grade(v, part, "h" + p, $("#hs" + p)); });
+     v.querySelectorAll(".replay").forEach(b => b.onclick = () => replayItem(e, +b.dataset.n));
+   } };
 };
 
 R.w = e => { const d = e.schreiben, key = "b1letter" + cur;
