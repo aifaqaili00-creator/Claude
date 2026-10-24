@@ -567,7 +567,7 @@ def test_the_board_routes_check_their_input_and_never_show_the_password(server, 
     assert call(server, 'POST', '/api/board/add', {**bed, 'alibaba': 'javascript:alert(1)'})[0] == 400
     st, _, raw = call(server, 'POST', '/api/board/add', {**bed, 'alibaba': 'https://www.alibaba.com/product-detail/bed.html'})
     cid = json.loads(raw)['id']
-    assert json.loads(raw)['moved'] == 'approval'
+    assert json.loads(raw)['moved'] == 'precheck'
     b = json.loads(call(server, 'GET', '/api/board')[2])
     assert st == 200 and b['cards'][0]['id'] == cid and b['mail']['ready'] is False
     st, _, raw = call(server, 'POST', '/api/board/line', {'id': cid, 'n': 1, 'market': 'US', 'set': {'ship_mode': 'boat'}})
@@ -661,7 +661,7 @@ def test_inform_attendees_previews_and_sends_the_product_update(server, monkeypa
         st, _, raw = call(server, 'POST', '/api/board/inform', {'to': [li], 'message': 'Quotes by Friday'})
         assert st == 200 and json.loads(raw)['to'] == ['Li Wei'] and sent[-1]['To'] == 'Li Wei <li@example.com>'
         body = sent[-1].get_body(('plain',)).get_content()
-        assert 'Yoga Mat' in body and 'Quotes by Friday' in body and 'Search on Alibaba' in body
+        assert 'Yoga Mat' in body and 'Quotes by Friday' in body and 'Alibaba search https://www.alibaba.com' in body
         st, _, raw = call(server, 'POST', '/api/board/inform', {'to': []})
         assert st == 400 and 'Pick who' in json.loads(raw)['error']
         assert json.loads(call(server, 'GET', '/api/board')[2])['inform']['to'] == ['Li Wei']
@@ -726,3 +726,20 @@ def test_market_gaps_page_import_and_export(server, tmp_path):
     assert {t['type'] for t in d['types']} >= {'global_store', 'amazon_then_gap'}
     st, ct, body = call(server, 'POST', '/api/export', {'kind': 'mgaps', 'market': 'AU'})
     assert st == 200 and 'spreadsheet' in ct and body[:2] == b'PK'
+
+
+def test_out_of_stock_tab(server):
+    st, _, body = call(server, 'GET', '/api/stock')
+    d = json.loads(body)
+    assert st == 200 and d['rows'] == [] and d['max_sellers'] == 4 and 'auto' in d
+
+
+def test_the_app_comes_back_on_the_same_port():
+    """An app window left open from before finds the restarted app again (and reloads itself) only on the same port."""
+    import socket
+    p = app.free_port()
+    assert app.free_port(p) == p                                       # free: used again
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', p))
+        assert app.free_port(p) != p                                   # taken: any other free one
+    assert app.free_port(None) > 0

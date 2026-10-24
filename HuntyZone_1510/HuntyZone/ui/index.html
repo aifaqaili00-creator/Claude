@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/ui/css/tokens.css">
 <link rel="stylesheet" href="/ui/css/app.css">
 <link rel="stylesheet" href="/ui/css/board.css">
+<link rel="stylesheet" href="/ui/css/dashboard.css">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -91,7 +92,7 @@
       <div><b>Product Checker</b><span>Amazon AU · UAE · US</span></div>
     </div>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="#/home" data-view="home" title="Home"><svg class="icon"><use href="#i-home"/></svg><span>Home</span><b class="count" id="alertCount" hidden></b></a>
+      <a href="#/home" data-view="home" title="Dashboard"><svg class="icon"><use href="#i-home"/></svg><span>Dashboard</span><b class="count" id="alertCount" hidden></b></a>
       <div class="grp">1 · Find ideas</div>
       <a href="#/ideas" data-view="ideas" title="Product ideas"><svg class="icon"><use href="#i-bulb"/></svg><span>Product ideas</span></a>
       <a href="#/radar" data-view="radar" title="Trend radar"><svg class="icon"><use href="#i-radar"/></svg><span>Trend radar</span></a>
@@ -130,6 +131,10 @@
 
   <div class="maincol">
     <header class="topbar">
+      <div class="lost-banner" id="lostBanner" hidden role="alert"><b>This window lost the connection to Product Checker</b> (it was restarted or
+        closed). It reconnects by itself when the app is back; if it does not within a minute, close this window and open Product Checker
+        from the desktop shortcut.</div>
+      <button type="button" class="btn ghost slim noprint" id="btnBack" hidden title="Back to where you were (Alt + ←)" aria-label="Back">← Back</button>
       <div class="ttl"><h1 id="pageTitle">Check sellers</h1><div class="small" id="pageSub"></div></div>
       <div class="status" id="status"></div>
       <div class="row">
@@ -225,7 +230,7 @@
               <button class="btn primary" id="mgRun" title="Read Amazon Australia and the UAE now: Best Sellers of your categories, then the next open niches"><svg class="icon sm"><use href="#i-refresh"/></svg>Refresh AU &amp; UAE</button></div>
           </div>
           <div class="itabs" role="tablist" id="mgTabs" aria-label="Views">
-            <button type="button" role="tab" data-tab="niches" aria-selected="true">Niches</button><button type="button" role="tab" data-tab="live" aria-selected="false">Best Sellers now</button>
+            <button type="button" role="tab" data-tab="products" aria-selected="false">Products to sell</button><button type="button" role="tab" data-tab="stock" aria-selected="false">Out of stock</button><button type="button" role="tab" data-tab="niches" aria-selected="true">Niches</button><button type="button" role="tab" data-tab="live" aria-selected="false">Best Sellers now</button>
             <button type="button" role="tab" data-tab="missing" aria-selected="false">Brands missing here</button><button type="button" role="tab" data-tab="sellers" aria-selected="false">Top sellers</button>
           </div>
           <div class="row" id="mgFilters">
@@ -259,7 +264,7 @@
               <button type="button" role="tab" data-tab="related">Related products</button><button type="button" role="tab" data-tab="ads">Ad watch</button>
               <button type="button" role="tab" data-tab="scorecard">Listing scorecard</button>
             </div>
-            <div class="seg" id="iMk" role="group" aria-label="Market"><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button><button type="button" data-v="US" aria-pressed="false">USA</button></div>
+            <div class="seg" id="intelMk" role="group" aria-label="Market"><button type="button" data-v="AU" aria-pressed="true">Australia</button><button type="button" data-v="AE" aria-pressed="false">UAE</button><button type="button" data-v="US" aria-pressed="false">USA</button></div>
           </div>
           <div id="iMeans"></div>
         </div>
@@ -592,6 +597,8 @@
             <div class="field"><label for="profile">Open links in this Chrome profile</label>
               <div class="row"><select id="profile" style="flex:1; min-width:0"></select><button class="btn" id="btnProfiles">Refresh</button></div>
             </div>
+            <div class="field"><label for="openLinks">Amazon, Alibaba and other links open</label>
+              <select id="openLinks"><option value="app">From this app (fast, always in front)</option><option value="profile">In my Chrome profile above (with my logins)</option></select></div>
             <div class="row"><button class="btn" id="btnTestProfile">Open Helium 10 in this profile<svg class="icon sm"><use href="#i-external"/></svg></button></div>
             <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">Helium 10, product pages and searches open in this profile, with your logins and the Helium 10 extension.
             The automatic checks use a separate background browser, because Chrome does not let automation tools control your everyday profile.</div></details>
@@ -640,6 +647,7 @@
             <label class="small"><input type="checkbox" data-set="auto_refresh"> Refresh watched keywords, Amazon lists and Google Trends automatically</label>
             <label class="small adv"><input type="checkbox" data-set="auto_qualify"> Fill in what the radar’s top products miss once a day (search phrase, Google Trends, product page, a search in Australia / UAE)</label>
             <label class="small"><input type="checkbox" data-set="keep_running"> Keep refreshing after I close the window</label>
+            <label class="small"><input type="checkbox" data-set="update_check"> Tell me when a newer Product Checker is published (checked once a day on GitHub)</label>
             <label class="small"><input type="checkbox" data-set="start_with_windows"> Start with Windows (in the background)</label>
             <label class="small adv"><input type="checkbox" data-set="pause_on_battery"> Pause on battery</label>
             <label class="small adv"><input type="checkbox" data-set="trends_enabled"> Use Google Trends</label>
@@ -658,6 +666,9 @@
             <h2>Gap Finder</h2>
             <label class="small"><input type="checkbox" data-set="gap_auto"> Look for gaps every day with the automatic refresh</label>
             <label class="small"><input type="checkbox" data-set="mg_auto"> Re-check Market Gaps niches every day with the automatic refresh</label>
+            <label class="small"><input type="checkbox" data-set="oos_auto"> Watch booming and brand-new products for stock-outs every day (Market Gaps → Out of stock)</label>
+            <label class="small">Out of stock: show products that ran out with at most <input type="number" data-set="oos_max_sellers" min="1" max="20" style="width:64px" aria-label="Most sellers of an out-of-stock product"> sellers</label>
+            <label class="small">Market Gaps: a product counts when at most <input type="number" data-set="mg_max_sellers" min="1" max="20" style="width:64px" aria-label="Most sellers of a product"> listings sell it</label>
             <div class="field"><span class="lbl">“Sells well” means at least this many sold a month</span>
               <div class="row">
                 <div class="field"><label for="setProofUS">USA</label><input type="number" id="setProofUS" data-set="proof_us" min="10" max="100000" style="width:100px"></div>

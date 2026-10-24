@@ -48,3 +48,20 @@ def test_dark_theme_contrast():
 def test_both_themes_define_the_same_colours():
     light, dark = tokens(':root, :root[data-theme="light"]'), tokens(':root[data-theme="dark"]')
     assert set(light) == set(dark)
+
+
+
+def test_the_sidebar_is_readable_in_both_themes():
+    """dashboard.css redefines the colour tokens inside the sidebar (Visual Studio light, dark navy): its text must reach
+    4.5:1 there too, in both palettes."""
+    css = (Path(__file__).resolve().parents[1] / 'ui' / 'css' / 'dashboard.css').read_text(encoding='utf-8')
+    for sel in ('\n.side {', ':root[data-theme="dark"] .side {'):
+        start = css.index(sel)
+        side = dict(re.findall(r'--([\w-]+):\s*(#[0-9a-fA-F]{6})', css[css.index('{', start) + 1:css.index('}', start)]))
+        pairs = [(t, b) for t in TEXT for b in BACKGROUNDS] + [('good-text', 'good-soft'), ('warn-text', 'warn-soft'),
+                 ('weak-text', 'weak-soft'), ('accent-strong', 'accent-soft'), ('grp', 'page'), ('ink', 'current'),
+                 ('accent', 'current')]
+        bad = [(sel, t, b, round(contrast(side[t], side[b]), 2)) for t, b in pairs if contrast(side[t], side[b]) < 4.5]
+        assert not bad
+    for fill in ('#005fb8', '#2f6fd6'):                                    # white on the accent fill (buttons, badges)
+        assert contrast('#ffffff', fill) >= 4.5

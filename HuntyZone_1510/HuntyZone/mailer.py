@@ -29,6 +29,10 @@ MAX_TO = 20                     # recipients per email, Bcc included
 MAX_PER_HOUR = 50
 TIMEOUT = 30
 BODY_MAX = 6000                 # longer bodies are cut: browsers and webmail limit the length of a link
+URL_MAX = 7000                  # ... and so is the whole link once encoded (Gmail answers "400 Bad Request" above about 8,000)
+CUT_NOTE = '\n\n[... cut: the full text is in Product Checker]'
+CLIP_NOTE = ('\n\n[... the rest did not fit in an email link. The whole email is on your clipboard: click in this message, '
+             'press Ctrl+A, then Ctrl+V, then Send.]')
 OUTLOOK_DOMAINS = ('outlook.', 'hotmail.', 'live.', 'msn.com', 'windowslive.com')
 CALENDAR_URL = 'https://calendar.google.com/calendar/render'
 OFF_SWITCH = 'PC_NO_EMAIL'
@@ -128,35 +132,86 @@ def web_service(settings, profile=None):
     return 'gmail'
 
 
-def _cut(text):
+class Link(str):
+    """A compose or calendar link; .cut is True when the text had to be shortened to fit in it."""
+    cut = False
+
+
+def _link(url, cut):
+    out = Link(url)
+    out.cut = cut
+    return out
+
+
+BODY_SAFE = '/:'                 # kept as they are in a link's text: web addresses in an email stay short
+
+
+def _enc(s):
+    return len(quote(s, safe=BODY_SAFE))
+
+
+def _fit(text, room, note=CUT_NOTE):
+    """(body, cut): the text, or as much of it as fits in `room` characters once encoded for a link, cut after a whole
+    paragraph (a product of the update, a line of the deadlines), with the note saying so."""
     body = str(text or '')
-    if len(body) > BODY_MAX:
-        body = body[:BODY_MAX].rstrip() + '\n\n[... cut: the full text is in Product Checker]'
-    return body
+    if len(body) <= BODY_MAX and _enc(body) <= room:
+        return body, False
+    room -= _enc(note)
+    out = ''
+    for para in body.split('\n\n'):
+        cand = out + '\n\n' + para if out else para
+        if len(cand) > BODY_MAX or _enc(cand) > room:
+            break
+        out = cand
+    if not out:                                         # one long paragraph: as many characters as fit
+        lo, hi = 0, min(len(body), BODY_MAX)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            lo, hi = (mid, hi) if _enc(body[:mid]) <= room else (lo, mid - 1)
+        out = body[:lo]
+    return out.rstrip() + note, True
 
 
-def compose_url(service, to, subject, text, bcc=None, account=''):
-    """A link that opens a new email, filled in, in Gmail or Outlook on the web (Gmail in `account`, when given)."""
+def _cut(text):
+    return _fit(text, URL_MAX)[0]
+
+
+def copy_text(text):
+    """Put the text on the clipboard (Windows). True when it worked."""
+    import subprocess
+    try:
+        subprocess.run(['clip'], input=str(text).encode('utf-16'), check=True, timeout=10,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def compose_url(service, to, subject, text, bcc=None, account='', note=CUT_NOTE):
+    """A link that opens a new email, filled in, in Gmail or Outlook on the web (Gmail in `account`, when given). The
+    whole link stays under URL_MAX characters: a longer text is cut after a whole paragraph, with `note` (link.cut)."""
     to_s = ','.join(e for _, e in to or [])
     bcc_s = ','.join(e for _, e in bcc or [])
-    body = _cut(text)
     subject = re.sub(r'[\r\n]+', ' ', str(subject or ''))[:200]
     if service in ('outlook', 'office'):
         base = ('https://outlook.office.com/mail/deeplink/compose' if service == 'office'
                 else 'https://outlook.live.com/mail/0/deeplink/compose')
-        q = {'to': to_s, 'subject': subject, 'body': body}
+        q = {'to': to_s, 'subject': subject}
         if bcc_s:
             q['bcc'] = bcc_s
-        return base + '?' + urlencode(q, quote_via=quote)
-    q = {'view': 'cm', 'fs': '1', 'tf': '1', 'to': to_s, 'su': subject, 'body': body}
-    if bcc_s:
-        q['bcc'] = bcc_s
-    if account:
-        q['authuser'] = account
-    return 'https://mail.google.com/mail/?' + urlencode(q, quote_via=quote)
+    else:
+        base = 'https://mail.google.com/mail/'
+        q = {'view': 'cm', 'fs': '1', 'tf': '1', 'to': to_s, 'su': subject}
+        if bcc_s:
+            q['bcc'] = bcc_s
+        if account:
+            q['authuser'] = account
+    head = base + '?' + urlencode(q, quote_via=quote)
+    body, cut = _fit(text, URL_MAX - len(head) - len('&body='), note)
+    return _link(head + '&body=' + quote(body, safe=BODY_SAFE), cut)
 
 
-def calendar_url(event, guests, account=''):
+def calendar_url(event, guests, account='', note=CUT_NOTE):
     """A link that opens a new Google Calendar event, filled in, with the guests added (Calendar of `account`, when
     given). event: read_ics() of the invite. You press Save and Google emails the guests the invitation."""
     def utc(ts):
@@ -164,14 +219,16 @@ def calendar_url(event, guests, account=''):
     start = int(event['start'])
     end = int(event.get('end') or start + 30 * 60)
     q = {'action': 'TEMPLATE', 'text': re.sub(r'[\r\n]+', ' ', str(event.get('summary') or ''))[:200],
-         'dates': '%s/%s' % (utc(start), utc(end)), 'details': _cut(event.get('description'))}
+         'dates': '%s/%s' % (utc(start), utc(end))}
     if event.get('location'):
         q['location'] = str(event['location'])[:300]
     if guests:
         q['add'] = ','.join(guests)
     if account:
         q['authuser'] = account
-    return CALENDAR_URL + '?' + urlencode(q, quote_via=quote)
+    head = CALENDAR_URL + '?' + urlencode(q, quote_via=quote)
+    details, cut = _fit(event.get('description'), URL_MAX - len(head) - len('&details='), note)
+    return _link(head + '&details=' + quote(details, safe=BODY_SAFE), cut)
 
 
 def where(settings, profiles=None):
@@ -269,9 +326,10 @@ def _rate(now):
         _sent.append(now)
 
 
-def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now=None, ics=None):
+def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now=None, ics=None, copier=None):
     """Open the email, filled in, in your browser profile's Gmail or Outlook; you press Send. With Gmail, a meeting
-    (ics) opens as a Google Calendar event with the guests added instead; you press Save. Returns the link."""
+    (ics) opens as a Google Calendar event with the guests added instead; you press Save. Returns the link. When the
+    text is too long for a link, it is cut there and the whole text goes on the clipboard (link.pasted) to paste over it."""
     if not to:
         raise MailError('Nobody to send to.')
     for _, e in to:
@@ -284,9 +342,16 @@ def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now
     account = google_account(settings, p) if service == 'gmail' else ''
     event = remind.read_ics(ics) if ics and service == 'gmail' else None
     if event and event['start']:
-        url = calendar_url(event, [e for _, e in to], account)
+        make = lambda note: calendar_url(event, [e for _, e in to], account, note)  # noqa: E731
+        full = event.get('description')
     else:
-        url = compose_url(service, to, subject, text, account=account)
+        make = lambda note: compose_url(service, to, subject, text, account=account, note=note)  # noqa: E731
+        full = text
+    url = make(CUT_NOTE)
+    pasted = bool(url.cut) and (copier or copy_text)(str(full or ''))
+    if pasted:
+        url = make(CLIP_NOTE)
+    url.pasted = pasted
     try:
         (opener or cp.open_url)(url, p.get('id', ''))
     except OSError as e:
@@ -294,11 +359,19 @@ def open_in_browser(settings, to, subject, text, opener=None, profiles=None, now
     return url
 
 
+class Done(str):
+    """deliver()'s outcome; .pasted is True when the email was too long for its link and the whole text was put on
+    the clipboard to paste."""
+    pasted = False
+
+
 def outcome(result):
     """What deliver() did: 'calendar' (a Google Calendar event opened), 'opened' (an email opened) or 'sent'."""
     if isinstance(result, str):
-        return 'calendar' if result.startswith(CALENDAR_URL) else 'opened'
-    return 'sent'
+        out = Done('calendar' if result.startswith(CALENDAR_URL) else 'opened')
+        out.pasted = bool(getattr(result, 'pasted', False))
+        return out
+    return Done('sent')
 
 
 def deliver(settings, path, to, subject, text, html=None, ics=None, transport=None, opener=None):

@@ -3,10 +3,14 @@
 function icon(name, cls = 'sm') { return `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`; }
 
 function toast(msg, ms = 5000) {
-  const box = $('toasts'), t = document.createElement('div');
-  t.className = 'toast'; t.textContent = msg;
+  if (typeof pageLog === 'function') pageLog('shown', msg);
+  const box = $('toasts'), text = String(msg).replace(/\s*\((?:page saved to )?[A-Z]:\\[^)]*\)/g, '');   // no file paths
+  const same = [...box.children].find(t => t.textContent === text);
+  if (same) same.remove();                                     // the same message again: shown once, newest
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = text;
   box.appendChild(t); setTimeout(() => { t.remove(); raiseToasts(); }, ms);
-  while (box.children.length > 4) box.firstChild.remove();
+  while (box.children.length > 3) box.firstChild.remove();
   raiseToasts();
 }
 /* An open dialog covers everything, so the toast box is a popover, shown again on top whenever its toasts change. */
@@ -44,6 +48,25 @@ async function addToBoard(item) {
     return r;
   } catch (e) { toast(e.message); return null; }
 }
+
+/* Shortlist: Alibaba opens at once (your click allows it), the listing is read, the most you can pay your supplier is
+   worked out and the product goes on the board with these numbers as its first note. item = {market, asin, title, kw,
+   image, source}. */
+async function shortlist(item, btn) {
+  const words = (item.title || item.kw || '').split(/\s+/).slice(0, 6).join(' ');
+  if (words) openUrl(alibabaUrl(words));
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin" style="width:11px;height:11px"></span>Shortlisting…'; }
+  try {
+    const {job} = await api('/api/shortlist', item);
+    const r = await waitJob(job);
+    toast(r.summary, 16000);
+    if (btn) btn.innerHTML = icon('ok') + 'On the board';
+  } catch (e) {
+    toast(e.message);
+    if (btn) { btn.disabled = false; btn.innerHTML = icon('board') + 'Shortlist'; }
+  }
+}
+const shortlistBtn = (attr, tip) => `<button class="btn slim primary" ${attr} title="${esc(tip || 'Read the listing, work out the most you can pay your supplier, open Alibaba and put it on your board')}">${icon('board')}Shortlist</button>`;
 
 /* Delivery level -> status style. Status colours always come with a label. */
 const LEVEL = {opportunity: 'good', some: 'warn', crowded: 'bad', none: 'weak', error: 'weak'};

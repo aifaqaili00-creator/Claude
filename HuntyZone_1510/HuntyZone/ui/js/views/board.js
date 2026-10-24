@@ -2,8 +2,9 @@
 /* Product board (#/board, #/board/<id>): your products from Idea to Approval, Sourcing & PO, Launching strategy and
    Re-order, with trophies, deadlines and the reminder emails they send. Also binds Settings, Email for reminders. */
 (() => {
-  const STAGES = [['idea', 'Idea'], ['approval', 'Approval'], ['sourcing', 'Sourcing & PO'], ['launch', 'Launching strategy'], ['reorder', 'Re-order']];
+  const STAGES = [['idea', 'Idea'], ['precheck', 'Pre-check'], ['approval', 'Approval'], ['sourcing', 'Sourcing & PO'], ['launch', 'Launching strategy'], ['reorder', 'Re-order']];
   const STAGE = Object.fromEntries(STAGES);
+  const STEPS = STAGES.filter(([k]) => k !== 'precheck');   // Pre-check is a holding column: no checks, tab or progress of its own
   const COLORS = ['blue', 'violet', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'gray'];
   const STATUS = [['todo', 'To check'], ['done', 'Done'], ['adjusted', 'Changed'], ['skip', 'Not relevant']];
   const KIND = {start: 'New task email', reminder: 'Reminder', meeting: 'Meeting invite'};
@@ -11,7 +12,8 @@
     listing: 'Listing', timing: 'Timing', sales: 'Sales target', trend: 'Search trend', search: 'Research', own: 'Your own'};
   const STEP = [['deposit', 'Deposit paid'], ['produced', 'Produced'], ['shipped', 'Shipped'], ['arrived', 'Arrived']];
   const EMPTY = {idea: 'New products start here. Use Add product, or Add to board on the Trend radar or in a report.',
-    approval: 'Products move here once they have an Amazon ASIN and an Alibaba link.',
+    precheck: 'Products move here once they have an Amazon ASIN and an Alibaba link. Drag them on to Approval when the pre-check is done.',
+    approval: 'Drag products here from Pre-check (they need the Amazon ASIN and the Alibaba link).',
     sourcing: 'Products move here once every approval check is ticked.',
     launch: 'Products move here when their order is complete.', reorder: 'Products move here once they are live on Amazon.'};
   const LOCKED = {approval: 'Locked: add the Amazon ASIN and the Alibaba link first', sourcing: 'Locked: tick every approval check first',
@@ -199,9 +201,9 @@
     return `<article class="bcard c-${esc(c.color)}${c.late ? ' is-late' : ''}${editing ? ' editing' : ''}" draggable="${!editing}" data-card="${c.id}" data-pos="${c.pos}" tabindex="0" aria-label="${esc(c.title)}, ${esc(STAGE[c.stage])}${cd ? ', ' + esc(cd.text) : ''}">
       ${quickActs(c)}
       <div class="bc-top">${c.image ? `<img src="${esc(c.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="bc-noimg" aria-hidden="true">${icon('box')}</div>`}
-        <div class="bc-txt"><div class="bc-key">${esc(c.key)} · ${mkFlag(c.market, true)}${won ? ` <span class="bc-trophy" title="${won} ${won === 1 ? 'trophy' : 'trophies'}">${icon('trophy')}${won > 1 ? won : ''}</span>` : ''}</div><div class="bc-title">${esc(c.title)}</div></div>
+        <div class="bc-txt"><div class="bc-key">${esc(c.key)} · ${(c.markets || []).length > 1 ? `<span class="bc-mks" title="${esc(c.markets.map(m => MK[m.market] || m.market).join(' · '))}">${c.markets.map(m => cflag(m.market, '')).join('')}</span>` : mkFlag(c.market, true)}${won ? ` <span class="bc-trophy" title="${won} ${won === 1 ? 'trophy' : 'trophies'}">${icon('trophy')}${won > 1 ? won : ''}</span>` : ''}</div><div class="bc-title">${esc(c.title)}</div></div>
         ${c.ring ? ringSvg(c.ring) : ''}</div>
-      <div class="bseg3 adv" aria-hidden="true">${STAGES.map(([k]) => `<span class="st-${k}"><i style="width:${Math.round((c.progress[k] || 0) * 100)}%"></i></span>`).join('')}</div>
+      <div class="bseg3 adv" aria-hidden="true">${STEPS.map(([k]) => `<span class="st-${k}"><i style="width:${Math.round((c.progress[k] || 0) * 100)}%"></i></span>`).join('')}</div>
       ${c.next ? `<button type="button" class="bc-next nx-${esc(c.next.tone)}" data-ntab="${esc(c.next.tab)}"${c.next.order ? ` data-norder="${c.next.order}"` : ''} title="Open ${esc(STAGE[c.next.tab])}">${icon('chev')}<span><b>Next:</b> ${esc(c.next.text)}</span></button>` : ''}
       ${chips.length ? `<div class="bc-chips">${chips.join('')}</div>` : ''}
       ${(c.tags || []).length ? `<div class="bc-tags">${c.tags.map(x => `<button type="button" class="btag" data-tagf="${esc(x)}" title="Show only ${esc(x)}">#${esc(x)}</button>`).join('')}</div>` : ''}
@@ -411,23 +413,36 @@
     drag = null; tdrag = null;
     document.querySelectorAll('.bcard.dragging, .bcards.over, .bcards.nope, .tl-ev.dragging, .tl-day.over').forEach(x => x.classList.remove('dragging', 'over', 'nope'));
   });
+  /* The column under the pointer: its cards, its header or its empty space, or the column whose strip of the board the
+     pointer is in (between cards, below a short column), so a card can be dropped from anywhere. */
+  function dropZone(e) {
+    const z = e.target.closest('[data-drop]');
+    if (z) return z;
+    const col = e.target.closest('.bcol');
+    if (col) return col.querySelector('[data-drop]');
+    const cols = $('bCols'); if (!cols || !e.target.closest('#boardOut')) return null;
+    const hit = [...cols.querySelectorAll('.bcol')].find(c => { const r = c.getBoundingClientRect(); return e.clientX >= r.left - 6 && e.clientX <= r.right + 6; });
+    return hit ? hit.querySelector('[data-drop]') : null;
+  }
   $('boardOut').addEventListener('dragover', e => {
     const day = e.target.closest('[data-day]');
     if (day && tdrag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; day.classList.add('over'); return; }
-    const zone = e.target.closest('[data-drop]'); if (!zone || !drag) return;
+    const zone = drag && dropZone(e); if (!zone) return;
     const ok = drag.unlocked.includes(zone.dataset.drop);
+    $('bCols').querySelectorAll('.bcards.over, .bcards.nope').forEach(x => { if (x !== zone) x.classList.remove('over', 'nope'); });
     zone.classList.toggle('over', ok); zone.classList.toggle('nope', !ok);
     if (ok) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
   });
   $('boardOut').addEventListener('dragleave', e => {
-    const zone = e.target.closest('[data-drop], [data-day]');
+    const zone = e.target.closest('[data-day]');                   // board columns are cleared by dragover and dragend
     if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove('over', 'nope');
   });
   $('boardOut').addEventListener('drop', async e => {
     const day = e.target.closest('[data-day]');
     if (day && tdrag) { e.preventDefault(); day.classList.remove('over'); const ev = tdrag; tdrag = null; return moveDate(ev, day.dataset.day); }
-    const zone = e.target.closest('[data-drop]'); if (!zone || !drag) return;
+    const zone = drag && dropZone(e); if (!zone) return;
     e.preventDefault();
+    if (!drag.unlocked.includes(zone.dataset.drop)) { zone.classList.remove('nope'); toast(LOCKED[zone.dataset.drop]); return; }
     const c = drag, id = c.id, els = [...zone.querySelectorAll('[data-card]')].filter(x => +x.dataset.card !== id);
     const at = els.findIndex(x => { const r = x.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
     const p = x => parseFloat(x.dataset.pos);
@@ -517,7 +532,7 @@
     if (!openId) return;
     try { D = await api('/api/board/card?id=' + openId); }
     catch (e) { toast(e.message); D = null; openId = null; if ($('bDlg').open) $('bDlg').close(); return; }
-    if (!tab) tab = D.card.stage;
+    if (!tab) tab = D.card.stage === 'precheck' ? (D.card.unlocked.includes('approval') ? 'approval' : 'idea') : D.card.stage;
     if (!orderN || !D.orders.some(o => o.n === orderN)) orderN = D.orders.length ? D.orders[0].n : 1;
     drawCard();
   }
@@ -550,7 +565,7 @@
       </div>
       <div class="bd-meta"><div class="bd-colors" role="group" aria-label="Colour">${COLORS.map(k => `<button type="button" class="c-${k}" data-color="${k}" aria-pressed="${c.color === k}" title="${k}" aria-label="${k}"></button>`).join('')}</div>
         <label class="bd-tags small">${icon('tags')}<input type="text" data-f="tags" data-fk="tags" maxlength="240" value="${esc((c.tags || []).join(', '))}" placeholder="Tags, with commas: summer, gift" aria-label="Tags, with commas between them"></label></div>
-      <ol class="bstep">${STAGES.map(([k, name], i) => {
+      <ol class="bstep">${STEPS.map(([k, name], i) => {
         const done = k === 'idea' ? ms.idea_done : k === 'approval' ? ms.approved : k === 'sourcing' ? ms.order_ready : k === 'launch' ? ms.launched : (ms.reorders || 0);
         const locked = !un.includes(k), now = c.stage === k;
         const sub = done ? (k === 'reorder' ? `${done} re-order${done > 1 ? 's' : ''}` : ({idea: 'Ready ', approval: 'Approved ', sourcing: 'Order ready '}[k] || 'Launched ') + niceDay(isoOf(done)))
@@ -558,7 +573,7 @@
         return `<li class="st-${k}${done ? ' done' : ''}${locked ? ' locked' : ''}${now ? ' now' : ''}"><span class="bs-ic">${done ? icon(k === 'idea' ? 'ok' : 'trophy') : locked ? icon('lock') : i + 1}</span><b>${esc(name)}</b><span class="small">${esc(sub)}</span></li>`;
       }).join('')}</ol>
       ${c.next ? `<div class="bnext nx-${esc(c.next.tone)}">${icon('chev')}<span><b>Next step:</b> ${esc(c.next.text)}</span>${tab !== c.next.tab || (c.next.order && orderN !== c.next.order) ? `<button type="button" class="btn slim" data-ngo>Open ${esc(STAGE[c.next.tab])}</button>` : ''}</div>` : ''}
-      <div class="bd-tabs" role="tablist">${[...STAGES, ['notes', 'Notes & history']].map(([k, name]) => `<button type="button" role="tab" class="st-${k}" data-tab="${k}" aria-selected="${tab === k}">${k !== 'notes' && !un.includes(k) ? icon('lock') : ''}${esc(name)}</button>`).join('')}</div>
+      <div class="bd-tabs" role="tablist">${[...STEPS, ['notes', 'Notes & history']].map(([k, name]) => `<button type="button" role="tab" class="st-${k}" data-tab="${k}" aria-selected="${tab === k}">${k !== 'notes' && !un.includes(k) ? icon('lock') : ''}${esc(name)}</button>`).join('')}</div>
       <div class="bd-body">${tab === 'idea' ? ideaTab() : tab === 'approval' ? approvalTab() : tab === 'sourcing' ? sourcingTab() : tab === 'launch' ? launchTab() : tab === 'reorder' ? reorderTab() : notesTab()}</div>`;
   }
 
@@ -841,7 +856,7 @@
     if (f === 'tags') return change('/api/board/card', {id, set: {tags: v}});
     if (f === 'asin' || f === 'alibaba') {
       const r = await change('/api/board/card', {id, set: {[f]: v.trim()}});
-      if (r && r.moved) { tab = r.moved; drawCard(); toast(`Both links are in: moved to ${STAGE[r.moved]}`, 3500); }
+      if (r && r.moved) { tab = r.moved === 'precheck' ? 'approval' : r.moved; drawCard(); toast(`Both links are in: moved to ${STAGE[r.moved]}`, 3500); }
       return;
     }
     if (f === 'unit_cost' || f === 'cost_cur') return change('/api/board/order', {id, n, set: {[f]: v}});
@@ -1096,7 +1111,8 @@
         try {
           const r = await api(k.path, {to: [...sel], message: msg});
           d.close();
-          toast(r.opened ? `${k.sent} opened in your browser: press Send there` : `${k.sent} sent to ${names(r.to)}`, 4000);
+          toast(r.pasted ? `${k.sent} opened in your browser. It was too long for one email link, so the whole email is on your clipboard: in Gmail click in the message, press Ctrl+A, then Ctrl+V, then Send.`
+            : r.opened ? `${k.sent} opened in your browser: press Send there` : `${k.sent} sent to ${names(r.to)}`, r.pasted ? 15000 : 4000);
           load();
         } catch (e) { toast(e.message); show(); }
       });

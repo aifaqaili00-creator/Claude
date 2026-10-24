@@ -1,0 +1,88 @@
+/* The dashboard look, on top of app.css. Light theme: like Visual Studio's light theme (a light grey sidebar, a white
+   work area, thin grey lines, flat cards, its blue). Dark theme: a dark navy sidebar. KPI tiles you can click, table
+   headers like a dashboard, compact icon buttons in tables and fewer, quieter toasts.
+   The sidebar's colour tokens are redefined inside it, so its links, switch, pills and theme buttons follow without rules
+   of their own (tests/test_contrast.py checks both palettes). */
+.side {
+  --page: #f3f3f3; --surface: #f8f8f8; --sunk: #e8e8e8; --hover: #e8e8e8; --line: #e0e0e0; --line-strong: #cccccc;
+  --ink: #1f1f1f; --ink-2: #3b3b3b; --muted: #616161; --accent: #005fb8; --accent-soft: #dde7f4; --accent-strong: #004a8f;
+  --good: #16a34a; --good-text: #067647; --good-soft: #e6f4ea; --warn-text: #93370d; --warn-soft: #fff4e5;
+  --weak-text: #3b3b3b; --weak-soft: #e8e8e8; --grp: #616161; --current: #e4e6f1;
+  background: #f3f3f3; border-right: 1px solid #e0e0e0; color: var(--ink);
+}
+:root[data-theme="dark"] .side {
+  --page: #0b1220; --surface: #111a2e; --sunk: #172239; --hover: #1a2742; --line: #1f2b44; --line-strong: #2d3d5c;
+  --ink: #f1f5f9; --ink-2: #cbd5e1; --muted: #94a3b8; --accent: #8ab4ff; --accent-soft: #1c3264; --accent-strong: #dbe7ff;
+  --good: #22c55e; --good-text: #6ee7a8; --good-soft: #0f2a1d; --warn-text: #fcd34d; --warn-soft: #2e2108;
+  --weak-text: #cbd5e1; --weak-soft: #1b2640; --grp: #8796b0; --current: #1c3264;
+  background: linear-gradient(180deg, #070b13 0%, #0a1222 100%); border-right: 1px solid #1a2233;
+}
+.side .brand { padding: 6px 8px 14px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.side .brand b { color: var(--ink); letter-spacing: -.01em; }
+.nav .grp { text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; font-weight: 700; color: var(--grp); padding: 16px 12px 5px; }
+.nav a, .nav-more { padding: 7px 12px; color: var(--ink-2); border-radius: 4px; }
+.nav a:hover, .nav-more:hover { background: var(--hover); color: var(--ink); }
+.nav a[aria-current="page"] { background: var(--current); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+.nav a[aria-current="page"] .icon { color: var(--accent); }
+.nav a .count { background: var(--accent-fill); color: #ffffff; }
+.side-foot { border-top-color: var(--line); }
+
+/* the page and its header: flat, thin lines, small corners (Visual Studio) */
+:root { --r-sm: 3px; --r: 4px; --r-lg: 6px; }
+.topbar { background: var(--surface); box-shadow: none; border-bottom: 1px solid var(--line); }
+.topbar h1 { font: 650 19px/1.25 var(--display); letter-spacing: -.01em; }
+main { padding-top: 22px; }
+.panel { border-radius: 6px; border-color: var(--line); box-shadow: none; }
+.progress:empty { display: none; }
+
+/* KPI tiles: separate cards, an icon, the number big, a link when they lead somewhere */
+.kpis { gap: 14px; background: none; border: 0; box-shadow: none; overflow: visible; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.kpi { position: relative; border: 1px solid var(--line); border-radius: 6px; padding: 15px 17px; gap: 4px; box-shadow: none; }
+.kpi .v { font: 700 26px/1.15 var(--display); letter-spacing: -.02em; }
+.kpi .eyebrow { font-weight: 600; padding-right: 40px; }
+.kpi .ic { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-strong); }
+.kpi .ic .icon { width: 17px; height: 17px; }
+.kpi.k-good .ic { background: var(--good-soft); color: var(--good-text); }
+.kpi.k-warn .ic { background: var(--warn-soft); color: var(--warn-text); }
+.kpi.k-bad .ic { background: var(--bad-soft); color: var(--bad-text); }
+a.kpi { color: inherit; text-decoration: none; transition: box-shadow .15s, transform .15s, border-color .15s; }
+a.kpi:hover { border-color: var(--accent); background: var(--hover); }
+a.kpi:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a.kpi .go { font-size: 12.5px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+.kpi .bar { margin-top: 6px; }
+.dash-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 6px 2px -4px; }
+.dash-h h2 { font: 700 16px/1.3 var(--display); letter-spacing: -.01em; }
+
+/* tables: dashboard headers */
+th { background: var(--sunk); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .045em; color: var(--muted); }
+th .thsort { text-transform: inherit; letter-spacing: inherit; font-weight: inherit; }
+.tablewrap { border-radius: 6px; box-shadow: none; }
+
+/* compact icon buttons (the actions of a table row) */
+.btn.ico { padding: 0; width: 30px; min-height: 28px; justify-content: center; }
+.btn.ico .icon { width: 15px; height: 15px; }
+.mgtable td { font-size: 13px; }
+.mgtable td.gwhy { max-width: 250px; }
+.mgtable .mtx-prod { width: 240px; min-width: 220px; }
+
+/* toasts: dark cards, at most three, one line of breathing room */
+.toast { border-radius: 6px; padding: 11px 15px; box-shadow: 0 12px 28px -8px rgba(0, 0, 0, .35); line-height: 1.45; }
+
+/* the dashboard's cards: three a row on a wide window, two on a narrow one */
+.kpis.dash { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .kpis.dash { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .kpis.dash { grid-template-columns: minmax(0, 1fr); } }
+
+/* Market Gaps niches: no picture box (a niche has none), and every column fits */
+.mgtable { min-width: 0; table-layout: auto; }
+.mgtable .mtx-pc { grid-template-columns: minmax(0, 1fr); }
+.mgtable .mtx-pic { display: none; }
+.mgtable td:nth-child(5) { width: 200px; max-width: 220px; }
+.mgtable td:nth-child(5) .tsub { white-space: normal; }
+.mgtable td:last-child { min-width: 190px; max-width: 240px; }
+
+/* the app window lost its connection (the app was restarted or closed): said plainly, across the top */
+.lost-banner { flex: 1 0 100%; order: -1; padding: 10px 14px; border-radius: 10px; background: var(--bad-soft); color: var(--bad-text);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); font-size: 13.5px; }
+.lost-banner[hidden] { display: none; }

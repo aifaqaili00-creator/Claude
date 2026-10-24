@@ -578,7 +578,7 @@ seg($('xShow'), () => renderXTable());
 $('btnXOpen').addEventListener('click', () => {
   const kw = $('xkw').value.trim(); if (!kw) return $('xkw').focus();
   const site = (ST.markets[segVal($('xMk'))] || {}).site || 'https://www.amazon.com.au';
-  openUrl(site + '/s?k=' + encodeURIComponent(kw).replace(/%20/g, '+'));
+  openUrl(site + '/s?k=' + encodeURIComponent(kw).replace(/%20/g, '+'), {profile: true});   // Helium 10's Xray is in your profile
   startWatch();
 });
 $('xFile').addEventListener('change', async () => {
@@ -714,16 +714,17 @@ function fillSettings() {
     .map(p => `<option value="${esc(p.id)}" ${p.id === s.profile ? 'selected' : ''}>${esc(p.label)}</option>`).join('');
   $('locAU').value = s.locations.AU; $('locAE').value = s.locations.AE; $('locUS').value = s.locations.US;
   $('fastDays').value = s.fast_days; $('pages').value = s.pages; $('cacheH').value = s.cache_hours; $('localDays').value = s.local_days;
+  $('openLinks').value = s.open_links || 'app';
 }
 async function saveSettings() {
   try {
-    const r = await api('/api/settings', {profile: $('profile').value, fast_days: $('fastDays').value, pages: $('pages').value,
+    const r = await api('/api/settings', {profile: $('profile').value, open_links: $('openLinks').value, fast_days: $('fastDays').value, pages: $('pages').value,
       cache_hours: $('cacheH').value, local_days: $('localDays').value,
       locations: {AU: $('locAU').value, AE: $('locAE').value, US: $('locUS').value}});
     ST.settings = r.settings; settingsFilled = false; fillSettings(); renderStatus(); toast('Settings saved', 1800);
   } catch (e) { toast(e.message); }
 }
-['profile', 'locAU', 'locAE', 'locUS', 'fastDays', 'localDays', 'pages', 'cacheH'].forEach(id => $(id).addEventListener('change', saveSettings));
+['profile', 'openLinks', 'locAU', 'locAE', 'locUS', 'fastDays', 'localDays', 'pages', 'cacheH'].forEach(id => $(id).addEventListener('change', saveSettings));
 $('btnProfiles').addEventListener('click', async () => {
   try { ST.profiles = await api('/api/profiles', {}); settingsFilled = false; fillSettings(); toast(ST.profiles.length + ' profiles found'); }
   catch (e) { toast(e.message); }

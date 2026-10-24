@@ -27,9 +27,11 @@ SOURCES = {
     'complete:AE': {'concurrency': 1, 'gap': (1.0, 1.5), 'daily': 600},
 }
 QUOTAS = {
-    'amazon:US': {'lists': 32, 'watch_kw': 30, 'products': 60, 'qualify': 30, 'proof': 10, 'gaps': 10},
-    'amazon:AU': {'lists': 16, 'watch_kw': 30, 'products': 30, 'qualify': 20, 'gaps': 40, 'lone': 20, 'mgaps': 25},
-    'amazon:AE': {'lists': 16, 'watch_kw': 30, 'products': 20, 'qualify': 15, 'gaps': 30, 'lone': 20, 'mgaps': 20},
+    'amazon:US': {'lists': 32, 'watch_kw': 30, 'products': 60, 'qualify': 30, 'proof': 10, 'gaps': 10, 'stock': 25},
+    'amazon:AU': {'lists': 16, 'watch_kw': 30, 'products': 30, 'qualify': 20, 'gaps': 40, 'lone': 20, 'mgaps': 25,
+                  'stock': 20},
+    'amazon:AE': {'lists': 16, 'watch_kw': 30, 'products': 20, 'qualify': 15, 'gaps': 30, 'lone': 20, 'mgaps': 20,
+                  'stock': 20},
     'amazon:GB': {'proof': 18, 'gaps': 5},
     'amazon:DE': {'proof': 18, 'gaps': 5},
     'google': {'trends': 60, 'qualify': 30, 'related': 20},

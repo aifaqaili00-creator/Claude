@@ -64,7 +64,7 @@
       : r.phrase ? site(r.market) + '/s?k=' + encodeURIComponent(r.phrase).replace(/%20/g, '+') : '';
     return [url ? `<button class="btn slim" data-open="${esc(url)}" title="Open it on Amazon ${esc(MK[r.market])}">${icon('external')}Amazon</button>` : '',
       r.phrase ? `<a class="btn slim" href="#/k/${r.market}/${encodeURIComponent(r.phrase)}" title="Keyword report for “${esc(r.phrase)}”">Report</a>` : '',
-      `<button class="btn slim" data-board="${r.id}" title="Add to your product board">${icon('board')}Board</button>`,
+      shortlistBtn(`data-board="${r.id}"`),
       LONE.has(r.type) ? (r.watch_id ? `<button class="btn slim" data-unwatch="${r.watch_id}" title="Watching for a second seller: press to stop">${icon('eye')}Watching</button>`
         : `<button class="btn slim" data-watch="${r.id}" title="Read it every day and tell me when a second seller appears">${icon('eye')}Watch</button>`) : ''].join('');
   }
@@ -133,7 +133,8 @@
     }
     const b = e.target.closest('[data-board]'), w = e.target.closest('[data-watch]'), u = e.target.closest('[data-unwatch]');
     const r = D && (b || w) ? D.rows.find(x => x.id === +(b || w).dataset[b ? 'board' : 'watch']) : null;
-    if (b && r) addToBoard({title: r.title, market: r.market, asin: r.asin, kw: r.phrase || '', image: r.image || ''});
+    if (b && r) shortlist({title: r.title, market: r.market, asin: r.asin, kw: r.phrase || '', image: r.image || '',
+      source: 'Gap Finder (' + (r.label || 'gap') + ')'}, b);
     if (w && r) {
       try { await api('/api/gaps/watch', {market: r.market, asin: r.asin, title: r.title}); toast('Watching it: you get an alert when a second seller appears', 4000); load(); }
       catch (err) { toast(err.message); }

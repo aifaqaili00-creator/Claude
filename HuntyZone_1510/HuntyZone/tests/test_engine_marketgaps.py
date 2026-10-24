@@ -167,3 +167,122 @@ def test_only_amazons_global_store_is_an_imported_gap():
         both, {'seller_id': 'S1', 'seller': 'CN Shop', 'country': 'CN', 'amazon': False, 'stock': 'abroad'}]},
         {'status': 'ok', 'phrase': 'x', 'rows': []}, ['B0'])
     assert two['type'] == 'imported' and '2 sellers' in two['why']
+
+
+def test_niches_held_by_famous_brands_sold_here_are_not_gaps():
+    us = [brand('Coca-Cola', 'Cola', 5e7, 'Amazon.com'), brand('Feelyou', 'Comforters', 3e6, 'Feelyou')]
+    au = [brand('Coca-Cola', 'Cola', 400000, 'Amazon AU'), brand('Pepsi Max', 'Cola', 30000, 'Amazon AU'),
+          brand('Feelyou', 'Comforters', 300000, 'Amazon US'), brand('Other', 'Comforters', 20000, 'Amazon US')]
+    out = {n['name']: n for n in mg.rank_niches(au, 'AU', us)}
+    cola = out['Cola']
+    assert cola['gap']['type'] == 'brand_locked' and not cola['gap']['gap'] and 'Coca-Cola' in cola['gap']['why']
+    assert cola['risk_why'] == 'food & drink' and cola['risky']
+    comf = out['Comforters']                    # big in the USA, but shipped in by the Global Store: private label, still open
+    assert comf['famous'] == 0 and comf['gap']['type'] == 'global_store'
+    assert mg.famous_brands(us, [brand('Bonds', 'Pants', 1, reviews=50000)]) == {'cocacola', 'feelyou', 'bonds'}
+    assert mg.risk_of("Men's Underwear Trunks") == 'clothing (sizes)' and mg.risk_of('Towing Ropes') is None
+
+
+def test_products_to_sell_come_from_open_niches_and_imported_best_sellers():
+    store = {'seller': 'Amazon US (Global Store)', 'amazon': True, 'stock': 'abroad', 'country': 'US', 'days': 14}
+    checks = {'foot leg support': {'verdict': 'open', 'phrase': 'leg foot support', 'name': 'Leg & Foot Supports', 'data': {'top': [
+        {'asin': 'B1', 'title': 'Leg Rest Foot Support Cushion', 'price': 45, 'bought': 300, 'reviews': 40, 'origin': 'overseas',
+         'days': 14, 'offer': store},
+        {'asin': 'B2', 'title': 'Foot Support Cushion Local', 'price': 45, 'bought': 50, 'reviews': 900, 'origin': 'local',
+         'days': 1, 'offer': {'seller': 'Shop AU', 'amazon': False, 'stock': 'local', 'country': 'AU'}}]}},
+        'x': {'verdict': 'unread', 'data': {'top': [{'asin': 'B9', 'title': 'Never shown'}]}}}
+    cats = [{'category': 'Home', 'data': {'top': [
+        {'asin': 'B3', 'title': 'Bento Lunch Box', 'price': 32, 'rank': 3, 'offer': {'amazon': True, 'stock': 'local', 'country': 'AU'}},
+        {'asin': 'B4', 'title': 'Imported Spice Rack', 'price': 40, 'rank': 2, 'reviews': 12, 'offer': store},
+        {'asin': 'B5', 'title': 'Blu Tack', 'price': 3, 'rank': 1, 'offer': store}]}}]
+    ps = mg.products(checks, cats, 'AU')
+    by = {p['asin']: p for p in ps}
+    assert set(by) == {'B1', 'B2', 'B4', 'B5'}                    # unread niches and Amazon-stocked best sellers left out
+    assert by['B1']['score'] > by['B2']['score'] and [p['score'] for p in ps] == sorted((p['score'] for p in ps), reverse=True)
+    assert '300+ bought last month' in by['B1']['why'] and any('ships from abroad in 14 days' in w for w in by['B1']['why'])
+    assert 'its niche is open now' in by['B1']['why'] and by['B1']['niche'] == 'Leg & Foot Supports'
+    assert by['B4']['source'] == 'best' and '#2 in Best Sellers, Home' in by['B4']['why']
+    assert 'too cheap for a margin' in by['B5']['flags'] and not by['B1']['flags']
+    assert mg.products({}, [], 'AU') == []
+
+
+def test_hunt_phrases_are_longer_phrases_without_brands():
+    kws = ['leg rest pillow', 'leg rest pillow for sleeping', 'leg rest', 'copper fit leg rest', 'leg rests pillows',
+           'knee pillow', 'leg rest pillow after surgery']
+    assert mg.hunt_phrases('leg rest', kws, ['Copper Fit']) == ['leg rest pillow', 'leg rest pillow for sleeping',
+                                                               'leg rest pillow after surgery']
+    assert mg.hunt_phrases('leg rest', kws, [], n=1) == ['leg rest pillow'] and mg.hunt_phrases('', kws) == []
+
+
+def test_phrase_result_needs_proven_demand_and_few_sellers():
+    def r(title, bought=None, speed='slow', origin='overseas', sponsored=False):
+        return {'asin': 'B0%08X' % (hash(title) & 0xFFFFFFFF), 'title': title, 'bought': bought, 'speed': speed,
+                'origin': origin, 'sponsored': sponsored}
+    rows = [r('Leg Rest Pillow Memory Foam', 300), r('Leg Rest Pillow Wedge', 100, 'fast', 'local'),
+            r('Knee Pillow', 5000), r('Leg Rest Pillow Ad', 900, sponsored=True)]
+    hit = mg.phrase_result('leg rest pillow for sleeping', {'status': 'ok', 'rows': rows}, 'AU')
+    assert hit['verdict'] == 'hit' and hit['sellers'] == 2 and hit['demand'] == 400 and hit['fast'] == 1
+    assert hit['why'] == 'Only 2 listings sell it, about 400 sold last month, 1 with stock in Australia.'
+    assert mg.phrase_result('leg rest pillow', {'status': 'ok', 'rows': rows}, 'AU', max_sellers=1)['verdict'] == 'look'   # 2 > 1, but sells
+    low = mg.phrase_result('leg rest pillow', {'status': 'ok', 'rows': rows[:1]}, 'AU', min_demand=500)
+    assert low['verdict'] == 'look' and not low['hit'] and low['unbadged'] == []         # under 500, but it sells
+    assert mg.phrase_result('heated leg rest', {'status': 'ok', 'rows': rows}, 'AU')['verdict'] == 'none'
+    assert mg.product_words('leg rest pillow for sleeping') == {'leg', 'rest', 'pillow'}
+    assert mg.product_words('pillow for legs') == {'pillow'} and mg.product_words('for dogs') == {'dog'}
+    assert mg.phrase_result('x', {'status': 'captcha', 'rows': []}, 'AU')['verdict'] == 'unread'
+    s, why = mg.hunt_score(hit, 'AU')
+    assert 0 < s <= 100 and why[0] == 'about 400 sold last month across 2 listings'
+
+
+def test_a_listing_sells_the_whole_phrase_not_just_its_first_word():
+    """Real data: "tablecloths for rectangle tables" counted every tablecloth (44 sellers); it needs rectangle too."""
+    assert mg.sells('tablecloths for rectangle tables', 'Rectangle Tablecloth for Dining Tables, Waterproof')
+    assert not mg.sells('tablecloths for rectangle tables', 'Round Tablecloth, Linen Look')
+    assert mg.sells('leg rest pillow for sleeping', 'Leg Rest Pillow Memory Foam')      # 4 words: one may be missing
+    assert not mg.sells('car cargo liners h6', 'Car Cargo Liner Universal SUV')          # 3 words after filler: all of them
+    assert not mg.sells('', 'anything')
+
+
+def test_sales_rank_estimates_count_when_badges_are_missing():
+    rows = [{'asin': 'B1', 'title': 'Towing Rope Heavy Duty 5 m', 'bought': None, 'speed': 'slow', 'origin': 'overseas'},
+            {'asin': 'B2', 'title': 'Towing Rope with Hooks 4 m', 'bought': 50, 'speed': 'fast', 'origin': 'local'},
+            {'asin': 'B3', 'title': 'Towing Rope 20 Tons', 'bought': None, 'speed': 'slow', 'origin': 'overseas'}]
+    first = mg.phrase_result('towing rope', {'status': 'ok', 'rows': rows}, 'AE')
+    assert first['verdict'] == 'look' and first['demand'] == 50 and first['unbadged'] == ['B1', 'B3']   # 50 >= 20: worth a look
+    seen = mg.phrase_result('towing rope', {'status': 'ok', 'rows': rows}, 'AE', estimates={'B1': 90, 'B3': 40})
+    assert seen['verdict'] == 'hit' and seen['demand'] == 180 and seen['estimated'] == 2
+    assert '(2 from the sales rank)' in seen['why'] and seen['listings'][0]['asin'] == 'B1'
+    assert mg.hunt_score(seen, 'AE')[1][0] == 'about 180 sold last month across 3 listings (sales rank)'
+    busy = mg.phrase_result('towing rope', {'status': 'ok', 'rows': rows}, 'AE', max_sellers=2)
+    assert busy['verdict'] == 'busy'                                      # sellers first: no pages read for it
+
+
+def test_half_typed_suggestions_are_not_products():
+    kws = ['interactive automatic cat toy ball for', 'interactive cat toy ball with', 'interactive cat toy ball rolling',
+           'interactive cat toy ball and']
+    assert mg.hunt_phrases('interactive cat toy ball', kws) == ['interactive cat toy ball rolling']
+
+
+def test_worth_a_look_is_shown_below_the_strong_finds():
+    def r(asin, title, bought=None):
+        return {'asin': asin, 'title': title, 'bought': bought, 'speed': 'slow', 'origin': 'overseas'}
+    few_sales = [r('B1', 'Throw Pillow Covers 45x45 Linen'), r('B2', 'Throw Pillow Covers 45x45 Velvet')]
+    look = mg.phrase_result('throw pillow covers 45x45', {'status': 'ok', 'rows': few_sales}, 'AU', estimates={'B1': 25, 'B2': 14})
+    assert look['verdict'] == 'look' and not look['hit'] and 'less than 200, but it sells' in look['why']
+    too_little = mg.phrase_result('throw pillow covers 45x45', {'status': 'ok', 'rows': few_sales}, 'AU', estimates={'B1': 5})
+    assert too_little['verdict'] == 'no_demand'
+    eight = [r('C%d' % i, 'Towing Rope Heavy Duty %d' % i, 50) for i in range(8)]
+    crowded_but_selling = mg.phrase_result('towing rope', {'status': 'ok', 'rows': eight}, 'AE')
+    assert crowded_but_selling['verdict'] == 'look' and 'more than 6' in crowded_but_selling['why']
+    assert mg.phrase_result('towing rope', {'status': 'ok', 'rows': eight * 2}, 'AE')['verdict'] == 'busy'
+    checks = {'k': {'verdict': 'closed', 'name': 'Throw Pillow Covers', 'data': {'hunt': [look, crowded_but_selling]}}}
+    ps = mg.products(checks, [], 'AU')
+    assert [p['tier'] for p in ps] == ['look', 'look'] and all(p['source'] == 'hunt' for p in ps)
+
+
+def test_brand_searches_are_skipped():
+    words = mg.brand_words_of([{'brand': 'Breville', 'revenue': 90000}, {'brand': 'Tiny', 'revenue': 100},
+                               {'brand': 'Generic', 'revenue': 9e6}])
+    assert words == {'amazon', 'breville'}
+    kws = ['small kitchen appliances breville', 'small kitchen appliances amazon', 'small kitchen appliances for rv']
+    assert mg.hunt_phrases('small kitchen appliances', kws, [], 5, words) == ['small kitchen appliances for rv']

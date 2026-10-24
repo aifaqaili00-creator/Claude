@@ -40,7 +40,7 @@ GAP_KEEP_DAYS = 180                            # older Gap Finder checks and off
 MG_KEEP_DAYS = 400                             # older Market Gaps readings go, except the newest per niche or category
 BACKUPS = {'daily': 2, 'weekly': 2}
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 MIGRATIONS = {
     1: """
 -- operations
@@ -220,6 +220,13 @@ CREATE INDEX ss_brand_key ON ss_brand(import_id, market, subcategory);
 CREATE INDEX ss_seller_key ON ss_seller(import_id, market);
 CREATE INDEX mg_check_key ON mg_check(market, niche, ts);
 CREATE INDEX mg_category_key ON mg_category(market, slug, ts);
+""",
+    10: """
+-- Out of stock: booming and brand-new products of Product ideas, read in the USA, Australia and the UAE each day
+CREATE TABLE stock_check(id INTEGER PRIMARY KEY, ts INT, market TEXT, asin TEXT, status TEXT, available INT, n_offers INT,
+  amazon INT, rank INT, badge INT, price REAL, source TEXT, data_json TEXT);
+CREATE INDEX stock_check_key ON stock_check(market, asin, ts);
+CREATE INDEX stock_check_ts ON stock_check(ts);
 """,
 }
 
@@ -1295,6 +1302,33 @@ def save_mg_category(conn, market, slug, category, status, data, ts=None):
                  (_now(ts), market, slug, category, status, json.dumps(data)))
 
 
+def save_stock_check(conn, market, asin, r, ts=None):
+    """One stock reading of a listing: r = {'status' ('ok' listed | 'missing' not listed | a blocked status), 'available',
+    'n_offers', 'amazon', 'rank', 'badge', 'price', 'source', 'data'}."""
+    b = lambda v: None if v is None else int(bool(v))  # noqa: E731
+    conn.execute('INSERT INTO stock_check(ts, market, asin, status, available, n_offers, amazon, rank, badge, price, source, '
+                 'data_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (_now(ts), market, asin, r.get('status'), b(r.get('available')), r.get('n_offers'), b(r.get('amazon')),
+                  r.get('rank'), r.get('badge'), _num(r.get('price')), r.get('source'), json.dumps(r.get('data') or {})))
+
+
+def stock_checks(conn, since_ts=0, markets=None):
+    """{(market, asin): [readings newest first]} since a time."""
+    sql = 'SELECT * FROM stock_check WHERE ts>=?'
+    params = [since_ts]
+    if markets:
+        sql += ' AND market IN (%s)' % ','.join('?' * len(markets))
+        params += list(markets)
+    out = {}
+    for r in conn.execute(sql + ' ORDER BY ts DESC, id DESC', params):
+        d = dict(r)
+        d['data'] = json.loads(d.pop('data_json') or '{}')
+        for k in ('available', 'amazon'):
+            d[k] = None if d[k] is None else bool(d[k])
+        out.setdefault((d['market'], d['asin']), []).append(d)
+    return out
+
+
 def mg_categories(conn, market):
     """The newest live reading of each Best Sellers category in a market: [{..., 'data'}], biggest first."""
     rows = _rows(conn.execute(
@@ -1411,6 +1445,9 @@ def retention(conn, now=None):
     mg_cut = (now - MG_KEEP_DAYS * day,)
     out['mg_checks_dropped'] = conn.execute(
         'DELETE FROM mg_check WHERE ts<? AND id NOT IN (SELECT MAX(id) FROM mg_check GROUP BY market, niche)', mg_cut).rowcount
+    out['stock_checks_dropped'] = conn.execute(
+        'DELETE FROM stock_check WHERE ts<? AND id NOT IN (SELECT MAX(id) FROM stock_check GROUP BY market, asin)',
+        mg_cut).rowcount
     out['mg_categories_dropped'] = conn.execute(
         'DELETE FROM mg_category WHERE ts<? AND id NOT IN (SELECT MAX(id) FROM mg_category GROUP BY market, slug)',
         mg_cut).rowcount

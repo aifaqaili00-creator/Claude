@@ -188,7 +188,7 @@ class BrowserTrends:
     async def _tab(self):
         await self.checker.start()
         if self.page is None or self.page.is_closed():
-            self.page = await self.checker.ctx.new_page()
+            self.page = await self.checker.new_page()
             await self.page.goto('%s/trends/explore?geo=US&hl=%s' % (self.base, HL), wait_until='domcontentloaded',
                                  timeout=45000)
             await self._consent()

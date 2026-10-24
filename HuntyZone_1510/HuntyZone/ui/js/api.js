@@ -61,6 +61,7 @@ async function waitJob(id, onLine, {timeoutMs = 30 * 60 * 1000} = {}) {
     if (j.log.length && onLine) onLine(j.log[j.log.length - 1]);
     if (j.status === 'done') return j.result;
     if (j.status === 'error') throw new ApiError(j.error || 'Failed', 500);
+    if (j.status === 'stopped') throw new ApiError(j.error || 'Stopped', 499);
   }
 }
 
@@ -84,4 +85,13 @@ async function download(body) {
   } catch (e) { toast(e.message); }
 }
 
-function openUrl(url) { api('/api/open', {url}).catch(e => toast(e.message)); }
+/* Open a web page. By default straight from the app window, so it always comes to the front; Helium 10 (and anything
+   asked with {profile: true}) opens in your own Chrome profile, where its extension and your logins are. Settings can
+   send every link to your profile instead. */
+function openUrl(url, {profile = false} = {}) {
+  const mine = profile || /(^|\.)helium10\.com/i.test((url.match(/^https?:\/\/([^/]+)/) || [])[1] || '') ||
+    ((ST.settings || {}).open_links === 'profile');
+  if (!mine) { window.open(url, '_blank', 'noopener'); return; }
+  api('/api/open', {url}).then(() => toast('Opened in your Chrome profile (look for it in the taskbar if it stays behind)', 3000))
+    .catch(e => toast(e.message));
+}

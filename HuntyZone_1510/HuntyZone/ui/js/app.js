@@ -27,6 +27,9 @@ function route() {
   if (!VIEWS[name]) { name = DEFAULT_VIEW; params = []; }
   const v = VIEWS[name], changed = name !== currentView;
   if (changed && currentView && VIEWS[currentView].onHide) VIEWS[currentView].onHide();
+  // A window left open on the page you leave (a board card, the PDF options) would stay modal while hidden and make every
+  // click on the new page do nothing: close it.
+  if (changed) document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (e) { d.removeAttribute('open'); } });
   currentView = name;
   document.querySelectorAll('#nav a').forEach(a => {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -38,9 +41,26 @@ function route() {
   document.title = $('pageTitle').textContent + ' · Product Checker';
   try { localStorage.setItem('pcView', name); } catch (e) {}
   if (changed) window.scrollTo(0, 0);
+  trail();
   if (v.onShow) v.onShow(params);
 }
 window.addEventListener('hashchange', route);
+
+/* ---------- Back: every page, tab, market and niche you open is its own address, so Back returns to the one before ---------- */
+const TRAIL = [];
+function trail() {
+  const h = location.hash || '#/';
+  if (TRAIL.length > 1 && TRAIL[TRAIL.length - 2] === h) TRAIL.pop();       // you went back
+  else if (TRAIL[TRAIL.length - 1] !== h) TRAIL.push(h);
+  if (TRAIL.length > 200) TRAIL.splice(0, TRAIL.length - 200);
+  $('btnBack').hidden = TRAIL.length < 2;
+}
+/* Change the address for a step inside a page (a tab, a market, a niche) without reading the page again. */
+function step(name, ...params) {
+  const h = '#/' + [name, ...params.filter(p => p != null && p !== '')].map(encodeURIComponent).join('/');
+  if (location.hash !== h) location.hash = h;
+}
+$('btnBack').addEventListener('click', () => history.back());
 
 /* ---------- theme: light (default), dark, or the same as Windows ---------- */
 const darkMQ = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -99,7 +119,22 @@ function renderStatus() {
   $('checkerPill').className = 'pill ' + bs[0];
   $('checkerPill').title = b.error || (b.visible ? 'The checker browser is visible' : 'Runs minimised in the background');
   $('checkerPill').innerHTML = '<i></i><span>' + esc(bs[1]) + '</span>';
-  let h = ST.jobs_running ? `<span class="pill accent" title="Checks and scans you started are still running. You can use the rest of the app meanwhile."><span class="spin" style="width:11px;height:11px"></span>Working${ST.jobs_running > 1 ? ' (' + ST.jobs_running + ')' : ''}</span>` : '';
+  let h = ST.jobs_running ? `<button type="button" class="pill accent" id="jobsPill" aria-expanded="${jobsOpen}" title="Checks and scans you started are still running. Click to see them or stop one."><span class="spin" style="width:11px;height:11px"></span>Working${ST.jobs_running > 1 ? ' (' + ST.jobs_running + ')' : ''} · Stop…</button>` : '';
+  const up = ST.update, skip = (() => { try { return localStorage.getItem('pcSkipUpdate'); } catch (e) { return null; } })();
+  if (up && up.version !== skip) {
+    h = `<button type="button" class="pill good" id="updPill" aria-expanded="${updOpen}" title="A newer Product Checker is published">${icon('download')}Version ${esc(up.version)} available</button>` + h;
+    if (updOpen) h += `<div class="jobs-pop" role="dialog" aria-label="Update"><b>Product Checker ${esc(up.version)}</b> <span class="small muted">(you have ${esc(ST.version)})</span>
+      ${up.notes ? `<div class="small">${esc(up.notes)}</div>` : ''}
+      <div class="small muted">${ST.frozen ? 'Download it, close Product Checker, then put the new ProductChecker.exe in place of the old one and start it. Your data stays.'
+        : 'Download the new version (or run git pull in the app folder), then start it with start.bat. Your data stays.'}</div>
+      <div class="row"><button type="button" class="btn slim primary" data-upd="get">${icon('download')}Download</button>
+        ${up.page && up.page !== up.download ? '<button type="button" class="btn slim" data-upd="page">What’s new</button>' : ''}
+        <button type="button" class="btn slim ghost" data-upd="skip">Not now</button></div></div>`;
+  }
+  if (!ST.jobs_running) jobsOpen = false;
+  if (jobsOpen) h += `<div class="jobs-pop" role="dialog" aria-label="Running jobs">${(ST.jobs || []).map(j => `<div class="row" style="justify-content:space-between;gap:8px">
+      <span class="small"><b>${esc(JOB_NAMES[j.kind] || j.kind)}</b> · ${esc(j.line)}<span class="muted"> · ${ago(j.started)}</span></span>
+      <button type="button" class="btn slim" data-stopjob="${esc(j.id)}">${icon('x')}Stop</button></div>`).join('')}</div>`;
   for (const c of Object.keys(MK)) {
     const l = (ST.locations || {})[c] || {}, m = (ST.markets || {})[c] || {};
     const cls = l.ok === true ? 'good' : l.ok === false ? 'warn' : 'weak';
@@ -112,12 +147,45 @@ function renderStatus() {
   $('status').innerHTML = h;
 }
 
-let polling = false;
+/* What happened in this window goes to app.log (clicks, messages shown, script errors): it is how a hang is found. */
+const pageLog = (kind, text) => { try { PC.request('/api/clientlog', {method: 'POST', body: {kind, text: String(text).slice(0, 300)}}).catch(() => {}); } catch (e) {} };
+document.addEventListener('click', e => {
+  const b = e.target.closest('button, a.btn, a[href^="#/"], [data-open]');
+  if (b) pageLog('click', (currentView || '') + ' | ' + (b.id ? '#' + b.id + ' ' : '') + (b.textContent || b.title || '').trim().slice(0, 60) +
+    (b.disabled ? ' (disabled)' : '') + (b.dataset.open ? ' → ' + b.dataset.open.slice(0, 80) : ''));
+}, true);
+window.addEventListener('error', e => pageLog('error', (e.message || 'error') + ' at ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '')));
+window.addEventListener('unhandledrejection', e => pageLog('error', 'unhandled: ' + ((e.reason && (e.reason.message || e.reason)) || '?')));
+let jobsOpen = false, updOpen = false;
+const JOB_NAMES = {mgaps: 'Market Gaps refresh', stock: 'Out of stock check', gaps: 'Gap Finder', check: 'Check', ideas: 'Product ideas',
+  report: 'Keyword report', top: 'Reading the top listings', mgaps_import: 'SmartScout import', import: 'Helium 10 import',
+  shortlist: 'Shortlist'};
+$('status').addEventListener('click', async e => {
+  if (e.target.closest('#jobsPill')) { jobsOpen = !jobsOpen; renderStatus(); return; }
+  if (e.target.closest('#updPill')) { updOpen = !updOpen; renderStatus(); return; }
+  const u = e.target.closest('[data-upd]');
+  if (u && ST.update) {
+    if (u.dataset.upd === 'get') openUrl(ST.update.download);
+    if (u.dataset.upd === 'page') openUrl(ST.update.page);
+    if (u.dataset.upd === 'skip') { try { localStorage.setItem('pcSkipUpdate', ST.update.version); } catch (err) {} }
+    updOpen = false; renderStatus(); return;
+  }
+  const b = e.target.closest('[data-stopjob]');
+  if (b) {
+    b.disabled = true;
+    try { await api('/api/job/stop', {id: b.dataset.stopjob}); toast('Stopped. What was read so far is kept.', 3000); }
+    catch (err) { toast(err.message); }
+    poll();
+  }
+});
+let polling = false, lost = 0;
 async function poll() {
   if (polling) return;
   polling = true;
   try {
     const s = await api('/api/state?since=' + lastMsg, undefined);
+    if (lost >= 2) { location.reload(); return; }                            // the app is back: start fresh with it
+    lost = 0;
     const first = !ST.version;
     ST = s;
     if (first && !PRINT && s.settings && s.settings.theme && s.settings.theme !== themePref()) applyTheme(s.settings.theme);
@@ -130,6 +198,7 @@ async function poll() {
     stateListeners.forEach(fn => { try { fn(s, fresh); } catch (e) { console.error(e); } });
   } catch (e) {
     $('status').innerHTML = '<span class="pill bad"><i></i>' + esc(e.status === 0 ? 'App stopped. Start it again with start.bat' : e.message) + '</span>';
+    if (e.status === 0 && ++lost >= 2) $('lostBanner').hidden = false;      // this window lost the app: say so plainly
   } finally { polling = false; }
 }
 

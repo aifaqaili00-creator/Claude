@@ -14,7 +14,9 @@ RUN_NAME = 'ProductChecker'
 
 
 def login_command(folder):
-    """The command Windows runs at sign-in: start.bat in background mode."""
+    """The command Windows runs at sign-in: ProductChecker.exe --background, else start.bat in background mode."""
+    if getattr(sys, 'frozen', False):
+        return '"%s" --background' % sys.executable
     return '"%s" background' % os.path.join(str(folder), 'start.bat')
 
 

@@ -68,6 +68,10 @@ def task_specs(settings, watches):
             specs.append({'kind': 'proof', 'market': m, 'target': 'best', 'every_s': sc.EVERY['proof'], 'priority': 6})
         for m in config.TARGET_MARKETS:
             specs.append({'kind': 'gaps', 'market': m, 'target': 'proven', 'every_s': sc.EVERY['gaps'], 'priority': 5})
+    if settings.get('oos_auto', True):
+        import stockwatch
+        for m in stockwatch.MARKETS:
+            specs.append({'kind': 'stock', 'market': m, 'target': 'ideas', 'every_s': sc.EVERY['stock'], 'priority': 5})
     if settings.get('mg_auto', True):
         for m in config.TARGET_MARKETS:
             specs.append({'kind': 'mgaps', 'market': m, 'target': 'niches', 'every_s': sc.EVERY['mgaps'], 'priority': 6})
@@ -89,12 +93,18 @@ class Collectors:
         return {'products': self.products, 'lists': self.lists, 'watch_kw': self.watch_kw, 'trends': self.trends, 'suggest': self.suggest,
                 'import_scan': self.import_scan, 'maintenance': self.maintenance, 'qualify': self.qualify,
                 'proof': self.proof, 'gaps': self.gaps, 'lone': self.lone, 'board_live': self.board_live,
-                'mgaps': self.mgaps}
+                'mgaps': self.mgaps, 'stock': self.stock}
+
+    async def stock(self, task):
+        """Out of stock: the booming and brand-new products of Product ideas read again in one market."""
+        import stockwatch
+        return await stockwatch.run_task(self.S, task)
 
     async def mgaps(self, task):
         """Market Gaps: a few Best Sellers categories and baseline niches of Australia or the UAE read again."""
         import marketgaps
-        return await marketgaps.refresh_market(self.S, task['market'], marketgaps.AUTO_TOP, marketgaps.AUTO_CATS)
+        return await marketgaps.refresh_market(self.S, task['market'], marketgaps.AUTO_TOP, marketgaps.AUTO_CATS,
+                                               k=marketgaps.HUNT_AUTO)
 
     async def board_live(self, task):
         """Product board: units left and daily sales from the SP-API (nothing to do without keys)."""
@@ -134,7 +144,7 @@ class Collectors:
         cats = hit['cats'] if hit else []
         if chosen:
             return [c for c in cats if c['slug'] in chosen] or [{'slug': s, 'name': s, 'risky': False} for s in chosen]
-        safe = [c for c in cats if not c['risky']]
+        safe = ideas.friendly_first([c for c in cats if not c['risky']])      # Home & Kitchen, Garden, Pets... first
         return safe if any(c.get('default') for c in safe) else safe[:limit]
 
     def _forget(self, market, slug):

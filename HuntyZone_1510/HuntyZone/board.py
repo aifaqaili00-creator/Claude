@@ -105,7 +105,7 @@ def _card(conn, card_id):
     if 'approval' not in c['data']:                     # on the board before the Approval step: counts as approved
         c['data']['approval'] = {'items': []}
         c['data']['milestones'].setdefault('approved', c.get('created_at') or 1)
-    if c['stage'] != 'idea':                            # on the board before the Idea step: counts as done
+    if c['stage'] not in ('idea', 'precheck'):          # on the board before the Idea step: counts as done
         c['data']['milestones'].setdefault('idea_done', c.get('created_at') or 1)
     return c
 
@@ -204,6 +204,13 @@ def add_card(conn, d, settings, now=None):
                         ('asin=?' if asin else 'asin IS NULL AND kw=?'), (market, asin or kw)).fetchone()
     if same:
         return {'id': same[0], 'exists': True}
+    other = next((dict(r) for r in conn.execute('SELECT * FROM board_card WHERE archived_at IS NULL ORDER BY id')
+                  if same_product(dict(r), {'kw': kw, 'asin': asin})), None)
+    if other:                                            # the same product from another market: one card for both
+        _add_market(conn, other, market, now)
+        if image and not other['image']:
+            conn.execute('UPDATE board_card SET image=? WHERE id=?', (image, other['id']))
+        return {'id': other['id'], 'exists': True, 'joined': market}
     pos = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='idea'").fetchone()[0]
     data = {'milestones': {}, 'targets': {}, 'live': {},
             'approval': {'items': [{'id': i + 1, 'text': t, 'done': None} for i, t in enumerate(rules.APPROVAL_CHECKS)]}}
@@ -223,6 +230,150 @@ def add_card(conn, d, settings, now=None):
     _watch(conn, kw, market, 'idea', now)
     _event(conn, cid, 'created', 'Added to the board as an idea', now)
     return {'id': cid, 'exists': False, 'moved': _idea_if_done(conn, cid, now)['moved']}
+
+
+def same_product(a, b):
+    """Two cards are one product (sold in more than one market): the same search words, and not two different ASINs
+    (two ASINs under one phrase are two products, e.g. two firelighter brands). The same ASIN under other words is left
+    alone: it is more often a pasted ASIN than the same product."""
+    if a.get('asin') and b.get('asin') and a['asin'] != b['asin']:
+        return False
+    return bool(a.get('kw')) and a.get('kw') == b.get('kw')
+
+
+def _add_market(conn, card, market, now):
+    """Sell a card's product in one more market: a line for it on the first order and a watch on its keyword there."""
+    o = conn.execute('SELECT id FROM board_order WHERE card_id=? ORDER BY n LIMIT 1', (card['id'],)).fetchone()
+    if not o:
+        o = [conn.execute('INSERT INTO board_order(card_id, n, cost_cur, created_at) VALUES (?,1,?,?)',
+                          (card['id'], 'USD', now)).lastrowid]
+    if conn.execute('SELECT 1 FROM board_line WHERE order_id=? AND market=?', (o[0], market)).fetchone():
+        return False
+    conn.execute("INSERT INTO board_line(order_id, market, ship_cur, steps_json) VALUES (?,?,'USD','{}')", (o[0], market))
+    _watch(conn, card['kw'], market, 'idea', now)
+    _event(conn, card['id'], 'created', '%s added: the same product, one card for every market' % _name(market), now)
+    return True
+
+
+def _empty_line(conn, ln):
+    return (ln['units'] is None and ln['ship_cost'] is None and ln['arrived_units'] is None
+            and not ln.get('steps')
+            and not conn.execute('SELECT 1 FROM board_stock WHERE line_id=?', (ln['id'],)).fetchone())
+
+
+def _drop_line(conn, line_id):
+    conn.execute('DELETE FROM board_stock WHERE line_id=?', (line_id,))
+    conn.execute('DELETE FROM board_line WHERE id=?', (line_id,))
+
+
+def _merge_data(keep, other):
+    """The other card's details that the kept card does not have yet (links, targets, tags, approval ticks, ...)."""
+    for k, v in other.items():
+        if k not in keep:
+            keep[k] = v
+        elif k == 'tags':
+            keep[k] = keep[k] + [t for t in v if t not in keep[k]]
+        elif k == 'strategy':
+            top = max([x['id'] for x in keep[k]] or [0])
+            keep[k] = keep[k] + [{**x, 'id': top + i + 1} for i, x in enumerate(v)]
+        elif k == 'approval':
+            mine = {i['text']: i for i in keep[k].get('items', [])}
+            for i in v.get('items', []):
+                if i['text'] not in mine:
+                    keep[k]['items'].append({**i, 'id': max([x['id'] for x in keep[k]['items']] or [0]) + 1})
+                elif i.get('done') and not mine[i['text']].get('done'):
+                    mine[i['text']].update(done=i['done'], **({'by': i['by']} if 'by' in i else {}))
+        elif isinstance(v, dict) and isinstance(keep[k], dict):
+            for kk, vv in v.items():
+                keep[k].setdefault(kk, vv)
+
+
+def merge_cards(conn, keep_id, other_id, now=None):
+    """Put card other_id into keep_id and remove it: its markets, orders, history, hints, deadlines, sales and alerts move
+    over. Where both cards planned the same market differently, the kept card's plan stays and the other one is written
+    into the history, so nothing is lost without a trace."""
+    now = int(now or time.time())
+    keep, other = _card(conn, keep_id), _card(conn, other_id)
+    dropped = []
+    mine = {o['n']: o for o in _orders(conn, keep_id)}
+    for o in _orders(conn, other_id):
+        k = mine.get(o['n'])
+        if not k:
+            conn.execute('UPDATE board_order SET card_id=? WHERE id=?', (keep_id, o['id']))
+            continue
+        if k['unit_cost'] is None and o['unit_cost'] is not None:
+            conn.execute('UPDATE board_order SET unit_cost=?, cost_cur=? WHERE id=?', (o['unit_cost'], o['cost_cur'], k['id']))
+        elif o['unit_cost'] is not None and o['unit_cost'] != k['unit_cost']:
+            dropped.append('order #%d unit price %s %s' % (o['n'], o['unit_cost'], o['cost_cur']))
+        if k['ready_at'] is None and o['ready_at'] is not None:
+            conn.execute('UPDATE board_order SET ready_at=? WHERE id=?', (o['ready_at'], k['id']))
+        theirs = {ln['market']: ln for ln in k['lines']}
+        for ln in o['lines']:
+            have = theirs.get(ln['market'])
+            if have and not _empty_line(conn, have):
+                if not _empty_line(conn, ln):
+                    dropped.append('order #%d %s: %s units, shipping %s %s' % (o['n'], _name(ln['market']), ln['units'],
+                                                                               ln['ship_cost'], ln['ship_cur']))
+                _drop_line(conn, ln['id'])
+                continue
+            if have:
+                _drop_line(conn, have['id'])
+            conn.execute('UPDATE board_line SET order_id=? WHERE id=?', (k['id'], ln['id']))
+        conn.execute('DELETE FROM board_order WHERE id=?', (o['id'],))
+    live = {r[0] for r in conn.execute('SELECT stage FROM board_task WHERE card_id=? AND cancelled_at IS NULL', (keep_id,))}
+    for t in conn.execute('SELECT id, stage FROM board_task WHERE card_id=? AND cancelled_at IS NULL', (other_id,)).fetchall():
+        if t['stage'] in live:                           # the kept card's deadline for that step stays the one in force
+            _cancel(conn, t['id'], now, 'merged into PB-%d' % keep_id)
+    conn.execute('UPDATE board_task SET card_id=? WHERE card_id=?', (keep_id, other_id))
+    conn.execute('UPDATE OR IGNORE board_hint SET card_id=? WHERE card_id=?', (keep_id, other_id))
+    conn.execute('DELETE FROM board_hint WHERE card_id=?', (other_id,))
+    conn.execute('INSERT OR IGNORE INTO board_sales(card_id, market, day, units, ts) '
+                 'SELECT ?, market, day, units, ts FROM board_sales WHERE card_id=?', (keep_id, other_id))
+    conn.execute('DELETE FROM board_sales WHERE card_id=?', (other_id,))
+    conn.execute('UPDATE board_event SET card_id=? WHERE card_id=?', (keep_id, other_id))
+    for r in conn.execute("SELECT id, data_json FROM alert WHERE target='board'").fetchall():
+        d = json.loads(r[1] or '{}')
+        if d.get('card_id') == other_id:
+            conn.execute('UPDATE alert SET data_json=? WHERE id=?', (json.dumps({**d, 'card_id': keep_id}), r[0]))
+    raw = json.loads(conn.execute('SELECT data_json FROM board_card WHERE id=?', (other_id,)).fetchone()[0] or '{}')
+    raw.pop('milestones', None)                          # the kept card's progress stays its own
+    _merge_data(keep['data'], raw)
+    _save(conn, keep, now)
+    if other['image'] and not keep['image']:
+        conn.execute('UPDATE board_card SET image=? WHERE id=?', (other['image'], keep_id))
+    _event(conn, keep_id, 'created', 'PB-%d (%s) merged into this card: one card for every market%s' % (
+        other_id, _name(other['market']), '. Not kept, as this card had its own: ' + '; '.join(dropped) if dropped else ''),
+        now, {'merged': other_id, 'dropped': dropped} if dropped else {'merged': other_id})
+    conn.execute('DELETE FROM board_card WHERE id=?', (other_id,))
+    return {'id': keep_id, 'merged': other_id, 'dropped': dropped}
+
+
+def merge_duplicates(conn, now=None):
+    """One card per product: cards of the same product in different markets (added before cards could hold several
+    markets) are merged into the one furthest along, else the one with an ASIN, the most history, the oldest."""
+    now = int(now or time.time())
+    cards = [dict(r) for r in conn.execute('SELECT id, kw, asin, stage, market FROM board_card WHERE archived_at IS NULL '
+                                           'ORDER BY id')]
+    groups = []
+    for c in cards:
+        g = next((g for g in groups if any(same_product(c, x) for x in g) and
+                  len({x['asin'] for x in g + [c] if x['asin']}) <= 1), None)
+        g.append(c) if g else groups.append([c])
+    out = []
+    for g in groups:
+        if len(g) < 2:
+            continue
+        events = {c['id']: conn.execute('SELECT COUNT(*) FROM board_event WHERE card_id=?', (c['id'],)).fetchone()[0]
+                  for c in g}
+        stage = lambda c: rules.STAGES.index(c['stage']) if c['stage'] in rules.STAGES else 0
+        keep = max(g, key=lambda c: (stage(c), bool(c['asin']), events[c['id']], -c['id']))
+        for c in g:
+            if c['id'] != keep['id']:
+                out.append(merge_cards(conn, keep['id'], c['id'], now))
+                _add_market(conn, _card(conn, keep['id']), c['market'], now)
+    if out:
+        bump()
+    return out
 
 
 def update_card(conn, card_id, d, settings, now=None):
@@ -723,7 +874,7 @@ def _approve_if_done(conn, card_id, now):
         return {'trophies': []}
     ms['approved'] = now
     _finish(conn, card_id, 'approval', now)
-    if c['stage'] == 'approval':
+    if c['stage'] in ('precheck', 'approval'):          # every check ticked: the pre-check is passed too
         c['stage'] = 'sourcing'
         c['pos'] = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='sourcing'").fetchone()[0]
     _save(conn, c, now)
@@ -735,8 +886,9 @@ def _approve_if_done(conn, card_id, now):
 
 # ---------- milestones ----------
 def _idea_if_done(conn, card_id, now):
-    """An idea with its Amazon ASIN and Alibaba link is done: it moves on to Approval, and straight through it when
-    every check was ticked already. Returns {'moved': the stage it moved to or None, 'trophies'}."""
+    """An idea with its Amazon ASIN and Alibaba link is done: it moves on to Pre-check (you move it to Approval when
+    the pre-check is done), and straight on to Sourcing when every approval check was ticked already. Returns
+    {'moved': the stage it moved to or None, 'trophies'}."""
     c = _card(conn, card_id)
     ms = c['data']['milestones']
     if ms.get('idea_done') or not rules.idea_status(c['asin'], (c['data'].get('links') or {}).get('alibaba'))['complete']:
@@ -745,13 +897,13 @@ def _idea_if_done(conn, card_id, now):
     _finish(conn, card_id, 'idea', now)
     moved = None
     if c['stage'] == 'idea':
-        c['stage'], moved = 'approval', 'approval'
-        c['pos'] = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='approval'").fetchone()[0]
-        _event(conn, card_id, 'moved', 'Moved to Approval: the Amazon ASIN and the Alibaba link are in', now)
+        c['stage'], moved = 'precheck', 'precheck'
+        c['pos'] = conn.execute("SELECT COALESCE(MAX(pos), 0) + 1 FROM board_card WHERE stage='precheck'").fetchone()[0]
+        _event(conn, card_id, 'moved', 'Moved to Pre-check: the Amazon ASIN and the Alibaba link are in', now)
     _save(conn, c, now)
     _watch(conn, c['kw'], c['market'], 'researching', now)
     won = _approve_if_done(conn, card_id, now)['trophies']
-    return {'moved': 'sourcing' if won else moved, 'trophies': won}
+    return {'moved': 'sourcing' if won and _card(conn, card_id)['stage'] == 'sourcing' else moved, 'trophies': won}
 
 
 def _finish(conn, card_id, stage, now):
@@ -1043,7 +1195,7 @@ def send_now(conn, task_id, now=None):
 
 def _todo(conn, card, stage, settings, per_usd, now):
     """What is still open in a stage, in plain lines for the emails."""
-    if stage == 'idea':
+    if stage in ('idea', 'precheck'):
         return rules.idea_status(card['asin'], (card['data'].get('links') or {}).get('alibaba'))['missing']
     orders = _orders(conn, card['id'])
     if stage == 'sourcing':
@@ -1233,16 +1385,16 @@ def _inform_item(conn, c):
             at.append([ln['market'], 'eta:' + eta])
     amazon, a_search = inform.amazon_link(ac.MARKETS.get(c['market'], ac.MARKETS['US'])['site'], c['asin'], c['kw'])
     alibaba, b_search = inform.alibaba_link((c['data'].get('links') or {}).get('alibaba'), c['kw'])
-    return {'id': c['id'], 'title': c['title'], 'image': c['image'], 'stage': c['stage'],
+    return {'id': c['id'], 'title': c['title'], 'image': c['image'], 'stage': c['stage'], 'tags': c['data'].get('tags') or [],
             'order': 'First order' if not o or o['n'] == 1 else 'Re-order #%d' % o['n'],
             'units': [[ln['market'], ln['units']] for ln in lines], 'sourcing': src, 'at_amazon': at,
             'amazon': amazon, 'amazon_search': a_search, 'alibaba': alibaba, 'alibaba_search': b_search}
 
 
 def inform_items(conn):
-    """Every product on the board for the product update, Sourcing first."""
+    """Every product on the board for the product update, in the email's stage order (Sourcing & PO, Pre-check, ...)."""
     cards = [_card(conn, r[0]) for r in conn.execute('SELECT id FROM board_card WHERE archived_at IS NULL').fetchall()]
-    cards.sort(key=lambda c: (rules.STAGES.index(c['stage']) if c['stage'] in rules.STAGES else 9, c['pos'] or 0, c['id']))
+    cards.sort(key=lambda c: (inform.email_rank(c['stage']), c['pos'] or 0, c['id']))
     return [_inform_item(conn, c) for c in cards]
 
 
@@ -1306,7 +1458,7 @@ def _inform_send(db, settings, send, to_ids, message, now, auto=False):
     db.write(_inform_sent, m, now, auto, how)
     bump()
     return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'changes': len(m['changes']),
-            'opened': how in ('opened', 'calendar')}
+            'opened': how in ('opened', 'calendar'), 'pasted': bool(getattr(how, 'pasted', False))}
 
 
 def inform_send(db, settings, send, to_ids=None, message='', now=None):
@@ -1383,10 +1535,11 @@ DEADLINES_KEY = 'board_deadlines'    # ui_state: the last deadlines email {'sent
 def deadline_items(conn):
     """Every open deadline on the board, the soonest first, and the products without one: (items, titles)."""
     items, none = [], []
-    for r in conn.execute('SELECT id, title, market FROM board_card WHERE archived_at IS NULL ORDER BY pos, id').fetchall():
+    for r in conn.execute('SELECT id, title, market, data_json FROM board_card WHERE archived_at IS NULL ORDER BY pos, id').fetchall():
         open_ = [t for t in _tasks(conn, r['id']).values() if not t['done_at']]
+        tags = json.loads(r['data_json'] or '{}').get('tags') or []
         items += [{'id': r['id'], 'title': r['title'], 'market': r['market'], 'stage': t['stage'], 'due_day': t['due_day'],
-                   'note': t['note']} for t in open_]
+                   'note': t['note'], 'tags': tags} for t in open_]
         if not open_:
             none.append(r['title'])
     items.sort(key=lambda i: (i['due_day'], i['title'].lower()))
@@ -1435,10 +1588,12 @@ def deadlines_send(db, settings, send, to_ids=None, message='', now=None):
             raise BoardError('Pick who to email.' if m['people'] else 'Add people to your Notifier list first.')
         if not m['items']:
             raise BoardError('No product has a deadline yet: open a product and press Set a deadline.')
-        opened = send(m['to'], m['subject'], m['text'], m['html'], None) in ('opened', 'calendar')
+        how = send(m['to'], m['subject'], m['text'], m['html'], None)
+        opened = how in ('opened', 'calendar')
         db.write(_deadlines_sent, m, now, opened)
         bump()
-        return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'count': len(m['items']), 'opened': opened}
+        return {'to': [n for n, _ in m['to']], 'subject': m['subject'], 'count': len(m['items']), 'opened': opened,
+                'pasted': bool(getattr(how, 'pasted', False))}
     finally:
         _send_lock.release()
 

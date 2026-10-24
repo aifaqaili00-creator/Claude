@@ -32,6 +32,14 @@ GENERIC = {'generic', 'unbranded', 'nobrand', 'unknown', 'na', 'amazon', 'amazon
 RISKY = re.compile(r'\b(books?|kindle|ebooks?|software|music|video games?|renewed|refurbished|mobile phones?|smartphones?|'
                    r'cell phones?|laptops?|notebooks? computers?|tablets?|computers?|desktops?|towers?|tvs?|televisions?|'
                    r'monitors?|graphics cards?|gift cards?|prescription|subscriptions?|warrant(?:y|ies)|services?|digital)\b', re.I)
+# hard for a new seller's own product: shoppers buy the brand they know, or sizes and returns eat the margin
+HARD = (('food & drink', re.compile(r'\b(grocery|pantry|foods?|drinks?|beverages?|colas?|sodas?|soft drinks|juices?|snacks?|'
+                                    r'coffee|teas?|candy|chocolates?|confectionery|cereals?|breakfast|dairy|water|energy drinks|'
+                                    r'beer|wine|spirits|syrups?|sauces?|condiments?|dates)\b', re.I)),
+        ('clothing (sizes)', re.compile(r'\b(clothing|fashion|apparel|shoes|footwear|trainers|sneakers|boots|sandals|underwear|'
+                                        r'trunks|briefs|bras?|dresses|shirts?|t-shirts|tees|tops|pants|trousers|jeans|leggings|'
+                                        r'shorts|skirts|jackets?|coats?|hoodies|sweaters|tracksuits|socks|lingerie|swimwear|'
+                                        r'rash guards|activewear|uniform)\b', re.I)))
 ROLES = ('amazon', 'global_store', 'reseller', 'seller', 'unknown')
 ROLE_LABEL = {'amazon': 'Amazon itself', 'global_store': "Amazon's Global Store", 'reseller': 'import resellers',
               'seller': 'brands and their sellers', 'unknown': 'not named'}
@@ -42,6 +50,9 @@ THRESH = {
     'thin_brands': 3,              # brands with a real share (real_share of the niche) at most
     'thin_sellers': 1.5,           # ... each sold by this few sellers on average
     'thin_top3': 0.7,              # ... and the top 3 brands take this much of it
+    'famous_us': 2000000,          # US$ a month in the USA from which a brand is famous (shoppers ask for it by name)
+    'famous_reviews': 20000,       # ... or this many reviews in the market itself
+    'famous_min': 0.5,             # famous brands' share from which a niche is locked by big brands
     'real_share': 0.05,
     'us_ratio': 3.0,               # the niche's share of the US market is this many times its share here
     'min_revenue': {'AU': 20000, 'AE': 50000, 'US': 200000},   # a month, in the marketplace's money
@@ -57,6 +68,8 @@ TYPES = (
                                               'competes with Amazon yet.'),
     ('thin', 'Few brands', 'Only a few brands sell it, each with few sellers.'),
     ('us_proven', 'Bigger in the USA', 'It takes a much bigger share of the US market than of this one: room to grow here.'),
+    ('brand_locked', 'Big brands', 'Famous brands hold most of it: shoppers ask for the brand by name, so a new brand '
+                                   'starts far behind, even where Amazon sells it or ships it in.'),
     ('crowded', 'Spread out', 'Many brands and sellers share it: no clear gap.'),
 )
 LABEL = {k: v for k, v, _ in TYPES}
@@ -124,7 +137,16 @@ def risk_of(name, category=None):
     if m:
         return m.group(0).lower()
     m = fr.TECH[1].search(name or '')
-    return m.group(0).lower() if m else None
+    if m:
+        return m.group(0).lower()
+    return next((why for why, rx in HARD if rx.search('%s %s' % (name or '', category or ''))), None)
+
+
+def famous_brands(us_rows=(), local_rows=()):
+    """Brand keys shoppers ask for by name: brands selling US$2M+ a month in the USA, or with 20,000+ reviews here."""
+    out = {brand_key(r.get('brand')) for r in us_rows or () if (_f(r.get('revenue')) or 0) >= THRESH['famous_us']}
+    out |= {brand_key(r.get('brand')) for r in local_rows or () if (_f(r.get('reviews')) or 0) >= THRESH['famous_reviews']}
+    return out - {''} - GENERIC
 
 
 def _wavg(pairs):
@@ -134,8 +156,9 @@ def _wavg(pairs):
 
 
 # ---------- the baseline: niches from SmartScout brands ----------
-def niches(rows, market):
-    """SmartScout brand rows (storage.SS_BRAND_COLS) of one market -> [niche], biggest revenue first."""
+def niches(rows, market, famous=()):
+    """SmartScout brand rows (storage.SS_BRAND_COLS) of one market -> [niche], biggest revenue first. famous: brand keys
+    shoppers ask for by name (famous_brands())."""
     groups = {}
     for r in rows or ():
         name = ' '.join(str(r.get('subcategory') or '').split())
@@ -163,6 +186,8 @@ def niches(rows, market):
             if cat and cat != '-':
                 cats[cat] = cats.get(cat, 0) + r['revenue']
         amazon_rev = sum(r['revenue'] for r in rs if r['role'] == 'amazon')
+        big = [r for r in rs if brand_key(r.get('brand')) in famous and r['role'] in ('amazon', 'seller')]   # sold here: a
+        # private label shipped in by the Global Store is not one shoppers ask for by name
         best_other = max([r['revenue'] for r in rs if r['role'] != 'amazon'] or [0])
         per_listing = [((_f(r.get('reviews')) or 0) / max(1, _f(r.get('products')) or 1), r['revenue']) for r in rs
                        if _f(r.get('reviews')) is not None]
@@ -176,6 +201,7 @@ def niches(rows, market):
             'shares': {k: round(v, 4) for k, v in shares.items()},
             'stores': {k: round(v, 4) for k, v in sorted(stores.items(), key=lambda kv: -kv[1])},
             'cross': round(shares['global_store'] + shares['reseller'], 4),
+            'famous': round(sum(r['revenue'] for r in big) / total, 4), 'famous_names': [str(r.get('brand')) for r in big[:3]],
             'amazon_next': round(best_other / amazon_rev, 4) if amazon_rev else None,
             'avg_sellers': _wavg([(_f(r.get('avg_sellers')), r['revenue']) for r in rs]),
             'reviews': _wavg(per_listing),
@@ -225,6 +251,9 @@ def niche_gap(n, ratio=None):
     sh, market = n['shares'], n.get('market')
     conf = 'low' if sh.get('unknown', 0) >= 0.4 else 'medium'          # SmartScout's estimates, a month old at best
     fits = []
+    if n.get('famous', 0) >= THRESH['famous_min']:
+        return _out('brand_locked', 'Famous brands hold %s of it (%s): shoppers buy the brand they know.' % (
+            _pct(n['famous']), ', '.join(n['famous_names'])), conf, also=[])
     if n['cross'] >= THRESH['cross_min']:
         parts = []
         if sh['global_store']:
@@ -267,6 +296,7 @@ def score(n, gap, ratio=None):
     thin = _clip((3.5 - (n['avg_sellers'] or 3.5)) / 2.5) * _clip(n['top3'])
     usp = _clip(math.log(ratio) / math.log(10)) if ratio and ratio > 1 else 0
     openness = max(_clip(n['cross'] / 0.8), amazon_gap, thin, usp)
+    openness *= 1 - n.get('famous', 0)                 # a new brand cannot take what shoppers ask for by name
     if not gap['gap']:
         openness *= 0.6
     barrier = 1 - _clip(math.log10((n['reviews'] or 0) + 1) / math.log10(5000)) if n['reviews'] is not None else 0.5
@@ -282,7 +312,7 @@ def rank_niches(rows, market, us_rows=None, min_revenue=None):
     """The scored niches of a market: [{niche..., 'gap', 'score', 'parts', 'us_ratio', 'us_revenue'}], best first. Niches
     under the market's minimum revenue a month are left out."""
     floor = THRESH['min_revenue'].get(market, 20000) if min_revenue is None else min_revenue
-    ns = niches(rows, market)
+    ns = niches(rows, market, famous_brands(us_rows, rows))
     total = sum(n['revenue'] for n in ns)
     idx, us_total = us_index(niches(us_rows, 'US')) if us_rows else ({}, 0)
     out = []
@@ -502,3 +532,266 @@ def category_table(items, market, units_fn=None, known=None, names=(), offers=No
         kind, why = 'crowded', '%d brands share the Best Sellers; the biggest takes %s.' % (len(brands), _pct(top1))
     res['gap'] = _out(kind, why, 'medium' if read >= 3 else 'low', also=[])
     return res
+
+
+# ---------- products to sell: real listings from the live readings ----------
+ROLE_TXT = {'amazon': 'Amazon itself', 'store': "Amazon's Global Store", 'abroad': 'a seller abroad', 'local': 'a local seller',
+            'unknown': 'seller not read'}
+
+
+def product_score(it, market):
+    """0-100 for one listing read live, and its reasons: demand 30 (the "bought" badge, else its Best Sellers rank),
+    shipped from abroad 25, reviews to beat 20, price in the workable band 15, its niche still open 10."""
+    why = []
+    if it.get('bought'):
+        demand = _clip(math.log10(it['bought'] + 1) / math.log10(2000))
+        why.append('%s+ bought last month' % _n(it['bought']))
+    elif it.get('rank'):
+        demand = _clip(1 - math.log10(it['rank']) / 2)
+        why.append('#%d in Best Sellers, %s' % (it['rank'], it.get('category') or 'its category'))
+    else:
+        demand = 0.3
+    role = it.get('role') or 'unknown'
+    abroad = 1.0 if role in ('store', 'abroad') or it.get('origin') == 'overseas' else 0.6 if role == 'amazon' else \
+        0.2 if role == 'local' else 0.4
+    if abroad == 1.0:
+        why.append('ships from abroad%s%s' % (' in %d days' % it['days'] if it.get('days') else '',
+                                              ' (%s)' % it['seller'] if it.get('seller') else ''))
+    elif role == 'amazon':
+        why.append('sold by Amazon itself, no local seller beside it' if it.get('verdict') == 'amazon_only' else 'sold by Amazon itself')
+    rv = it.get('reviews')
+    barrier = 1 - _clip(math.log10(rv + 1) / math.log10(3000)) if rv is not None else 0.5
+    if rv is not None and rv < 300:
+        why.append('only %s review%s to beat' % (_n(rv), '' if rv == 1 else 's'))
+    pf = price_fit(it.get('price'), market)
+    price = 0.5 if pf is None else 1.0 if pf else 0.3
+    niche = {'open': 1.0, 'amazon_only': 1.0, 'few': 0.5}.get(it.get('verdict'), 0.7 if it.get('source') == 'best' else 0.2)
+    if it.get('verdict') in ('open', 'amazon_only'):
+        why.append('its niche is open now')
+    total = 30 * demand + 25 * abroad + 20 * barrier + 15 * price + 10 * niche
+    return int(round(total)), why
+
+
+def rejudge(h, market, max_sellers=None):
+    """'hit', 'look' or None for a hunted phrase kept from before, by today's limits (its sellers and sales were kept), so a
+    change of limits shows at once, without reading Amazon again."""
+    cap = max_sellers or HUNT['max_sellers']
+    n, d = h.get('sellers') or 0, h.get('demand') or 0
+    if not n or h.get('verdict') == 'unread':
+        return None
+    floor, look = HUNT['min_demand'].get(market, 200), HUNT['look_demand'].get(market, 30)
+    if n <= cap and d >= floor:
+        return 'hit'
+    if (n <= HUNT['look_sellers'] and d >= floor) or (n <= cap and d >= look):
+        return 'look'
+    return None
+
+
+def products(checks, categories, market, limit=80, max_sellers=None):
+    """The listings worth a look, best first, each listing once: first the products the hunt found inside the niches
+    (proven demand, few sellers: source 'hunt'), then the top listings of open niches ('niche') and Best Sellers shipped
+    in from abroad ('best'). checks: {niche_key: live check with 'data' and 'name'}; categories: storage.mg_categories.
+    [{'asin', 'title', 'image', 'price', 'bought', 'reviews', 'rating', 'days', 'origin', 'role', 'seller', 'niche',
+    'niche_key', 'phrase', 'verdict', 'source', 'rank', 'category', 'sellers', 'fast', 'score', 'why', 'flags',
+    'risk_why'}]."""
+    band = DECIDE_RULES['price_band']['limit'].get(market)
+    found = ({}, {}, {})                               # (strong hunt finds, worth a look, other listings) by ASIN
+
+    def add(it, scored, tier):
+        if not it.get('asin') or not it.get('title'):
+            return
+        it['score'], it['why'] = scored
+        it['flags'] = [label for label, rx in fr.CHECKS if rx.search(it['title'])]
+        if band and it.get('price') is not None and it['price'] < band[0]:
+            it['flags'].append('too cheap for a margin')
+        it['risk_why'] = risk_of(it['title'])
+        old = found[tier].get(it['asin'])
+        if not old or it['score'] > old['score']:
+            found[tier][it['asin']] = it
+    for key, c in (checks or {}).items():
+        d = c.get('data') or {}
+        name = c.get('name') or d.get('niche')
+        for h in d.get('hunt') or ():
+            tier = rejudge(h, market, max_sellers)
+            if tier and h.get('listings'):
+                t = h['listings'][0]
+                add({'asin': t.get('asin'), 'title': t.get('title'), 'image': t.get('image'), 'price': t.get('price'),
+                     'bought': h.get('demand'), 'reviews': t.get('reviews'), 'rating': t.get('rating'), 'days': t.get('days'),
+                     'origin': t.get('origin'), 'role': None, 'seller': None, 'niche': name, 'niche_key': key,
+                     'phrase': h['phrase'], 'verdict': c.get('verdict'), 'source': 'hunt', 'rank': None, 'category': None,
+                     'sellers': h.get('sellers'), 'fast': h.get('fast'), 'listings': h.get('listings'),
+                     'tier': 'strong' if tier == 'hit' else 'look'},
+                    hunt_score(h, market, max_sellers), 0 if tier == 'hit' else 1)
+        if c.get('verdict') not in ('open', 'amazon_only', 'few'):
+            continue                                   # a crowded or unread niche's top listings are not openings
+        for t in d.get('top') or ():
+            o = t.get('offer') or {}
+            it = {'asin': t.get('asin'), 'title': t.get('title'), 'image': t.get('image'), 'price': t.get('price'),
+                  'bought': t.get('bought'), 'reviews': t.get('reviews'), 'rating': t.get('rating'), 'days': t.get('days'),
+                  'origin': t.get('origin'), 'role': _role_of_offer(o, market) if o else None, 'seller': o.get('seller'),
+                  'niche': name, 'niche_key': key, 'phrase': c.get('phrase'), 'verdict': c.get('verdict'), 'source': 'niche',
+                  'rank': None, 'category': None, 'sellers': None, 'fast': None}
+            add(it, product_score(it, market), 2)
+    for cat in categories or ():
+        for t in (cat.get('data') or {}).get('top') or ():
+            o = t.get('offer')
+            role = _role_of_offer(o, market) if o else None
+            if role not in ('store', 'abroad'):
+                continue                               # a best seller stocked here (by Amazon or local sellers) is not an opening
+            it = {'asin': t.get('asin'), 'title': t.get('title'), 'image': t.get('image'), 'price': t.get('price'),
+                  'bought': None, 'reviews': t.get('reviews'), 'rating': None, 'days': o.get('days'), 'origin': 'overseas',
+                  'role': role, 'seller': o.get('seller'), 'niche': cat.get('category'), 'niche_key': None, 'phrase': None,
+                  'verdict': None, 'source': 'best', 'rank': t.get('rank'), 'category': cat.get('category'),
+                  'sellers': None, 'fast': None}
+            add(it, product_score(it, market), 2)
+    best = lambda d: sorted(d.values(), key=lambda x: (-x['score'], -(x.get('bought') or 0)))  # noqa: E731
+    seen, out = set(), []
+    for tier in found:                                  # strong first, then worth a look, then the rest; each ASIN once
+        for x in best(tier):
+            if x['asin'] not in seen:
+                seen.add(x['asin'])
+                out.append(x)
+    return out[:limit]
+
+
+# ---------- product hunt: one product inside a niche, proven demand and few sellers ----------
+FILLER = STOP | {'a', 'an', 'to', 'on', 'by', 'from', 'after', 'pack', 'pcs', 'set', 'piece', 'pieces', 'best', 'new'}
+HUNT = {'min_demand': {'AU': 200, 'AE': 100, 'US': 800},    # sold last month, summed over the listings of that product
+        'max_sellers': 6,                                 # listings of that exact product on page 1 (Settings: mg_max_sellers)
+        'look_demand': {'AU': 30, 'AE': 20, 'US': 100},  # "worth a look": less proven, shown below the strong ones
+        'look_sellers': 10}
+
+
+def content_words(text):
+    return {_fold(w) for w in config.norm_kw(text).replace('&', ' ').split() if w not in FILLER and len(w) > 1}
+
+
+QUALIFIERS = ('for', 'with', 'after', 'to', 'in', 'on', 'without')
+
+
+def product_words(phrase):
+    """The words that name the product itself: the ones before "for", "with", "after"... ("leg rest pillow for sleeping"
+    -> leg, rest, pillow). Titles rarely repeat what a product is for, so the rest is not required."""
+    words = config.norm_kw(phrase).replace('&', ' ').split()
+    cut = next((i for i, w in enumerate(words) if w in QUALIFIERS and i > 0), len(words))
+    return content_words(' '.join(words[:cut])) or content_words(phrase)
+
+
+def brand_words_of(rows, min_revenue=20000):
+    """Single-word brand names of a market's baseline (SmartScout brands selling min_revenue a month or more), lower case:
+    a phrase holding one ("small kitchen appliances breville") is a brand's own search, not a product to make."""
+    out = {'amazon'}
+    for r in rows or ():
+        k = brand_key(r.get('brand'))
+        if len(k) >= 4 and (_f(r.get('revenue')) or 0) >= min_revenue and k not in GENERIC:
+            out.add(k)
+    return out
+
+
+def hunt_phrases(base, keywords, brands=(), n=5, brand_words=None):
+    """Longer phrases shoppers type inside a niche (Amazon's suggestions, most common first), each worth its own search:
+    it shares at least half of the niche's words and adds one more, names none of the brands given, one per product."""
+    want = content_words(base)
+    need = max(1, math.ceil(len(want) / 2))
+    bad = {brand_key(b) for b in brands or () if len(brand_key(b)) >= 3}
+    seen, out = {niche_key(base)}, []
+    for k in keywords or ():
+        kn = config.norm_kw(k)
+        if not kn or kn.split()[-1] in FILLER | set(QUALIFIERS):
+            continue                                       # half typed ("cat toy ball for"): not a product
+        have = content_words(kn)
+        if len(have & want) < need or not (have - want):
+            continue
+        squashed = brand_key(kn)
+        if any(b in squashed if len(b) >= 5 else b in {brand_key(w) for w in kn.split()} for b in bad):
+            continue                                       # a brand's own search: shoppers want that brand
+        own = {brand_key(w) for w in base.split()}
+        if brand_words and any(brand_key(w) in brand_words and brand_key(w) not in own for w in kn.split()):
+            continue                                       # ... or any other brand of the market, or "amazon"
+        key = niche_key(kn)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(kn)
+        if len(out) >= n:
+            break
+    return out
+
+
+def sells(phrase, title):
+    """A listing sells the product of a phrase: every word naming the product is in its title (product_words), and so is
+    the rest of the phrase, one word aside for a phrase of 4 words or more ("leg rest pillow for sleeping" needs leg, rest,
+    pillow; "tablecloths for rectangle tables" needs rectangle too, not just any tablecloth)."""
+    have = content_words(title)
+    whole = content_words(phrase)
+    return bool(whole) and product_words(phrase) <= have and len(whole - have) <= (1 if len(whole) >= 4 else 0)
+
+
+def phrase_result(phrase, search, market, max_sellers=None, min_demand=None, estimates=None):
+    """Page 1 of one product phrase -> {'phrase', 'verdict': 'hit' | 'busy' | 'no_demand' | 'none' | 'unread', 'hit',
+    'why', 'sellers' (organic listings that sell it: sells()), 'demand' (a month: their "bought" badges, else the sales
+    rank's estimate from estimates {asin: units}), 'estimated' (listings counted from their sales rank), 'fast' (with
+    stock here), 'abroad', 'listings' (best selling first), 'unbadged' (the listings without a badge, for estimates),
+    'price_med'}. Too many sellers is decided before demand, so demand is only worked out for real candidates."""
+    cap = max_sellers or HUNT['max_sellers']
+    floor = HUNT['min_demand'].get(market, 200) if min_demand is None else min_demand
+    est = estimates or {}
+    s = search or {}
+    name = MARKET_NAMES.get(market, market)
+    base = {'phrase': phrase, 'hit': False, 'sellers': None, 'demand': None, 'estimated': 0, 'fast': None, 'abroad': None,
+            'listings': [], 'unbadged': [], 'price_med': s.get('price_med')}
+    if s.get('status') not in ('ok', 'empty', 'partial'):
+        return {**base, 'verdict': 'unread', 'why': 'Amazon %s could not be read (%s).' % (name, s.get('status') or 'not read')}
+    same = [r for r in s.get('rows') or () if not r.get('sponsored') and sells(phrase, r.get('title'))]
+    units = {r.get('asin'): (r.get('bought') or est.get(r.get('asin')) or 0) for r in same}
+    same.sort(key=lambda r: -units[r.get('asin')])
+    demand = sum(units.values())
+    n_est = sum(1 for r in same if not r.get('bought') and est.get(r.get('asin')))
+    fast = sum(1 for r in same if r.get('speed') == 'fast')
+    abroad = sum(1 for r in same if r.get('origin') == 'overseas')
+    out = {**base, 'sellers': len(same), 'demand': demand, 'estimated': n_est, 'fast': fast, 'abroad': abroad,
+           'listings': [{**{k: r.get(k) for k in ('asin', 'title', 'price', 'bought', 'reviews', 'rating', 'origin', 'days',
+                                                  'speed', 'image')}, 'units': units[r.get('asin')] or None} for r in same[:5]],
+           'unbadged': [r.get('asin') for r in same if not r.get('bought')]}
+    sl = lambda n: '%d listing%s sell%s it' % (n, '' if n == 1 else 's', 's' if n == 1 else '')  # noqa: E731
+    how = ' (%d from the sales rank)' % n_est if n_est else ''
+    look = HUNT['look_demand'].get(market, 30)
+    if not same:
+        return {**out, 'verdict': 'none', 'why': 'No listing on page 1 is exactly "%s": no proven demand for it yet.' % phrase}
+    if len(same) > cap and len(same) <= HUNT['look_sellers'] and demand >= floor:
+        return {**out, 'verdict': 'look', 'why': '%s (more than %d), about %s sold last month%s: room for one more?' % (
+            sl(len(same)), cap, _n(demand), how)}
+    if len(same) > cap:
+        return {**out, 'verdict': 'busy', 'why': '%s: more than %d.' % (sl(len(same)), cap)}
+    if demand < floor and demand >= look:
+        return {**out, 'verdict': 'look', 'why': 'Only %s, about %s sold last month%s: less than %s, but it sells.' % (
+            sl(len(same)), _n(demand), how, _n(floor))}
+    if demand < floor:
+        return {**out, 'verdict': 'no_demand', 'why': '%s, but only about %s sold last month%s; %s needed.' % (
+            sl(len(same)), _n(demand) if demand else 'none', how, _n(floor))}
+    return {**out, 'verdict': 'hit', 'hit': True,
+            'why': 'Only %s, about %s sold last month%s%s.' % (
+                sl(len(same)), _n(demand), how, ', %d with stock in %s' % (fast, name) if fast else ', none with stock in %s' % name)}
+
+
+def hunt_score(h, market, max_sellers=None):
+    """0-100 for a product found by the hunt, and its reasons: demand 35, few sellers 30, little local stock 10, reviews to
+    beat 15, price in the workable band 10."""
+    cap = max_sellers or HUNT['max_sellers']
+    top = (h.get('listings') or [{}])[0]
+    demand = _clip(math.log10((h['demand'] or 0) + 1) / math.log10(5000))
+    few = _clip(1 - ((h['sellers'] or 1) - 1) / cap)
+    local = 1 - _clip((h['fast'] or 0) / max(1, h['sellers'] or 1))
+    rv = top.get('reviews')
+    barrier = 1 - _clip(math.log10(rv + 1) / math.log10(3000)) if rv is not None else 0.5
+    pf = price_fit(top.get('price'), market)
+    price = 0.5 if pf is None else 1.0 if pf else 0.3
+    why = ['about %s sold last month across %d listing%s%s' % (_n(h['demand']), h['sellers'], '' if h['sellers'] == 1 else 's',
+                                                                  ' (sales rank)' if h.get('estimated') else ''),
+           'only %d seller%s: %s' % (h['sellers'], '' if h['sellers'] == 1 else 's',
+                                    '%d with stock in %s' % (h['fast'], MARKET_NAMES.get(market, market)) if h['fast'] else
+                                    'none with stock here, all slow')]
+    if rv is not None:
+        why.append('the best one has %s review%s' % (_n(rv), '' if rv == 1 else 's'))
+    total = 35 * demand + 30 * few + 10 * local + 15 * barrier + 10 * price
+    return int(round(total)), why

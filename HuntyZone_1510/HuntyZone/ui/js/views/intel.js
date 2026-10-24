@@ -13,15 +13,21 @@
   };
   let tab = 'sellers', mk = 'AU', kwSel = '', relAsin = '', D = null;
   view('intel', {title: 'Market intelligence', sub: 'Sellers, brands, categories, ads and listings in your markets',
-    onShow: p => { if (p[0] && TABS[p[0]]) tab = p[0]; if (p[1] && MK[p[1]]) mk = p[1]; drawTabs(); load(); }});
-  seg($('iMk'), v => { mk = v; kwSel = ''; relAsin = ''; load(); });
+    onShow: p => {                                 // #/intel/<tab>/<market>/<niche or ASIN>: every step has its own address
+      if (p[0] && TABS[p[0]]) tab = p[0];
+      if (p[1] && MK[p[1]]) mk = p[1];
+      if (tab === 'related') relAsin = p[2] || ''; else kwSel = p[2] || '';
+      drawTabs(); load();
+    }});
+  const to = (t, m, x) => step('intel', t, m, x);
+  seg($('intelMk'), v => to(tab, v));
   $('iTabs').addEventListener('click', e => {
     const b = e.target.closest('[data-tab]'); if (!b) return;
-    tab = b.dataset.tab; drawTabs(); load();
+    to(b.dataset.tab, mk);
   });
   function drawTabs() {
     $('iTabs').querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
-    setSeg($('iMk'), mk);
+    setSeg($('intelMk'), mk);
     $('iMeans').innerHTML = explain(esc(TABS[tab][1]));
   }
   const out = () => $('intelOut');
@@ -32,18 +38,26 @@
   const empty = (h, p) => `<div class="panel empty"><h2>${esc(h)}</h2><p>${p}</p></div>`;
   const kwPicker = (list, sel, allLabel) => `<label class="small">Niche <select id="iKw" aria-label="Niche"><option value="">${esc(allLabel)}</option>${(list || []).map(k => `<option value="${esc(k.kw)}" ${k.kw === sel ? 'selected' : ''}>${esc(k.display || k.kw)}</option>`).join('')}</select></label>`;
 
+  let seq = 0;
+  const STALE = {};
   async function load() {
+    const my = ++seq;                              // an answer to an earlier click never replaces the newer page
     out().innerHTML = '<div class="panel">' + busy('Loading\u2026') + '</div>';
-    const q = (path, extra = {}) => api(path + '?' + new URLSearchParams({market: mk, ...extra}));
+    const fresh = r => { if (my !== seq) throw STALE; return r; };
+    const q = async (path, extra = {}) => fresh(await api(path + '?' + new URLSearchParams({market: mk, ...extra})));
     try {
       if (tab === 'sellers') { D = await q('/api/intel/sellers'); sellers(); }
       else if (tab === 'brands') { D = await q('/api/intel/brands', kwSel ? {kw: kwSel} : {}); if (!kwSel) brandsAll(); else brandsNiche(await q('/api/intel/brands')); }
-      else if (tab === 'categories') { D = await api('/api/intel/categories'); categories(); }
+      else if (tab === 'categories') { D = fresh(await api('/api/intel/categories')); categories(); }
       else if (tab === 'origins') { D = await q('/api/intel/origins', kwSel ? {kw: kwSel} : {}); origins(kwSel ? null : await q('/api/intel/brands')); }
       else if (tab === 'related') { D = await q('/api/intel/related', relAsin ? {asin: relAsin} : {}); related(relAsin ? await q('/api/intel/related') : D); }
       else if (tab === 'ads') { D = await q('/api/intel/ads', kwSel ? {kw: kwSel} : {}); kwSel ? adsNiche() : adsAll(); }
       else scorecardForm();
-    } catch (e) { out().innerHTML = failPill(e.message); }
+    } catch (e) {
+      if (e === STALE) return;
+      console.error(e);
+      out().innerHTML = '<div class="panel">' + failPill(e.message || 'This view could not be drawn') + '</div>';
+    }
   }
 
   /* ---------- Sellers ---------- */
@@ -80,7 +94,7 @@
   function brandsNiche(all) {
     const d = D;
     if (!d.searched) { out().innerHTML = empty('Not searched yet', 'Check this keyword first.'); return; }
-    out().innerHTML = `<div class="panel stackv"><div class="row" style="justify-content:space-between">${kwPicker(all.keywords, kwSel, 'All niches')}
+    out().innerHTML = `<div class="panel stackv"><div class="row" style="justify-content:space-between"><div class="row"><button class="btn slim ghost" data-allkw>← All niches</button>${kwPicker(all.keywords, kwSel, 'All niches')}</div>
         <a class="btn slim" href="#/k/${mk}/${encodeURIComponent(d.kw)}">Keyword report</a></div>
       <div class="kpis">
         <div class="kpi"><span class="eyebrow">Brands on page 1</span><span class="v">${num(d.brands.length)}</span><span class="s">${num(d.listings)} organic listings</span></div>
@@ -219,17 +233,18 @@
     catch (e) { scorecardForm(); $('iSc').innerHTML = failPill(e.message); }
   }
 
-  out().addEventListener('change', e => { if (e.target.id === 'iKw') { kwSel = e.target.value; load(); } });
+  out().addEventListener('change', e => { if (e.target.id === 'iKw') to(tab, mk, e.target.value); });
   out().addEventListener('submit', e => {
     e.preventDefault();
-    if (e.target.id === 'iRelForm') { relAsin = $('iRelAsin').value.trim().toUpperCase(); load(); }
+    if (e.target.id === 'iRelForm') to('related', mk, $('iRelAsin').value.trim().toUpperCase());
     if (e.target.id === 'iScForm') { sc = {asin: $('iScAsin').value.trim().toUpperCase(), kw: $('iScKw').value.trim()}; compare(); }
   });
   out().addEventListener('click', e => {
     const k = e.target.closest('[data-kw]'), r = e.target.closest('[data-rel]');
-    if (k) { kwSel = k.dataset.kw; if (tab === 'brands' || tab === 'ads') load(); }
-    if (r) { relAsin = r.dataset.rel; load(); }
+    if (e.target.closest('[data-allkw]')) { to(tab, mk); return; }
+    if (k) { if (tab === 'brands' || tab === 'ads') to(tab, mk, k.dataset.kw); else kwSel = k.dataset.kw; }
+    if (r) to('related', mk, r.dataset.rel);
     if (e.target.closest('#iRelRead')) runJob('/api/report/product/refresh', {market: mk, asin: relAsin});
   });
-  out().addEventListener('keydown', e => { const r = e.target.closest('.inode'); if (r && e.key === 'Enter') { relAsin = r.dataset.rel; load(); } });
+  out().addEventListener('keydown', e => { const r = e.target.closest('.inode'); if (r && e.key === 'Enter') to('related', mk, r.dataset.rel); });
 })();

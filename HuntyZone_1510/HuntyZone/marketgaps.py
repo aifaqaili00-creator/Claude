@@ -9,7 +9,9 @@ that the app reads Amazon itself, politely and within the same daily budgets as 
    the app's own successor of SmartScout's brand table.
 2. check_niches(): the best baseline niches that are due (never read, or read over a week ago): the phrase shoppers
    type there (Amazon's suggestions), page 1 of its search, the buy boxes of its top 3 listings.
-   engine.marketgaps.live_verdict says whether the niche is still open. A gap that opens or starts filling up raises an
+   engine.marketgaps.live_verdict says whether the niche as a whole is still open (a broad niche rarely is).
+   hunt(): the products inside it: the longer phrases shoppers type (Amazon's suggestions), page 1 of each, how many
+   listings sell exactly that product and how much they sell. Proven demand with few sellers is a product to sell. A gap that opens or starts filling up raises an
    alert (Home, and a Windows notification).
 A read that was blocked, paused or out of budget is kept as 'unread' (a gap in the data), never as open.
 """
@@ -32,10 +34,14 @@ from engine import marketgaps as mg
 log = logging.getLogger('pc')
 CACHE = {}                      # (market, baseline import ids) -> ranked niches; cleared by a new SmartScout import
 SHOWN = 400                     # niches sent to the page per market
-USER_TOP = 8                    # niches a Refresh you start checks per market
-USER_CATS = 8                   # ... and Best Sellers categories it reads
-AUTO_TOP = 4                    # the automatic refresh, per market and day
-AUTO_CATS = 3
+USER_TOP = 4                    # niches a Refresh you start checks per market (a few minutes: Check now does one)
+USER_CATS = 3                   # ... and Best Sellers categories it reads
+AUTO_TOP = 2                    # the automatic refresh, per market and day
+AUTO_CATS = 1
+HUNT_USER = 4                   # product phrases searched inside each niche (a Refresh or Check now you start)
+HUNT_AUTO = 3                   # ... and in the automatic refresh
+RANK_PAGES = 3                  # product pages read per promising phrase for their sales rank (when badges are missing)
+SUGGEST_FRESH = 30              # days Amazon's suggestions for a niche are kept before they are asked again
 RECHECK_DAYS = 7                # a niche checked this recently is not checked again by a Refresh
 CATEGORY_DAYS = 3               # a category whose buy boxes were read this recently only re-reads its list
 BUYBOX_TOP = 5                  # top listings of a Best Sellers list whose buy box is read
@@ -68,7 +74,7 @@ def baseline(db, market):
         srows, s_as_of = db.read(storage.ss_sellers, market)
         if len(CACHE) > 8:
             CACHE.clear()
-        CACHE[key] = {'niches': mg.rank_niches(rows, market, us),
+        CACHE[key] = {'niches': mg.rank_niches(rows, market, us), 'brand_words': mg.brand_words_of(rows),
                       'missing': mg.missing_brands(us, rows, limit=150) if us and rows else [],
                       'sellers': mg.sellers_summary(srows, market), 'sellers_as_of': s_as_of}
     return CACHE[key]
@@ -106,6 +112,14 @@ def table(db, settings, market):
     total = sum(n['revenue'] for n in niches) or 0
     live = [r['live'] for r in rows if r['live']]
     cats.sort(key=lambda c: -(c['data'].get('units_total') or 0))
+    names = {n['key']: n['name'] for n in niches}
+    prods = mg.products({k: {**c, 'name': names.get(k)} for k, c in checks.items()}, cats, market,
+                        max_sellers=int(settings.get('mg_max_sellers') or mg.HUNT['max_sellers']))
+    hunted = [p for p in prods if p['source'] == 'hunt']
+    rest = [p for p in prods if p['source'] != 'hunt']
+    prods = hunted + found_elsewhere(db, settings, market, {p['asin'] for p in hunted}) + rest
+    for it in prods:
+        it['max_cogs_20'] = max_cost(it, market, settings)
     return {
         'market': market, 'currency': ac.MARKETS[market]['currency'], 'site': ac.MARKETS[market]['site'],
         'baseline': {'as_of': (base or {}).get('as_of'), 'file': (base or {}).get('file'), 'brands': (base or {}).get('n_rows'),
@@ -117,8 +131,10 @@ def table(db, settings, market):
                  'amazon': round(sum(n['revenue'] * n['shares']['amazon'] for n in niches) / total, 4) if total else None,
                  'amazon_gap': sum(1 for n in niches if n['gap']['type'] == 'amazon_then_gap'),
                  'open': sum(1 for x in live if x['verdict'] in ('open', 'amazon_only')),
+                 'found': sum(1 for x in live for h in x['hunt']
+                              if mg.rejudge(h, market, int(settings.get('mg_max_sellers') or mg.HUNT['max_sellers']))),
                  'checked': len(live), 'unread': sum(1 for x in live if x['verdict'] == 'unread')},
-        'niches': rows, 'categories': cats,
+        'niches': rows, 'categories': cats, 'products': prods,
         'missing': B['missing'], 'sellers': B['sellers'],
         'last_check': db.read(storage.mg_last_ts, market), 'auto_last': auto_last,
         'auto': bool(settings.get('mg_auto', True) and settings.get('auto_refresh', True)),
@@ -126,6 +142,55 @@ def table(db, settings, market):
         'types': [{'type': k, 'label': v, 'means': m} for k, v, m in mg.TYPES],
         'verdicts': [{'verdict': k, 'label': v, 'means': m} for k, v, m in mg.VERDICTS],
     }
+
+
+def found_elsewhere(db, settings, market, skip=()):
+    """Products the rest of the app found for this market, for Products to sell: the booming or brand-new products out of
+    stock with few sellers (stockwatch) and the Gap Finder's open gaps (proven in the USA, UK or Germany)."""
+    import reports
+    import stockwatch
+    from engine import marketgaps as eng
+    out, seen = [], set(skip)
+
+    def add(it):
+        if it['asin'] and it['asin'] not in seen and it.get('title'):
+            seen.add(it['asin'])
+            it['flags'] = [label for label, rx in eng.fr.CHECKS if rx.search(it['title'])]
+            it['risk_why'] = eng.risk_of(it['title'])
+            out.append(it)
+    try:
+        for r in stockwatch.table(db, settings)['rows']:
+            if r['fits'] and market in r['out']:
+                s = r['markets'][market]
+                add({'asin': r['asin'], 'title': r['title'], 'image': r['image'], 'price': s.get('price'), 'source': 'stock',
+                     'score': None, 'why': [r['idea']['why'], s['why']], 'niche': r['idea'].get('category'), 'phrase': None,
+                     'verdict': None, 'seller': None, 'days': None, 'origin': None, 'sellers': s.get('sellers'), 'tier': 'stock'})
+    except Exception:                                               # noqa: BLE001 - one source missing never empties the list
+        log.exception('products: out of stock')
+    try:
+        for r in reports.gaps_table(db, settings)['rows']:
+            if r.get('gap') and r.get('market') == market:
+                add({'asin': r['asin'], 'title': r['title'], 'image': r.get('image'), 'price': r.get('price'),
+                     'source': 'gapfinder', 'score': None, 'why': [r.get('label') or 'Gap', r.get('why') or ''],
+                     'niche': None, 'phrase': r.get('phrase'), 'verdict': None, 'seller': None,
+                     'days': r.get('delivery_days'), 'origin': None, 'sellers': r.get('sellers'), 'tier': 'gapfinder'})
+    except Exception:                                               # noqa: BLE001
+        log.exception('products: gap finder')
+    return out
+
+
+def max_cost(it, market, settings):
+    """The most you can pay your supplier per piece (US$) and keep 20% of the price, for a small parcel (the size is not
+    read here): Amazon's fees, sea freight, duty, ads and returns, as in the Gap Finder."""
+    from engine import profit
+    if not it.get('price'):
+        return None
+    try:
+        return profit.max_cogs({'market': market, 'price': it['price'], 'category': it.get('category') or '', 'kg': None,
+                                'dims_cm': None, 'registered': bool((settings.get('registered') or {}).get(market)),
+                                'date': config.market_today(market).isoformat()}, 0.20)
+    except Exception:                                # noqa: BLE001 - no price math is better than a broken page
+        return None
 
 
 def _live(c):
@@ -136,7 +201,7 @@ def _live(c):
             'conf': d.get('conf'), 'gap': d.get('gap'), 'ts': c['ts'], 'phrase': c['phrase'], 'status': c['status'],
             'fast': d.get('fast'), 'total': d.get('total'), 'over_share': d.get('over_share'), 'buyboxes': d.get('buyboxes'),
             'brands': d.get('brands') or [], 'top': d.get('top') or [], 'price_med': d.get('price_med'),
-            'bought_total': d.get('bought_total'), 'stopped': d.get('stopped'),
+            'bought_total': d.get('bought_total'), 'stopped': d.get('stopped'), 'hunt': d.get('hunt') or [],
             'history': [{'ts': t, 'verdict': v} for t, v in c.get('history', [])[-8:]]}
 
 
@@ -266,6 +331,99 @@ async def niche_phrase(S, mk, n):
     return p, 'suggestion' if p != base else 'name'
 
 
+HUNT_PREFIXES = ('', ' ', ' for ', ' with ', ' set', 'best ', ' a')   # what follows (or comes before) the niche's phrase
+
+
+async def suggest_light(checker, mk, seed):
+    """Amazon's suggestions around a phrase from 7 calls (ideas.suggest makes about 24): the same shape as ideas.suggest."""
+    seed = ' '.join(seed.lower().split())[:60]
+    found, failed = {}, 0
+    for i, p in enumerate(HUNT_PREFIXES):
+        prefix = p + seed if p == 'best ' else seed + p
+        try:
+            got = await ideas.complete(checker, mk, prefix)
+        except throttle.ThrottleError:
+            break
+        except Exception:                                           # noqa: BLE001 - one failed call skips one prefix
+            failed += 1
+            continue
+        for n, kw in enumerate(got):
+            if kw:
+                f = found.setdefault(kw, {'keyword': kw, 'hits': 0, 'best': 99, 'first': (i, n)})
+                f['hits'] += 1
+                f['best'] = min(f['best'], n + 1)
+    out = sorted(found.values(), key=lambda f: (-f['hits'], f['best'], f['first']))
+    return {'market': mk, 'seed': seed, 'keywords': out[:40], 'n_calls': len(HUNT_PREFIXES), 'n_failed': failed}
+
+
+async def niche_keywords(S, mk, seed):
+    """What shoppers type around a niche's phrase (7 calls to Amazon's search box), kept a month."""
+    have = S.db.read(storage.suggestions, mk, [seed], time.time() - SUGGEST_FRESH * 86400).get(config.norm_kw(seed))
+    if have and len(have['keywords']) > 11:
+        return have['keywords']
+    try:
+        got = await suggest_light(S.checker, mk, seed)
+    except throttle.ThrottleError:
+        return (have or {}).get('keywords') or []
+    except Exception as e:                                         # noqa: BLE001 - no suggestions: nothing to hunt
+        log.warning('suggest %s "%s" failed: %s', mk, seed, e)
+        return (have or {}).get('keywords') or []
+    kws = got.get('keywords') or []
+    await S.db.awrite(storage.save_suggest, mk, seed, kws, got.get('n_calls', 0), got.get('n_failed', 0),
+                      'ok' if kws else 'empty')
+    return [k['keyword'] for k in kws]
+
+
+async def hunt(S, mk, n, phrase, ctx, say=None, k=HUNT_USER):
+    """The products inside one niche: up to k longer phrases shoppers type, each searched and judged by
+    engine.marketgaps.phrase_result (proven demand, at most Settings' mg_max_sellers listings of it)."""
+    say = say or (lambda m: None)
+    if not phrase or ctx.get('stop') or not k:
+        return []
+    name = mg.MARKET_NAMES[mk]
+    say('Amazon %s: what shoppers type around "%s"' % (name, phrase))
+    kws = await niche_keywords(S, mk, phrase)
+    brands = [t['brand'] for t in n.get('top') or ()] + (n.get('famous_names') or [])
+    phrases = mg.hunt_phrases(phrase, kws, brands, k, baseline(S.db, mk).get('brand_words'))
+    cap = int(S.settings.get('mg_max_sellers') or mg.HUNT['max_sellers'])
+    out = []
+    for i, p in enumerate(phrases, 1):
+        if ctx.get('stop'):
+            break
+        say('Amazon %s: %s · product %d of %d · "%s"' % (name, n['name'], i, len(phrases), p))
+        search = await gapfinder.search_phrase(S, mk, p, ctx)
+        res = mg.phrase_result(p, search, mk, cap)
+        if res['verdict'] in ('no_demand', 'look') and res['sellers'] <= cap and res['unbadged']:   # few sellers, few
+                                                                       # badges: read their sales rank
+            est = await rank_estimates(S, mk, res['unbadged'][:RANK_PAGES], ctx, say)
+            if est:
+                res = mg.phrase_result(p, search, mk, cap, estimates=est)
+        out.append(res)
+    return out
+
+
+async def rank_estimates(S, mk, asins, ctx, say=None):
+    """{asin: units a month} from each listing's sales rank (its product page, kept two days, or the SP-API) through the
+    market's sales curve. Listings Amazon shows no "bought" badge for are not unsold: most simply sell under 50."""
+    from engine import curve as curvemod
+    cv = S.db.read(storage.get_curve, mk)
+    if not cv:
+        return {}
+    client = getattr(S, 'spapi', None)
+    out = {}
+    for a in asins:
+        if ctx.get('stop'):
+            break
+        (say or (lambda m: None))('Amazon %s: sales rank of %s' % (mg.MARKET_NAMES[mk], a))
+        got = await gapfinder.read_listing(S, mk, a, client, ctx)
+        page = got.get('page') or {}
+        rank = page.get('root_rank') or (got.get('catalog') or {}).get('rank')
+        u = curvemod.predict(cv, page.get('root_node'), rank) if rank else None
+        if u and u.get('v'):
+            out[a] = int(round(u['v']))
+    return out
+
+
 def due(niches, checks, now, n, keys=None):
     """The niches to check next: the ones you picked, else the best scored open baseline niches (not risky) never checked
     or checked over RECHECK_DAYS ago, never-checked first."""
@@ -273,9 +431,15 @@ def due(niches, checks, now, n, keys=None):
         want = list(dict.fromkeys(keys))
         by = {x['key']: x for x in niches}
         return [by[k] for k in want if k in by][:n]
-    todo = [x for x in niches if x['gap']['gap'] and not x['risky']
-            and now - (checks.get(x['key']) or {}).get('ts', 0) > RECHECK_DAYS * 86400]
-    todo.sort(key=lambda x: (x['key'] in checks, -x['score']))
+    def hunted(x):                                    # hunted under today's rules ('unbadged' came with the sales rank)
+        h = ((checks.get(x['key']) or {}).get('data') or {}).get('hunt')
+        return h is not None and all('unbadged' in r for r in h)
+
+    def stale(x):                                     # never checked, never hunted for products, or over a week old
+        c = checks.get(x['key'])
+        return not c or not hunted(x) or now - c['ts'] > RECHECK_DAYS * 86400
+    todo = [x for x in niches if x['gap']['gap'] and not x['risky'] and stale(x)]
+    todo.sort(key=lambda x: (hunted(x), -x['score']))
     return todo[:n]
 
 
@@ -296,7 +460,7 @@ def _alert(mk, n, prev, verdict, ts):
             'dedupe_key': 'mg|%s|%s|%s|%s' % (mk, n['key'], prev, verdict['verdict']), 'ts': ts}
 
 
-async def check_niche(S, mk, n, client=None, ctx=None, say=None):
+async def check_niche(S, mk, n, client=None, ctx=None, say=None, k=HUNT_USER):
     """Check one baseline niche on Amazon now and keep it. Returns (data, alert or None)."""
     ctx = ctx if ctx is not None else {}
     say = say or (lambda m: None)
@@ -319,6 +483,7 @@ async def check_niche(S, mk, n, client=None, ctx=None, say=None):
     if [o for o in offers if o]:
         await gapfinder.fill_sellers(S, mk, [o for o in offers if o], ctx, SELLER_PAGES)
     verdict = mg.live_verdict(search, offers, mk)
+    found = await hunt(S, mk, n, phrase, ctx, say, k)
 
     def facts(conn):
         return intel._brands(conn, mk, [r.get('asin') for r in organic]), intel._names(conn, mk)
@@ -327,9 +492,10 @@ async def check_niche(S, mk, n, client=None, ctx=None, say=None):
             'brands': mg.page_brands(organic, known, names, admod.avoid_words(phrase)),
             'price_med': search.get('price_med'), 'bought_total': search.get('bought_total'),
             'search_status': search.get('status'), 'snapshot_id': search.get('snapshot_id'),
-            'top': [{k: r.get(k) for k in ('asin', 'title', 'price', 'origin', 'days', 'bought', 'speed', 'offer')}
-                    for r in organic[:6]],
+            'top': [{k: r.get(k) for k in ('asin', 'title', 'price', 'origin', 'days', 'bought', 'speed', 'offer', 'reviews',
+                                           'rating', 'image')} for r in organic[:6]],
             'baseline': {'score': n['score'], 'gap': n['gap']['type'], 'revenue': n['revenue']},
+            'hunt': found,
             'stopped': _first_line(ctx['stop']) if ctx.get('stop') else None}
     status = 'ok' if verdict['verdict'] != 'unread' and all(offers) else 'partial' if verdict['verdict'] != 'unread' \
         else 'unread'
@@ -338,7 +504,7 @@ async def check_niche(S, mk, n, client=None, ctx=None, say=None):
     return data, _alert(mk, n, prev, verdict, time.time())
 
 
-async def check_niches(S, mk, n=USER_TOP, progress=None, keys=None, ctx=None):
+async def check_niches(S, mk, n=USER_TOP, progress=None, keys=None, ctx=None, k=HUNT_USER):
     """Check the next due baseline niches of one market (or the ones you picked). Returns {'note', 'counts', 'alerts'}."""
     say = progress or (lambda m: None)
     ctx = ctx if ctx is not None else {}
@@ -352,18 +518,19 @@ async def check_niches(S, mk, n=USER_TOP, progress=None, keys=None, ctx=None):
         return {'note': 'Amazon %s: every open niche was checked in the last %d days' % (name, RECHECK_DAYS), 'counts': {},
                 'alerts': []}
     client = getattr(S, 'spapi', None)
-    counts, alerts = {}, []
+    counts, alerts, hits = {}, [], 0
     for i, x in enumerate(todo, 1):
         if ctx.get('stop'):
             break
         say('Amazon %s: niche %d of %d · %s' % (name, i, len(todo), x['name']))
-        d, a = await check_niche(S, mk, x, client, ctx, say)
+        d, a = await check_niche(S, mk, x, client, ctx, say, k)
         counts[d['verdict']] = counts.get(d['verdict'], 0) + 1
+        hits += sum(1 for h in d['hunt'] if h['hit'])
         if a:
             alerts.append(a)
     open_ = counts.get('open', 0) + counts.get('amazon_only', 0)
-    note = 'Amazon %s: %d of %d niche%s checked, %d still open' % (
-        name, sum(counts.values()), len(todo), '' if len(todo) == 1 else 's', open_)
+    note = 'Amazon %s: %d of %d niche%s checked, %d open as a whole, %d product%s with proven demand and few sellers' % (
+        name, sum(counts.values()), len(todo), '' if len(todo) == 1 else 's', open_, hits, '' if hits == 1 else 's')
     if counts.get('unread'):
         note += ', %d not read' % counts['unread']
     if ctx.get('stop'):
@@ -380,7 +547,7 @@ async def _notify(S, alerts):
     return fresh
 
 
-async def refresh_market(S, mk, n=USER_TOP, cats=USER_CATS, progress=None, keys=None):
+async def refresh_market(S, mk, n=USER_TOP, cats=USER_CATS, progress=None, keys=None, k=HUNT_USER):
     """One market: its Best Sellers categories (unless you picked niches), then the niches due. A block ends the run after
     keeping what was read; in the automatic refresh it is raised, so the scheduler pauses that marketplace."""
     ctx = {}
@@ -388,7 +555,7 @@ async def refresh_market(S, mk, n=USER_TOP, cats=USER_CATS, progress=None, keys=
     if keys is None and cats:
         notes.append(await sweep(S, mk, cats, progress, ctx))
     if not ctx.get('stop'):
-        out = await check_niches(S, mk, n, progress, keys, ctx)
+        out = await check_niches(S, mk, n, progress, keys, ctx, k)
         notes.append(out['note'])
         await _notify(S, out['alerts'])
     if ctx.get('stop') and isinstance(ctx['stop'], ac.BlockedError) and ac.BACKGROUND.get():
@@ -398,8 +565,6 @@ async def refresh_market(S, mk, n=USER_TOP, cats=USER_CATS, progress=None, keys=
 
 async def refresh(S, progress, markets=None, n=USER_TOP, cats=USER_CATS, keys=None):
     """Your own Refresh: each market's Best Sellers categories and its next niches. Returns {'notes'}."""
-    notes = []
-    for mk in markets or config.TARGET_MARKETS:
-        out = await refresh_market(S, mk, n, cats, progress, keys)
-        notes.append(out['note'])
-    return {'notes': notes}
+    outs = await asyncio.gather(*(refresh_market(S, mk, n, cats, progress, keys)          # Australia and the UAE side
+                                  for mk in markets or config.TARGET_MARKETS))              # by side: each has its own pace
+    return {'notes': [o['note'] for o in outs]}

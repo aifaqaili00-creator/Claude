@@ -29,7 +29,7 @@ def baseline(db):
         return {'brand': name, 'subcategory': sub, 'revenue': rev, 'dominant_seller': seller, 'avg_sellers': sellers,
                 'avg_price': 30.0, 'reviews': 100, 'products': 5, 'category': 'Home'}
     rows = [b('Glisten', 'Oven Cleaner', 200000, 'Amazon US'), b('Shine', 'Oven Cleaner', 20000, 'Shop AU', 2),
-            b('Bonds', "Men's Pants", 30000, 'Amazon AU'),
+            b('Brushy', 'Toilet Brushes', 30000, 'Amazon AU'),
             b('A', 'Cutlery', 90000, 'S1', 5), b('B', 'Cutlery', 90000, 'S2', 5), b('C', 'Cutlery', 90000, 'S3', 5),
             b('D', 'Cutlery', 90000, 'S4', 5)]
     db.write(storage.save_ss_import, 'ss_brands', 'AU', 'smartscout - AU brands.xlsx', 'sha-au', rows, time.time())
@@ -77,7 +77,7 @@ def env(tmp_path, monkeypatch):
 def test_open_niches_are_checked_best_first_and_kept(env):
     S, calls, _, _ = env
     out = asyncio.run(marketgaps.check_niches(S, 'AU', 1))
-    assert out['counts'] == {'open': 1} and '1 still open' in out['note']
+    assert out['counts'] == {'open': 1} and '1 open as a whole' in out['note']
     assert ('search', 'AU', 'oven cleaner') in calls                   # Amazon's own suggestion, the shortest that fits
     assert ('page', 'AU', 'B0A') in calls and ('page', 'AU', 'B0B') in calls and ('seller', 'AU', 'SLOC') in calls
     key = mg.niche_key('Oven Cleaner')
@@ -88,7 +88,7 @@ def test_open_niches_are_checked_best_first_and_kept(env):
     assert d['over_share'] == round(200 / 300, 4) and d['baseline']['gap'] == 'global_store'
     assert d['top'][0]['offer']['seller'] == 'Amazon US (Global Store)'
     again = asyncio.run(marketgaps.check_niches(S, 'AU', 5))             # checked this week: the next open niche instead
-    assert again['counts'] and mg.niche_key("Men's Pants") in S.db.read(storage.mg_checks, 'AU')
+    assert again['counts'] and mg.niche_key('Toilet Brushes') in S.db.read(storage.mg_checks, 'AU')
     assert mg.niche_key('Cutlery') not in S.db.read(storage.mg_checks, 'AU')          # spread out: not a gap, not checked
 
 
@@ -98,7 +98,7 @@ def test_a_gap_filling_up_raises_one_alert(env):
     asyncio.run(marketgaps.refresh_market(S, 'AU', 1, 0, keys=[key]))
     S.checker.rows = [search_row('B0L%d' % i, 'Oven Cleaner Local %d' % i, 'FREE delivery Tomorrow', bought=50) for i in range(7)]
     out = asyncio.run(marketgaps.refresh_market(S, 'AU', 1, 0, keys=[key]))
-    assert out['status'] == 'ok' and '0 still open' in out['note']
+    assert out['status'] == 'ok' and '0 open as a whole' in out['note']
     c = S.db.read(storage.mg_checks, 'AU')[key]
     assert c['verdict'] == 'closing' and [v for _, v in c['history']] == ['open', 'closing']
     alerts = S.db.read(storage.list_alerts)
@@ -167,3 +167,31 @@ def test_the_page_data_and_the_gap_finder_preference(env):
     cands = [{'cluster': 'X1', 'title': 'Tea Towel Set'}, {'cluster': 'X2', 'title': 'Glisten Oven Cleaner Spray'}]
     assert [c['cluster'] for c in S.db.read(gapfinder.due, cands, 'AU', time.time(), 2, strong)] == ['X2', 'X1']
     assert [c['cluster'] for c in S.db.read(gapfinder.due, cands, 'AU', time.time(), 2)] == ['X1', 'X2']
+
+
+def test_the_hunt_finds_a_product_with_proven_demand_and_few_sellers(env):
+    S, calls, _, _ = env
+    S.checker.rows = [search_row('B0A', 'Oven Cleaner Spray Max 500ml', 'FREE International delivery 20 - 25 Nov', intl=True,
+                                 bought=400),
+                      search_row('B0B', 'Oven Cleaner Spray Lemon', 'FREE delivery Tomorrow', bought=50),
+                      search_row('B0C', 'Kitchen Degreaser Gel 750ml', 'FREE delivery Tomorrow', bought=900)]
+    out = asyncio.run(marketgaps.check_niches(S, 'AU', 1))
+    assert '1 product with proven demand and few sellers' in out['note']
+    assert ('search', 'AU', 'oven cleaner spray') in calls                   # a longer phrase shoppers type
+    assert not [c for c in calls if c[0] == 'search' and 'glisten' in c[2]]  # never a brand's own search
+    d = S.db.read(storage.mg_checks, 'AU')[mg.niche_key('Oven Cleaner')]['data']
+    h = d['hunt'][0]
+    assert h['phrase'] == 'oven cleaner spray' and h['verdict'] == 'hit' and h['sellers'] == 2 and h['demand'] == 450
+    assert [x['asin'] for x in h['listings']] == ['B0A', 'B0B']
+    t = marketgaps.table(S.db, S.settings, 'AU')
+    assert t['kpis']['found'] == 1
+    p = t['products'][0]
+    assert p['source'] == 'hunt' and p['asin'] == 'B0A' and p['phrase'] == 'oven cleaner spray' and p['sellers'] == 2
+    assert p['why'][0] == 'about 450 sold last month across 2 listings' and 'only 2 sellers: 1 with stock in Australia' in p['why']
+    S.settings['mg_max_sellers'] = 1                                         # your own limit
+    again = marketgaps.table(S.db, S.settings, 'AU')
+    assert again['products'][0]['source'] == 'hunt'                          # found under the old limit, kept as found
+    before = S.db.read(storage.mg_checks, 'AU')[mg.niche_key('Oven Cleaner')]['ts']
+    asyncio.run(marketgaps.check_niches(S, 'AU', 1))                         # hunted this week: the next niche instead
+    after = S.db.read(storage.mg_checks, 'AU')
+    assert after[mg.niche_key('Oven Cleaner')]['ts'] == before and mg.niche_key('Toilet Brushes') in after

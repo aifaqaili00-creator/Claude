@@ -332,6 +332,7 @@ class Checker:
                 opts = dict(user_data_dir=str(PROFILE_DIR), headless=False, viewport={'width': 1280, 'height': 900},
                             locale='en-US', ignore_default_args=['--enable-automation'],
                             args=['--disable-blink-features=AutomationControlled', '--no-first-run',
+                                  '--window-position=-32000,-32000',          # starts off-screen: it never pops up
                                   '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
                                   '--disable-renderer-backgrounding',
                                   '--no-default-browser-check', '--disable-features=Translate'])
@@ -356,6 +357,20 @@ class Checker:
                 self.state, self.error = 'error', str(e)
                 raise
 
+    async def new_page(self):
+        """A new tab in the background browser, started again first when it was closed (a window you closed, a crash):
+        one closed window no longer fails every check after it."""
+        if not self.ctx:
+            await self.start()
+        try:
+            return await self.ctx.new_page()
+        except Exception as e:
+            if 'closed' not in str(e).lower():
+                raise
+            self._closed()                                   # it was closed under us: start it again once
+            await self.start()
+            return await self.ctx.new_page()
+
     @property
     def visible(self):
         return self.pinned or self._shows > 0
@@ -375,11 +390,19 @@ class Checker:
             await route.continue_()
 
     async def _window(self, state):
+        """'normal': on screen in front of you (a captcha, or Show); 'minimized': off-screen and minimised, so a check never
+        pops up over your work or takes the keyboard."""
         try:
             page = self.home or self.ctx.pages[0]
             cdp = await self.ctx.new_cdp_session(page)
-            win = await cdp.send('Browser.getWindowForTarget')
-            await cdp.send('Browser.setWindowBounds', {'windowId': win['windowId'], 'bounds': {'windowState': state}})
+            win = (await cdp.send('Browser.getWindowForTarget'))['windowId']
+            set_ = lambda b: cdp.send('Browser.setWindowBounds', {'windowId': win, 'bounds': b})  # noqa: E731
+            await set_({'windowState': 'normal'})
+            if state == 'normal':
+                await set_({'left': 60, 'top': 40, 'width': 1280, 'height': 900})
+            else:
+                await set_({'left': -32000, 'top': -32000})
+                await set_({'windowState': 'minimized'})
             await cdp.detach()
         except Exception:
             pass
@@ -547,7 +570,7 @@ class Checker:
                 await self._goto(page, page.url, code)
                 return True, await self._location_text(page)
             own = page is None
-            page = page or await self.ctx.new_page()
+            page = page or await self.new_page()
             m = MARKETS[code]
             try:
                 async with self._loc_any:                             # one popup at a time, across marketplaces
@@ -715,7 +738,7 @@ class Checker:
         status (ok / empty / empty_suspect), Amazon's result count and the parser's health."""
         await self.start()
         m = MARKETS[code]
-        page = await self.ctx.new_page()
+        page = await self.new_page()
         rows, seen = [], set()
         location = ''
         info = {}

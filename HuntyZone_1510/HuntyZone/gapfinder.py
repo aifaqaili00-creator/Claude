@@ -273,7 +273,7 @@ async def read_listing(S, mk, asin, client=None, ctx=None, fresh=PAGE_FRESH):
             offers, summary = offs.from_spapi(payload, mk, amazon_ids(S, mk))
             await S.db.awrite(storage.save_offers, mk, asin, offers, summary, 'spapi')
             return {'status': 'ok', 'source': 'spapi', 'offers': offers, 'catalog': summ, **summary}
-        except spapi.SpApiError as e:
+        except (spapi.SpApiError, OSError) as e:                       # an error, or the connection dropped
             log.warning('SP-API %s %s: %s', mk, asin, e)                # the product page answers instead
     if ctx.get('stop'):
         return {'status': _why(ctx['stop']), 'source': 'page', 'offers': []}

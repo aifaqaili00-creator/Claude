@@ -396,7 +396,7 @@ async def read_product(checker, asin, code, reviews=False):
     """Open /dp/ASIN in the background browser and read it. With `reviews`, wait for the reviews section too (it can
     load late), so the reviews it shows are kept. An ASIN Amazon does not have there comes back with status 'missing'."""
     await checker.start()
-    page = await checker.ctx.new_page()
+    page = await checker.new_page()
     try:
         http = await checker._goto(page, ac.with_lang('%s/dp/%s' % (ac.MARKETS[code]['site'], asin), code), code)
         if http == 404:
@@ -441,7 +441,7 @@ async def read_critical_reviews(checker, asin, code):
     """The most helpful 1-3 star reviews from the listing's reviews page (10 of them). Raises SignInNeeded when
     Amazon sends the browser to its sign-in page instead."""
     await checker.start()
-    page = await checker.ctx.new_page()
+    page = await checker.new_page()
     try:
         await checker._goto(page, critical_url(code, asin), code)
         if ac.SIGNIN.search(urlparse(page.url).path):
@@ -464,7 +464,7 @@ def seller_url(code, seller_id):
 async def read_seller(checker, seller_id, code):
     """Open a seller's profile page in the background browser and read it."""
     await checker.start()
-    page = await checker.ctx.new_page()
+    page = await checker.new_page()
     try:
         await checker._goto(page, seller_url(code, seller_id), code)
         try:

@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# ProductChecker.exe build (build_exe.bat)
+build/
+dist/

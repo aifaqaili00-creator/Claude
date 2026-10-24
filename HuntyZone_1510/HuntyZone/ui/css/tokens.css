@@ -1,22 +1,22 @@
-/* Colour, type and shape tokens. Light is the default; <html data-theme> is always set by the page.
+/* Colour, type and shape tokens. Light is the default (Visual Studio's light theme colours); <html data-theme> is always set by the page.
    tests/test_contrast.py checks every text token below for at least 4.5:1 contrast in both themes. */
 :root, :root[data-theme="light"] {
   color-scheme: light;
-  --page: #f6f7f9;
+  --page: #ffffff;
   --surface: #ffffff;
-  --sunk: #f1f3f6;
-  --hover: #f7f8fa;
-  --line: #e6e9ee;
-  --line-strong: #d0d5dd;
+  --sunk: #f3f3f3;
+  --hover: #f2f2f2;
+  --line: #e5e5e5;
+  --line-strong: #cecece;
   --ink: #101828;
   --ink-2: #475467;
   --muted: #5d6679;
-  --accent: #1f63d0;
-  --accent-fill: #1f63d0;
+  --accent: #005fb8;
+  --accent-fill: #005fb8;
   --accent-ink: #ffffff;
-  --accent-soft: #eaf1fd;
-  --accent-strong: #174ea6;
-  --accent-ring: rgba(31, 99, 208, .22);
+  --accent-soft: #e5eef9;
+  --accent-strong: #004a8f;
+  --accent-ring: rgba(0, 95, 184, .22);
 
   /* status: only for verdicts, always with an icon or a label */
   --good: #17b26a; --good-text: #067647; --good-soft: #ecfdf3;

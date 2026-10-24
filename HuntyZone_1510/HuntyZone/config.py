@@ -12,7 +12,7 @@ try:
 except ImportError:                                          # pragma: no cover (Python < 3.9)
     ZoneInfo = None
 
-VERSION = '7.3'
+VERSION = '8.7'
 APP_DIR = Path(os.environ.get('PC_APP_DIR') or
                Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share') / 'ProductChecker')
 MARKETS = ('US', 'AU', 'AE')
@@ -27,6 +27,7 @@ CURRENCIES = ('USD', 'AUD', 'AED', 'EUR')                   # prices and supplie
 # key: (type, default, extra) -- extra = (min, max) for numbers, choices for strings
 SCHEMA = {
     'profile': (str, '', None),
+    'open_links': (str, 'app', ('app', 'profile')),   # app: links open from the app window (always in front); profile: your Chrome profile
     'theme': (str, 'light', ('light', 'dark', 'system')),
     'show_details': (bool, False, None),                # off: the simple view hides the advanced parts of each page
     'fast_days': (int, 3, (1, 10)),
@@ -73,7 +74,12 @@ SCHEMA = {
     'mail_start_email': (bool, True, None),             # email the people as soon as you set a deadline
     'gap_auto': (bool, True, None),                     # the Gap Finder runs once a day with the automatic refresh
     'mg_auto': (bool, True, None),                      # Market Gaps re-checks a few niches a day with the automatic refresh
-    'mg_dir': (str, '', None),                          # the folder the SmartScout exports were imported from
+    'mg_dir': (str, '', None),
+    'update_check': (bool, True, None),                 # tell me when a newer Product Checker is published
+    'update_repo': (str, 'aifaqaili00-creator/Claude', None),   # ... on this GitHub repository's Releases
+    'oos_auto': (bool, True, None),                     # watch booming and brand-new products for stock-outs every day
+    'oos_max_sellers': (int, 4, (1, 20)),               # ... and show the ones that ran out with at most this many sellers
+    'mg_max_sellers': (int, 6, (1, 20)),                # Market Gaps: a product counts when at most this many listings sell it                          # the folder the SmartScout exports were imported from
     'proof_us': (int, 300, (10, 100000)),               # "sells well": at least this many a month in the USA,
     'proof_gb': (int, 100, (10, 100000)),               # ... the UK
     'proof_de': (int, 100, (10, 100000)),               # ... and Germany

@@ -48,10 +48,10 @@ def test_launch_needs_every_hint_handled_and_a_live_day():
 
 
 def test_stages_unlock_in_order():
-    assert rules.unlocked({}) == ['idea']
-    assert rules.unlocked({'idea_done': 1}) == ['idea', 'approval']
-    assert rules.unlocked({'idea_done': 1, 'approved': 1}) == ['idea', 'approval', 'sourcing']
-    assert rules.unlocked({'idea_done': 1, 'approved': 1, 'order_ready': 1}) == ['idea', 'approval', 'sourcing', 'launch']
+    assert rules.unlocked({}) == ['idea', 'precheck']
+    assert rules.unlocked({'idea_done': 1}) == ['idea', 'precheck', 'approval']
+    assert rules.unlocked({'idea_done': 1, 'approved': 1}) == ['idea', 'precheck', 'approval', 'sourcing']
+    assert rules.unlocked({'idea_done': 1, 'approved': 1, 'order_ready': 1}) == ['idea', 'precheck', 'approval', 'sourcing', 'launch']
     assert rules.unlocked({'idea_done': 1, 'approved': 1, 'order_ready': 1, 'launched': 2}) == list(rules.STAGES)
 
 

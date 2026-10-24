@@ -1,7 +1,8 @@
 /* Product board: three coloured stage columns, product cards, the card panel, deadlines and trophies.
    Stage and label colours are decoration (stripes, bars, dots); text keeps the theme's ink colours. */
-:root { --b-idea: #64748b; --b-approval: #d97706; --b-sourcing: #2f6fd6; --b-launch: #7a5af8; --b-reorder: #0e9384; --b-gold: #f5b700; }
+:root { --b-idea: #64748b; --b-precheck: #0891b2; --b-approval: #d97706; --b-sourcing: #2f6fd6; --b-launch: #7a5af8; --b-reorder: #0e9384; --b-gold: #f5b700; }
 .st-idea { --stage: var(--b-idea); }
+.st-precheck { --stage: var(--b-precheck); }
 .st-approval { --stage: var(--b-approval); }
 .st-sourcing { --stage: var(--b-sourcing); }
 .st-launch { --stage: var(--b-launch); }
@@ -33,9 +34,9 @@ input[type="email"]:focus, input[type="time"]:focus, input[type="date"]:focus, i
   background: linear-gradient(90deg, var(--b-idea), var(--b-approval), var(--b-sourcing), var(--b-launch), var(--b-reorder)); }
 
 /* columns and cards */
-.bcols { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.bcols { display: grid; grid-template-columns: repeat(6, minmax(210px, 1fr)); gap: 12px; align-items: stretch; overflow-x: auto; }
 .bcol { background: var(--sunk); border-radius: var(--r-lg); padding: 10px; border-top: 4px solid var(--stage);
-  display: grid; gap: 10px; align-content: start; }
+  display: grid; gap: 10px; grid-template-rows: auto 1fr; }
 .bcol-h { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
 .bcol-h h3 { font-size: 15px; }
 .bcol-h .count { background: var(--surface); border-radius: 99px; padding: 0 8px; font-size: 12px; font-weight: 600; }
@@ -105,7 +106,7 @@ input[type="email"]:focus, input[type="time"]:focus, input[type="date"]:focus, i
 .bcount button:hover { background: var(--bad-soft); color: var(--bad-text); }
 .bcount button .icon { width: 12px; height: 12px; }
 @media (max-width: 1200px) {
-  .bcols { grid-template-columns: repeat(5, minmax(260px, 84vw)); overflow-x: auto; scroll-snap-type: x mandatory;
+  .bcols { grid-template-columns: repeat(6, minmax(260px, 84vw)); overflow-x: auto; scroll-snap-type: x mandatory;
     padding-bottom: 6px; }
   .bcol { scroll-snap-align: start; }
 }
@@ -119,6 +120,7 @@ input[type="email"]:focus, input[type="time"]:focus, input[type="date"]:focus, i
 .bcard { position: relative; }
 .bcard.is-late { box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--bad-soft); }
 .bc-key .bc-trophy .icon { width: 14px; height: 14px; }
+.bc-key .bc-mks { display: inline-flex; align-items: center; gap: 3px; }
 .bc-ring { width: 30px; height: 30px; flex: none; }
 .bc-ring .rg-bg { fill: none; stroke: var(--sunk); stroke-width: 3.5; }
 .bc-ring .rg-fg { fill: none; stroke: var(--accent); stroke-width: 3.5; stroke-linecap: round; transition: stroke-dashoffset .4s; }

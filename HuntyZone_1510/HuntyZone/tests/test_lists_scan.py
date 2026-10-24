@@ -89,11 +89,21 @@ class FakeChecker:
 
 def test_menu_falls_back_to_best_sellers_then_to_built_in_categories(tmp_path, monkeypatch):
     monkeypatch.setattr(ac, 'APP_DIR', tmp_path)
-    ch = FakeChecker({'/gp/bestsellers': [{'href': '/gp/bestsellers/kitchen/ref=zg_bs_nav_kitchen_0', 'name': 'Kitchen'}]})
-    assert [c['slug'] for c in asyncio.run(ideas.categories(ch, 'AU'))] == ['kitchen']
-    assert ch.visited == ['/gp/movers-and-shakers', '/gp/bestsellers']
+    menu = [{'href': '/gp/bestsellers/%s/ref=zg_bs_nav_%s_0' % (s, s), 'name': n} for s, n in (
+        ('amazon-renewed', 'Amazon Renewed'), ('appliances', 'Appliances'), ('kitchen', 'Kitchen & Dining'),
+        ('coins', 'Collectible Coins'), ('pet-supplies', 'Pet Supplies'), ('garden', 'Garden'))]
+    ch = FakeChecker({'/gp/bestsellers': menu})
+    got = asyncio.run(ideas.categories(ch, 'AU'))
+    assert [c['slug'] for c in got] == ['amazon-renewed', 'appliances', 'kitchen', 'coins', 'pet-supplies', 'garden']
+    assert ch.visited == ['/gp/bestsellers']                               # Best Sellers first: it has the menu
+    assert [c['slug'] for c in ideas.friendly_first([c for c in got if not c['risky']])] == ['kitchen', 'garden', 'pet-supplies']
+
+    stray = [{'href': '/gp/new-releases/coins/ref=x', 'name': ''}, {'href': '/gp/new-releases/hpc/ref=x', 'name': ''}]
+    ch = FakeChecker({'/gp/movers-and-shakers': stray})                    # an emptied page: stray links are not a menu
+    assert all(c.get('default') for c in asyncio.run(ideas.categories(ch, 'AU')))
+    assert ch.visited == ['/gp/bestsellers', '/gp/movers-and-shakers']
     assert (tmp_path / 'debug' / 'categories_AU.html').exists()            # kept for a closer look
-    assert 'could not read the category menu' in ch.logs[0]
+    assert not ch.logs                                                     # the log file only: no message on screen
 
     ch = FakeChecker({}, 'AE')
     cats = asyncio.run(ideas.categories(ch, 'AE'))

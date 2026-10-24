@@ -6,6 +6,7 @@ Sources (public Amazon pages, read with the background browser):
 - Search suggestions (what shoppers type) to grow a niche into keywords
 """
 import asyncio
+import logging
 import math
 import os
 import re
@@ -18,7 +19,22 @@ import file_rank as fr
 RISKY_CATEGORY = re.compile(r'select ?all|baby|beauty|book|clothing|fashion|shoe|jewel|computer|electronic|cell phone|camera|'
                             r'video ?game|software|grocery|gourmet|food|health|personal care|toy|game|music|movie|kindle|'
                             r'digital|app|alexa|gift card|appliance|automotive|industrial|luggage|watch|handmade|collectible|'
-                            r'subscription|amazon device|magazine|unique|vehicle|launchpad|audible|prime', re.I)
+                            r'subscription|amazon device|magazine|unique|vehicle|launchpad|audible|prime|renewed|'
+                            r'refurbished|coin|currenc|stamp|mobile|phone', re.I)
+# Categories a new seller's own product does well in: scanned first (in this order), whatever order Amazon's menu has
+FRIENDLY = [re.compile(p, re.I) for p in (r'home ?(&|and) ?kitchen|^home$|home-garden|^home\b', r'kitchen', r'garden|patio|lawn',
+                                          r'pet', r'sport|outdoor|fitness', r'office|stationery', r'tool|home improvement|diy|^hi$',
+                                          r'craft|sewing|hobb', r'storage|organi', r'bath|bed|furniture|lighting|decor')]
+MIN_MENU = 5                                           # fewer department links than this is not the menu (stray links)
+
+
+def friendly_first(cats):
+    """The categories in the order worth scanning: seller-friendly ones first (FRIENDLY's order), then the rest as Amazon
+    lists them. A plain alphabetical menu would otherwise start with Amazon Devices, Appliances, Arts..."""
+    def rank(c):
+        text = '%s %s' % (c.get('name') or '', c.get('slug') or '')
+        return next((i for i, rx in enumerate(FRIENDLY) if rx.search(text)), len(FRIENDLY))
+    return sorted(cats, key=rank)
 DEFAULT_US = [('home-garden', 'Home & Kitchen'), ('kitchen', 'Kitchen & Dining'), ('lawn-garden', 'Patio, Lawn & Garden'),
               ('sporting-goods', 'Sports & Outdoors'), ('pet-supplies', 'Pet Supplies'), ('office-products', 'Office Products'),
               ('hi', 'Tools & Home Improvement'), ('arts-crafts', 'Arts, Crafts & Sewing')]
@@ -145,7 +161,7 @@ async def _dump(page, code, what):
 
 async def _read_categories(checker, code, path):
     site = ac.MARKETS[code]['site']
-    page = await checker.ctx.new_page()
+    page = await checker.new_page()
     try:
         await checker._goto(page, site + path, code)        # a captcha or block raises with a clear message
         try:
@@ -153,10 +169,9 @@ async def _read_categories(checker, code, path):
         except Exception:                               # noqa: BLE001 - read whatever is there
             pass
         out = parse_categories(await page.evaluate(CATEGORIES_JS, NAV_SEL))
-        if not out:
-            where = await _dump(page, code, 'categories')
-            checker.log('%s: could not read the category menu%s.' % (
-                ac.MARKETS[code]['name'], (' (page saved to %s)' % where) if where else ''))
+        if len(out) < MIN_MENU:                         # a page without the department menu (a few stray links at most)
+            await _dump(page, code, 'categories')
+            return []
         return out
     finally:
         await page.close()
@@ -165,10 +180,12 @@ async def _read_categories(checker, code, path):
 async def categories(checker, code):
     """Top-level departments: [{slug, name, risky, default?}]. Never empty for a known marketplace."""
     await checker.start()
-    out = await _read_categories(checker, code, LISTS['movers'])
+    out = await _read_categories(checker, code, LISTS['best'])          # Best Sellers first: Amazon has emptied Movers &
+    if not out:                                                         # Shakers, and its page then has no menu at all
+        out = await _read_categories(checker, code, LISTS['movers'])
     if not out:
-        out = await _read_categories(checker, code, '/gp/bestsellers')
-    if not out:
+        logging.getLogger('pc').info('%s: could not read the category menu; the built-in categories are used '
+                                     '(page saved in the debug folder).' % ac.MARKETS[code]['name'])
         out = [{'slug': s, 'name': n, 'risky': False, 'default': True} for s, n in DEFAULTS.get(code, [])]
     return out
 
@@ -180,7 +197,7 @@ async def read_list(checker, code, kind, slug, name):
     """One Movers & Shakers, New Releases or Best Sellers page (up to 50 products). Raises ListMissing for an unknown
     slug."""
     site = ac.MARKETS[code]['site']
-    page = await checker.ctx.new_page()
+    page = await checker.new_page()
     try:
         http = await checker._goto(page, ac.with_lang('%s%s/%s' % (site, LISTS[kind], slug), code), code)
         if http == 404 or not re.search(r'/%s(?:[/?#]|$)' % re.escape(slug), urlparse(page.url).path):
@@ -216,12 +233,14 @@ async def read_list(checker, code, kind, slug, name):
     return items
 
 
-def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=False, stats=None):
+def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=False, stats=None, climbing=None):
     """Merge products from both lists, score them and group similar products into ideas.
 
     price_range (lo, hi) in the marketplace's money keeps only products selling within it (a product with no price
     shown is kept, scored lower and flagged). exclude_tech leaves out phones, laptops and their accessories.
-    stats, if given, receives how many products each filter removed.
+    stats, if given, receives how many products each filter removed. climbing {asin: why}: products climbing fast on
+    New Releases or Best Sellers over the last days (engine.stockwatch.candidates): Booming too, while Amazon shows no
+    Movers & Shakers.
     """
     T = fr.TARGETS[code]
     lo, hi = price_range or T['price']
@@ -267,6 +286,10 @@ def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=Fal
         if 'new' in p['lists'] and p.get('new_rank'):
             s += max(0, 25 - (p['new_rank'] - 1) * 0.5)
             why.append('#%d hot new release' % p['new_rank'])
+        climb = (climbing or {}).get(p['asin'])
+        if climb and not (pct and pct >= 300):
+            s += 30
+            why.append(climb[0].lower() + climb[1:])
         if len(p['lists']) > 1:
             s += 10
             why.append('on both lists')
@@ -276,7 +299,7 @@ def score_ideas(items, code, hide_risky=True, price_range=None, exclude_tech=Fal
         elif price is None and price_range:
             s -= 10
         s -= 15 * len(risky)
-        label = 'Booming' if pct and pct >= 300 else 'Rising' if pct and pct >= 50 else 'New' if 'new' in p['lists'] else 'Moving'
+        label = 'Booming' if (pct and pct >= 300) or climb else 'Rising' if pct and pct >= 50 else             'New' if 'new' in p['lists'] else 'Moving'
         ideas.append({**p, 'lists': sorted(p['lists']), 'flags': flags, 'score': round(s, 1), 'label': label,
                       'why': why, 'search': fr.search_words(p['title'])})
     ideas.sort(key=lambda x: -x['score'])

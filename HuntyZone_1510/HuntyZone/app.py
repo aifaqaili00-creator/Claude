@@ -42,21 +42,25 @@ import reports
 import scheduler
 import singleton
 import spapi
+import stockwatch
 import storage
 import throttle
+import updates
 import trends
 import vault
 import winsys
 import xray
 from jobs import JobManager
 
-HERE = Path(__file__).resolve().parent
+FROZEN = bool(getattr(sys, 'frozen', False))                  # running as ProductChecker.exe (build_exe.bat)
+HERE = Path(getattr(sys, '_MEIPASS', '') or Path(__file__).resolve().parent)
 UI_DIR = HERE / 'ui'
 APP_DIR = config.APP_DIR
 SETTINGS_FILE = APP_DIR / 'settings.json'
 HISTORY_FILE = APP_DIR / 'history.json'                       # v5 only: imported into market.db on first start
 DB_FILE = APP_DIR / 'market.db'
-PORT_FILE = APP_DIR / 'port.txt'
+PORT_FILE = APP_DIR / 'port.txt'                               # while the app runs (removed when it stops)
+LAST_PORT_FILE = APP_DIR / 'last_port.txt'                     # the port it used, kept: the next start serves there again
 MAIL_SECRET = APP_DIR / 'mail.secret'                        # the email app password, encrypted for this Windows user
 BOARD_WAKE = threading.Event()                               # wakes the reminder sender early ("Send reminder now")
 HELIUM10 = 'https://members.helium10.com/'
@@ -190,6 +194,12 @@ class State:
         self.apply_locations()
         self.db = storage.DB(DB_FILE).open()                      # every search, scan and import is kept here
         self.db.write(storage.interrupt_stale_runs)
+        try:                                                      # one board card per product, whatever its markets
+            for m in self.db.write(board.merge_duplicates):
+                log.info('board: PB-%d merged into PB-%d%s', m['merged'], m['id'],
+                         ' (not kept: %s)' % '; '.join(m['dropped']) if m['dropped'] else '')
+        except Exception:                                         # noqa: BLE001 - the board stays as it was
+            log.exception('could not merge the board cards of the same product')
         if Path(HISTORY_FILE).exists():
             storage.import_history_file(self.db, HISTORY_FILE)
         self.ranks = {}                                           # rank id -> DataFrame
@@ -616,8 +626,9 @@ class State:
         # "hide risky" is applied when reading, so switching it never re-scrapes
         prange = fxrates.ranges(self.settings)[code] if self.settings.get('price_filter', True) else None
         stats = {}
+        climbing = await asyncio.to_thread(self.db.read, climbers, code)
         scored = await asyncio.to_thread(ideas.score_ideas, raw['items'], code, hide, prange,
-                                         self.settings.get('exclude_tech', True), stats)
+                                         self.settings.get('exclude_tech', True), stats, climbing)
         disc = await asyncio.to_thread(reports.ideas_discovery, self.db, code, scored, self.settings, None, phrases)
         chosen_slugs = {c['slug'] for c in chosen}
         return {**{k: v for k, v in raw.items() if k != 'items'}, 'filtered': stats,
@@ -710,11 +721,16 @@ class Handler(BaseHTTPRequestHandler):
         fn = table.get(u.path)
         if not fn:
             return self._send(404, {'error': 'not found'})
+        t0 = time.time()
         try:
             return fn(self, q)
         except Exception as e:                                  # noqa: BLE001 - shown to the user
             log.exception('%s %s', self.command, self.path)
             return self._send(500, {'error': (str(e).strip() or e.__class__.__name__)[:500]})
+        finally:                                                # what you did, and how long the app took (app.log)
+            ms = int((time.time() - t0) * 1000)
+            if (table is POST and u.path not in QUIET_POSTS) or ms > 2000:
+                log.info('%s %s %d ms', self.command, u.path, ms)
 
     def do_GET(self):
         self._dispatch(GET)
@@ -884,7 +900,8 @@ def api_state(h, q):
         'markets': {c: {'name': m['name'], 'currency': m['currency'], 'location': m['location'], 'site': m['site']}
                     for c, m in ac.MARKETS.items()},
         'targets': fr.TARGETS,
-        'jobs_running': S.jobs.running(),
+        'jobs_running': S.jobs.running(), 'jobs': S.jobs.running_list(),
+        'update': updates.STATE['latest'], 'frozen': FROZEN,
         'mode': S.mode,
         'scheduler': S.scheduler.status(),
         'alerts_unseen': (S.db.one('SELECT COUNT(*) AS n FROM alert WHERE seen_at IS NULL AND dismissed_at IS NULL') or {}).get('n', 0),
@@ -904,7 +921,13 @@ def api_fx_refresh(h, q):
 @route('GET', '/api/job')
 def api_job(h, q):
     job = S.jobs.get(q.get('id', ''))
-    return h._send(200, job) if job else h._send(410, {'error': 'This job has expired. Please run it again.'})
+    return h._send(200, S.jobs.public(job)) if job else h._send(410, {'error': 'This job has expired. Please run it again.'})
+
+
+@route('POST', '/api/job/stop')
+def api_job_stop(h, q):
+    """Stop a running job: what it read so far is kept."""
+    return h._send(200, {'ok': S.jobs.stop(str(h._json().get('id') or ''))})
 
 
 @route('GET', '/api/xray/watch')
@@ -1259,6 +1282,40 @@ def api_profiles(h, q):
     return h._send(200, S.profiles)
 
 
+QUIET_POSTS = {'/api/beat', '/api/clientlog'}
+
+
+@route('POST', '/api/clientlog')
+def api_clientlog(h, q):
+    """What happened in the app window (a click, a message shown, a script error), kept in app.log to find what hangs."""
+    d = h._json()
+    kind = str(d.get('kind') or 'note')[:20]
+    text = ' '.join(str(d.get('text') or '').split())[:300]
+    (log.warning if kind == 'error' else log.info)('page %s: %s', kind, text)
+    return h._send(200, {'ok': True})
+
+
+def loop_watch():
+    """Every 5 seconds: does the browser loop (it runs Refresh, PDF and every Amazon read) still answer? A loop busy
+    for more than 3 seconds is logged with what it is running, so a hang can be found in app.log."""
+    async def noop():
+        return None
+    while True:
+        time.sleep(5)
+        t0 = time.time()
+        try:
+            S.run(noop()).result(timeout=60)
+            busy = time.time() - t0
+        except Exception:                                       # noqa: BLE001
+            busy = time.time() - t0
+        if busy > 3:
+            try:
+                names = [t.get_coro().__qualname__ for t in asyncio.all_tasks(S.loop)][:8]
+            except Exception:                                   # noqa: BLE001
+                names = []
+            log.warning('browser loop busy for %.1f s (running: %s)', busy, ', '.join(names) or '?')
+
+
 @route('POST', '/api/beat')
 def api_beat(h, q):
     S.last_beat = time.time()
@@ -1268,10 +1325,52 @@ def api_beat(h, q):
 
 
 # ---------------- automatic refresh, watchlist, alerts ----------------
+def climbers(conn, market, now=None):
+    """{asin: why} of the products climbing fast on New Releases or Best Sellers in a market over the last two weeks, from
+    the lists the app keeps: Product ideas calls them Booming now that Amazon shows no Movers & Shakers."""
+    from engine import stockwatch as sw
+    now = now or time.time()
+    rows = [dict(r, market=market) for r in storage.list_history(conn, market, now - sw.THRESH['idea_days'] * 86400,
+                                                                    ('movers', 'new', 'best'))]
+    return {c['asin']: c['why'] for c in sw.candidates(rows, now) if c['kind'] == 'booming'}
+
+
+def dashboard(db, settings, now=None):
+    """The dashboard tiles on Home: products found by Market Gaps, out-of-stock finds, open Gap Finder gaps, the board."""
+    from engine import gaps as gp
+    now = now or time.time()
+    out = {'found': {}, 'checked': 0}
+    for mk in config.TARGET_MARKETS:
+        checks = db.read(storage.mg_checks, mk)
+        cap = int(settings.get('mg_max_sellers') or 6)                # strong and worth-a-look finds, by today's limits
+        from engine import marketgaps as emg
+        out['found'][mk] = sum(1 for c in checks.values() for x in (c['data'].get('hunt') or []) if emg.rejudge(x, mk, cap))
+        out['checked'] += len(checks)
+    try:
+        st = stockwatch.table(db, settings, now)
+        out['stock'] = {'fits': st['fits'], 'watched': st['watched']}
+    except Exception:                                               # noqa: BLE001 - a tile must never break Home
+        log.exception('dashboard stock')
+        out['stock'] = {'fits': None, 'watched': None}
+    rows = db.read(storage.gap_checks, now - 60 * 86400)
+    out['gaps'] = {'open': sum(1 for r in rows if r['gap_type'] in gp.GAPS), 'checked': len(rows)}
+    today = time.strftime('%Y-%m-%d', time.localtime(now))
+
+    def board_counts(conn):
+        stages = {r[0]: r[1] for r in conn.execute('SELECT stage, COUNT(*) FROM board_card WHERE archived_at IS NULL GROUP BY stage')}
+        late = conn.execute('SELECT COUNT(*) FROM board_task t JOIN board_card c ON c.id=t.card_id WHERE c.archived_at IS NULL '
+                            'AND t.done_at IS NULL AND t.cancelled_at IS NULL AND t.due_day<?', (today,)).fetchone()[0]
+        return stages, late
+    stages, late = db.read(board_counts)
+    out['board'] = {'products': sum(stages.values()), 'stages': stages, 'late': late}
+    return out
+
+
 @route('GET', '/api/home')
 def api_home(h, q):
     out = reports.home(S.db, S)
     out['opportunities'] = reports.opportunities(S.db, S.settings)
+    out['dashboard'] = dashboard(S.db, S.settings)
     return h._send(200, out)
 
 
@@ -1774,6 +1873,33 @@ def api_mgaps_import(h, q):
     return h._send(200, {'job': S.new_job('mgaps_import', run)})
 
 
+@route('GET', '/api/stock')
+def api_stock(h, q):
+    """The Out of stock tab: booming and brand-new products of Product ideas and their stock in the USA, Australia and the UAE."""
+    return h._send(200, stockwatch.table(S.db, S.settings))
+
+
+@route('POST', '/api/stock/run')
+def api_stock_run(h, q):
+    d = h._json()
+    markets = [m for m in (d.get('markets') or []) if m in stockwatch.MARKETS] or list(stockwatch.MARKETS)
+
+    async def work(progress):
+        out = await stockwatch.run(S, markets, stockwatch.USER_READS, progress)
+        return {**await asyncio.to_thread(stockwatch.table, S.db, S.settings), 'notes': [out['note']]}
+    return h._send(200, {'job': S.new_job('stock', work)})
+
+
+@route('POST', '/api/shortlist')
+def api_shortlist(h, q):
+    """Shortlist a product you found: read its listing, work out what you may pay your supplier, put it on the board."""
+    import shortlist
+    d = h._json()
+    if not (d.get('asin') or d.get('title')):
+        return h._send(400, {'error': 'Which product?'})
+    return h._send(200, {'job': S.new_job('shortlist', lambda progress: shortlist.run(S, d, progress))})
+
+
 @route('POST', '/api/mgaps/upload')
 def api_mgaps_upload(h, q):
     import smartscout
@@ -1850,7 +1976,8 @@ def api_spapi_test(h, q):
 # ---------------- AI: Ask AI and the MCP connector (both read-only) ----------------
 def mcp_setup():
     """What to add to Claude Desktop's claude_desktop_config.json to use mcp_server.py with this copy of the app."""
-    entry = {'command': sys.executable, 'args': [str(Path(__file__).resolve().parent / 'mcp_server.py')]}
+    entry = {'command': sys.executable, 'args': ['--mcp']} if FROZEN else \
+        {'command': sys.executable, 'args': [str(Path(__file__).resolve().parent / 'mcp_server.py')]}
     if os.environ.get('PC_APP_DIR'):
         entry['env'] = {'PC_APP_DIR': str(config.APP_DIR)}
     return {'config': json.dumps({'mcpServers': {'product-checker': entry}}, indent=2),
@@ -2323,10 +2450,31 @@ def watchdog():
             return
 
 
-def free_port():
+def free_port(prefer=None):
+    """The port to serve on: the one used last time when it is free (an app window still open from before finds the app
+    again and reloads itself), else any free one."""
+    if prefer:
+        try:                                            # something still answers there (another program): not ours to take
+            socket.create_connection(('127.0.0.1', prefer), timeout=0.3).close()
+        except OSError:
+            try:
+                with socket.socket() as s:              # nobody listens: the old copy's closed connections may linger
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # as the server itself binds (allow_reuse_address)
+                    s.bind(('127.0.0.1', prefer))
+                    return prefer
+            except OSError:
+                pass
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
+
+
+def last_port():
+    try:
+        p = int(LAST_PORT_FILE.read_text().strip())
+        return p if 1024 < p < 65536 else None
+    except (OSError, ValueError):
+        return None
 
 
 def already_running():
@@ -2378,13 +2526,95 @@ def replace_older(port, timeout=20):
     return False
 
 
+def selftest():
+    """ProductChecker.exe --selftest: everything the app needs is inside it (pages, modules, the browser driver).
+    Prints the result and keeps it in selftest.txt in the data folder. Returns 0 when all is there."""
+    import importlib
+    lines, ok = ['Product Checker %s (%s)' % (VERSION, 'exe' if FROZEN else 'python')], True
+    for f in ('index.html', 'js/app.js', 'js/views/mgaps.js', 'css/app.css'):
+        there = (UI_DIR / f).is_file()
+        ok &= there
+        lines.append('%s ui/%s' % ('ok  ' if there else 'MISS', f))
+    for m in ('marketgaps', 'smartscout', 'stockwatch', 'mcp_server', 'ai_chat', 'board', 'reports', 'xray', 'trends', 'notify',
+              'pandas', 'openpyxl', 'playwright.async_api', 'truststore'):
+        try:
+            importlib.import_module(m)
+            lines.append('ok   import %s' % m)
+        except Exception as e:                                      # noqa: BLE001
+            ok = False
+            lines.append('MISS import %s: %s' % (m, e))
+    try:
+        from playwright._impl._driver import compute_driver_executable
+        drv = compute_driver_executable()
+        there = all(Path(p).exists() for p in (drv if isinstance(drv, tuple) else (drv,)))
+    except Exception as e:                                          # noqa: BLE001
+        there, drv = False, e
+    ok &= there
+    lines.append('%s browser driver %s' % ('ok  ' if there else 'MISS', drv))
+    import notify
+    ok &= notify.SCRIPT.is_file()
+    lines.append('%s toast.ps1' % ('ok  ' if notify.SCRIPT.is_file() else 'MISS'))
+    lines.append('ALL OK' if ok else 'SOMETHING IS MISSING')
+    text = '\n'.join(lines)
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        (APP_DIR / 'selftest.txt').write_text(text, encoding='utf-8')
+    except OSError:
+        pass
+    print(text, flush=True)
+    return 0 if ok else 1
+
+
+def desktop_shortcut():
+    """The first start of ProductChecker.exe puts a Product Checker shortcut on the desktop (start.bat does it otherwise)."""
+    mark = APP_DIR / 'shortcut.done'
+    if not FROZEN or mark.exists() or sys.platform != 'win32':
+        return
+    exe = sys.executable.replace("'", "''")
+    cmd = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Product Checker.lnk');"
+           "$s.TargetPath='%s'; $s.WorkingDirectory='%s'; $s.Save()" % (exe, str(Path(sys.executable).parent).replace("'", "''")))
+    try:
+        subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], timeout=30,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), check=False)
+        mark.write_text(time.strftime('%Y-%m-%d'))
+    except (OSError, subprocess.SubprocessError):
+        log.warning('could not create the desktop shortcut')
+
+
+def trust_windows_certificates():
+    """Secure downloads check certificates the way Windows and your browser do. Python alone only knows the roots Windows
+    has already cached, so the exchange rates (and other sites) failed with "unable to get local issuer certificate"."""
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+        return True
+    except Exception:                                           # noqa: BLE001 - not installed: Python's own checks stay
+        log.warning('truststore is not installed: secure downloads use only the certificates Python finds')
+        return False
+
+
 def main():
     global S, HTTPD
+    if '--mcp' in sys.argv:                                      # ProductChecker.exe --mcp: the Claude Desktop connector
+        import mcp_server
+        if FROZEN and (sys.stdin is None or sys.stdout is None):  # a windowed .exe: take the pipes Claude Desktop gave it
+            import ctypes
+            import msvcrt
+            k32 = ctypes.windll.kernel32
+            k32.GetStdHandle.restype = ctypes.c_void_p
+            sys.stdin = open(msvcrt.open_osfhandle(k32.GetStdHandle(-10), os.O_RDONLY), 'r', encoding='utf-8')
+            sys.stdout = open(msvcrt.open_osfhandle(k32.GetStdHandle(-11), 0), 'w', encoding='utf-8', newline='\n')
+            sys.stderr = open(os.devnull, 'w')
+        return mcp_server.main([a for a in sys.argv[1:] if a != '--mcp'])
+    if '--selftest' in sys.argv:
+        return selftest()
     setup_logging()
+    trust_windows_certificates()
+    desktop_shortcut()
     background = '--background' in sys.argv
     no_window = '--no-window' in sys.argv or background
     port, running = already_running()
-    replaced = False
+    replaced, old_port = False, port
     if port and _version_key(running) < _version_key(VERSION):
         log.info('an older copy (%s) is running: closing it to start %s', running, VERSION)
         replaced = replace_older(port)
@@ -2397,11 +2627,12 @@ def main():
         return
     import zlib
     instance = singleton.Instance('ProductCheckerV6-%08x' % zlib.crc32(str(APP_DIR).lower().encode()))   # one per data folder
-    for _ in range(20 if replaced else 1):                       # the old copy lets go of its lock as it exits
-        if instance.acquire():
+    for _ in range(120 if replaced else 1):                      # the old copy lets go of its lock as it exits: a background
+        if instance.acquire():                                   # check it was in the middle of can take half a minute
             break
         time.sleep(0.5)
     else:
+        log.warning('the older copy is still closing after a minute: not starting')
         print('Product Checker is already starting.', flush=True)
         return
     if singleton.clear_stale_profile_lock(ac.PROFILE_DIR):
@@ -2410,11 +2641,21 @@ def main():
     S.instance = instance
     S.mode = 'background' if background else 'window'
     S.apply_startup_setting()
-    port = int(os.environ.get('PC_PORT') or free_port())
+    prefer = (old_port if replaced else None) or last_port()     # the replaced copy's port: its windows reconnect
+    port = int(os.environ.get('PC_PORT') or 0) or free_port(prefer)
+    for _ in range(20 if replaced and prefer and port != prefer else 0):  # the old copy is still letting go of its port
+        time.sleep(0.25)
+        port = free_port(prefer)
+        if port == prefer:
+            break
     S.port = port
     HTTPD = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     HTTPD.daemon_threads = True
     PORT_FILE.write_text(str(port))
+    try:
+        LAST_PORT_FILE.write_text(str(port))
+    except OSError:
+        pass
     url = 'http://127.0.0.1:%d/' % port
     log.info('started on %s', url)
     print('Product Checker running at', url, flush=True)
@@ -2423,6 +2664,8 @@ def main():
     threading.Thread(target=S.scan_imports, daemon=True, name='import-scan').start()
     S.run(S.scheduler.run_forever())                              # automatic refresh
     threading.Thread(target=board_loop, daemon=True, name='board').start()   # board reminder emails
+    threading.Thread(target=loop_watch, daemon=True, name='loop-watch').start()
+    updates.start(lambda: S.settings)                              # is a newer version published? (once a day)
     fxrates.refresh_soon()                                         # today's exchange rates, in the background
     if not no_window:
         S.window = cp.open_app_window(url, APP_DIR / 'app-window')
@@ -2434,4 +2677,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import multiprocessing
+    multiprocessing.freeze_support()                             # the helper process works in ProductChecker.exe too
+    sys.exit(main())

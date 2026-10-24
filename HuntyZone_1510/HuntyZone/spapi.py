@@ -43,6 +43,8 @@ def _http(method, url, headers, body=None, timeout=TIMEOUT):
             return r.status, dict(r.headers), r.read(5_000_000)
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read(200_000)
+    except OSError as e:                                # the connection dropped, timed out or could not be made
+        raise SpApiError('Amazon could not be reached (%s).' % (str(e).splitlines()[0][:100] or e.__class__.__name__)) from None
 
 
 def clean_creds(d):

@@ -83,7 +83,10 @@ main { padding: 22px 28px 64px; width: 100%; max-width: 1440px; }
 }
 
 /* ---------- basics ---------- */
-.status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; position: relative; }
+button.pill { border: 0; cursor: pointer; font: inherit; }
+.jobs-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 320px; max-width: 560px; display: grid; gap: 8px;
+  padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
 .stackv { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; }

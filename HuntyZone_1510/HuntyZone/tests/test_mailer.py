@@ -222,3 +222,41 @@ def test_no_email_is_sent_or_opened_on_a_pc_with_the_switch(tmp_path, monkeypatc
     monkeypatch.delenv('PC_NO_EMAIL')
     mailer.deliver(SETTINGS, p, [('Sara', 'sara@x.com')], 'Hi', 'text')
     assert len(sent) == 1 and opened == []
+
+
+def test_a_long_email_fits_in_its_link_and_goes_on_the_clipboard():
+    import time
+    from urllib.parse import parse_qs, urlparse
+    """Gmail answers 400 Bad Request to a compose link over about 8,000 characters (13 products in an update did it)."""
+    products = ['%d. Product number %d · ‘special’ – edition\n   Units needed: Australia 25\n   Alibaba page: '
+                'https://www.alibaba.com/product-detail/Some-Long-Name_%d.html?spm=a2700.galleryofferlist.normal_offer'
+                % (i, i, 1600000000 + i) for i in range(1, 30)]
+    text = 'Hi all,\n\n' + '\n\n'.join(products) + '\n\nThanks'
+    to = [('Sara', 'sara@x.com'), ('Li', 'li@x.com')]
+    for svc in ('gmail', 'outlook', 'office'):
+        url = mailer.compose_url(svc, to, 'Product update', text, account='me@gmail.com')
+        assert len(url) <= mailer.URL_MAX and url.cut
+        body = parse_qs(urlparse(url).query)['body'][0]
+        assert body.startswith('Hi all,') and body.endswith(mailer.CUT_NOTE.strip())
+        kept = body[:-len(mailer.CUT_NOTE)]
+        assert kept.rstrip().split('\n\n')[-1].startswith(tuple('%d.' % i for i in range(1, 30)))   # a whole product
+    short = mailer.compose_url('gmail', to, 'S', 'Hi')
+    assert not short.cut and parse_qs(urlparse(short).query)['body'] == ['Hi']
+    one = mailer.compose_url('gmail', to, 'S', 'é' * 9000)                  # one long paragraph: cut inside it
+    assert len(one) <= mailer.URL_MAX and one.cut
+    cal = mailer.calendar_url({'start': 1_800_000_000, 'summary': 'Meet', 'description': text}, ['sara@x.com'])
+    assert len(cal) <= mailer.URL_MAX and cal.cut
+
+    opened, copied = [], []
+    S = {'mail_method': 'browser', 'mail_web': 'gmail'}
+    url = mailer.open_in_browser(S, to, 'Product update', text, lambda u, p: opened.append(u), profiles=[],
+                                 now=time.time(), copier=lambda t: copied.append(t) or True)
+    assert copied == [text] and url.pasted and 'Ctrl+V' in parse_qs(urlparse(opened[0]).query)['body'][0]
+    done = mailer.outcome(url)
+    assert done == 'opened' and done.pasted and done in ('opened', 'calendar')
+    url = mailer.open_in_browser(S, to, 'Product update', text, lambda u, p: None, profiles=[], now=time.time(),
+                                 copier=lambda t: False)                     # no clipboard: cut, as before
+    assert not url.pasted and 'Ctrl+V' not in parse_qs(urlparse(url).query)['body'][0]
+    assert not mailer.outcome(mailer.open_in_browser(S, to, 'S', 'Hi', lambda u, p: None, profiles=[], now=time.time(),
+                                                     copier=lambda t: copied.append(t) or True)).pasted
+    assert mailer.outcome(object()) == 'sent'

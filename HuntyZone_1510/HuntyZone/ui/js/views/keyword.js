@@ -58,7 +58,7 @@
             <button class="btn" id="kPdf" title="Save the parts of this report you choose as a PDF in Downloads">${icon('pdf')}PDF</button>
             <button class="btn" data-open="${esc(d.search_url)}">Amazon${icon('external')}</button>
             <button class="btn adv" data-open="${esc(d.trends_url)}">Google Trends${icon('external')}</button>
-            <button class="btn adv" data-open="${esc(alibabaUrl(d.keyword))}" title="Find suppliers for this product on Alibaba">Alibaba${icon('external')}</button>
+            <button class="btn" data-open="${esc(alibabaUrl(d.keyword))}" title="Find suppliers for this product on Alibaba">Alibaba${icon('external')}</button>
             <button class="btn adv" data-open="${esc(OTHER_SHOP[d.market].url + encodeURIComponent(d.keyword))}" title="The same search on ${OTHER_SHOP[d.market].name}, another big shop in ${esc(MK[d.market])}">${OTHER_SHOP[d.market].name}${icon('external')}</button>
             <button class="btn adv" id="kXray">${icon('scan')}Xray</button>
             <button class="btn" id="kWatch" title="Re-check this keyword every day and fetch Google Trends weekly">${icon('eye')}Watch</button>

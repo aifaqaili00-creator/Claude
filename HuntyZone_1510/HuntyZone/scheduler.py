@@ -20,14 +20,15 @@ TICK = 60
 EVERY = {'lists:US': 12 * 3600, 'lists:AU': 24 * 3600, 'lists:AE': 24 * 3600, 'watch_kw': 24 * 3600,
          'trends': 7 * 86400, 'suggest': 24 * 3600, 'products': 24 * 3600, 'import_scan': 3600,
          'maintenance': 24 * 3600, 'qualify': 24 * 3600, 'proof': 24 * 3600, 'gaps': 24 * 3600, 'lone': 24 * 3600,
-         'board_live': 4 * 3600, 'mgaps': 24 * 3600}
+         'board_live': 4 * 3600, 'mgaps': 24 * 3600, 'stock': 24 * 3600}
 UNIT_TIMEOUT = {'lists': 900, 'watch_kw': 300, 'trends': 180, 'suggest': 240, 'products': 180, 'import_scan': 300,
                 'maintenance': 600, 'qualify': 900, 'proof': 900, 'gaps': 1800, 'lone': 900, 'board_live': 600,
-                'mgaps': 1800}
+                'mgaps': 1800, 'stock': 1800}
 DEFAULT_TIMEOUT = 300
 MAX_UNITS_PER_TICK = 40
 SOURCE_OF = {'lists': 'amazon', 'watch_kw': 'amazon', 'products': 'amazon', 'trends': 'google', 'suggest': 'complete',
-             'qualify': 'amazon', 'proof': 'amazon', 'gaps': 'amazon', 'lone': 'amazon', 'mgaps': 'amazon'}
+             'qualify': 'amazon', 'proof': 'amazon', 'gaps': 'amazon', 'lone': 'amazon', 'mgaps': 'amazon',
+             'stock': 'amazon'}
 
 
 def stagger(kind, market, target, every_s):

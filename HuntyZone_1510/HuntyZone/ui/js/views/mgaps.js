@@ -3,8 +3,15 @@
    who dominates each niche); Refresh reads Amazon itself to say whether each gap is still open. */
 (() => {
   view('mgaps', {title: 'Market Gaps', sub: 'SmartScout baseline · checked live on Amazon Australia and the UAE',
-    onShow: p => { if (p[0] && ['AU', 'AE'].includes(p[0])) mk = p[0]; setSeg($('mgMk'), mk); load(); }});
-  const TONE = {global_store: 'good', amazon_then_gap: 'good', thin: 'good', us_proven: 'accent', crowded: 'weak'};
+    onShow: p => {                                 // #/mgaps/<market>/<tab>: Back returns to the market and tab you came from
+      const m = ['AU', 'AE'].includes(p[0]) ? p[0] : mk, t = TABS.includes(p[1]) ? p[1] : null;
+      setSeg($('mgMk'), m);
+      if (D && m === mk && D.market === m) { if (t) setTab(t); render(); return; }
+      if (m !== mk) { limit = 100; open.clear(); }
+      mk = m; if (t) setTab(t); load();
+    }});
+  const TABS = ['products', 'stock', 'niches', 'live', 'missing', 'sellers'];
+  const TONE = {global_store: 'good', amazon_then_gap: 'good', thin: 'good', us_proven: 'accent', brand_locked: 'warn', crowded: 'weak'};
   const VTONE = {open: 'good', amazon_only: 'good', few: 'warn', closing: 'warn', closed: 'bad', unread: 'weak'};
   const VICON = {good: 'ok', warn: 'warn', bad: 'x', weak: 'dot', accent: 'dot'};
   const WHO = [
@@ -22,7 +29,8 @@
   const SORT = {score: r => -r.score, name: r => r.name.toLowerCase(), revenue: r => -r.revenue, cross: r => -r.cross,
     amazon: r => -r.shares.amazon, price: r => r.price ?? Infinity, reviews: r => r.reviews ?? Infinity,
     live: r => r.live ? ({open: 0, amazon_only: 1, few: 2, closing: 3, closed: 4, unread: 5}[r.live.verdict] ?? 6) : 7};
-  let mk = 'AU', tab = 'niches', D = null, sortBy = 'score', sortDir = 1, limit = 100;
+  let mk = 'AU', tab = null, D = null, sortBy = 'score', sortDir = 1, limit = 100;
+  const setTab = t => { tab = t; $('mgTabs').querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.tab === t))); };
   const open = new Set();
   const cur = () => MK_CUR[mk];
   const site = () => (D && D.site) || (ST.markets[mk] || {}).site || '';
@@ -32,25 +40,37 @@
   const share = s => s == null ? '<span class="muted small">–</span>' : `<span class="ishare"><i style="width:${Math.round(s * 100)}%"></i></span> ${Math.round(s * 100)}%`;
   const parts = (obj, defs) => defs.map(d => ({...d, n: (obj || {})[d.key] || 0}));
   const searchUrl = q => site() + '/s?k=' + encodeURIComponent(q || '').replace(/%20/g, '+');
+  const maxSellers = () => (ST.settings || {}).mg_max_sellers || 6;
+  const HUNT = {hit: ['good', 'Few sellers'], busy: ['bad', 'Too many sellers'], no_demand: ['weak', 'No proven demand'],
+    none: ['weak', 'Nobody sells it yet'], unread: ['weak', 'Not read']};
 
-  seg($('mgMk'), v => { mk = v; limit = 100; open.clear(); load(); });
+  seg($('mgMk'), v => step('mgaps', v, tab));
   ['mgType', 'mgLive', 'mgRisky', 'mgAll'].forEach(id => $(id).addEventListener('change', () => { limit = 100; render(); }));
   $('mgMin').addEventListener('input', () => { limit = 100; render(); });
   $('mgFind').addEventListener('input', () => { limit = 100; render(); });
   $('mgTabs').addEventListener('click', e => {
     const b = e.target.closest('[data-tab]'); if (!b) return;
-    tab = b.dataset.tab;
-    $('mgTabs').querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-selected', String(x === b)));
-    render();
+    step('mgaps', mk, b.dataset.tab);
   });
 
+  let seq = 0, stock = null, stockAll = false, stockMk = '';
+  async function loadStock() {
+    try { stock = {...await api('/api/stock'), at: Date.now()}; } catch (e) { stock = {error: e.message, at: Date.now()}; }
+    if (tab === 'stock') render();
+  }
   async function load() {
+    const my = ++seq, want = mk;                     // an answer for the market you left never replaces the newer one
     $('mgOut').innerHTML = '<div class="panel">' + busy('Loading…') + '</div>';
-    try { D = await api('/api/mgaps?market=' + mk); } catch (e) { $('mgOut').innerHTML = failPill(e.message); return; }
+    let got;
+    try { got = await api('/api/mgaps?market=' + want); } catch (e) { if (my === seq) $('mgOut').innerHTML = failPill(e.message); return; }
+    if (my !== seq) return;
+    D = got;
+    if (!stock || stock.at < Date.now() - 60000) loadStock();
     const sel = $('mgType'), was = sel.value;
     sel.innerHTML = '<option value="">Every gap</option>' + D.types.filter(t => t.type !== 'crowded')
       .map(t => `<option value="${t.type}">${esc(t.label)}</option>`).join('');
     sel.value = was;
+    if (!tab) setTab(D.products && D.products.length ? 'products' : 'niches');
     render();
   }
 
@@ -62,16 +82,23 @@
       ${kpi('Niches scored', num(k.niches), b.brands ? num(b.brands) + ' brands in the export' : 'import the SmartScout export')}
       ${kpi('Gaps in the baseline', num(k.gaps), 'shipped in, Amazon then a gap, few brands, or bigger in the USA')}
       ${kpi('Shipped in from abroad', k.global_store != null ? pct(k.global_store + (k.resellers || 0)) : '–', 'of the market: Global Store ' + pct(k.global_store) + ', resellers ' + pct(k.resellers))}
-      ${kpi('Open now', num(k.open) + '<span class="small muted"> of ' + num(k.checked) + '</span>', k.checked ? 'niches checked live on Amazon ' + esc(MK[mk]) : 'press <b>Refresh</b> to check them live')}
+      ${kpi('Products found', num(k.found || 0), k.checked ? 'proven demand, at most ' + num(maxSellers()) + ' sellers · in ' + num(k.checked) + ' niche' + (k.checked === 1 ? '' : 's') + ' checked live' : 'press <b>Refresh</b> to hunt inside the niches')}
       ${kpi('Automatic', D.auto ? 'On' : 'Off', D.auto ? 'a few niches a day' + (D.auto_last ? ' · last ' + ago(D.auto_last) : '') : '<a href="#/settings">turn on in Settings</a>', 'adv')}
     </div>`;
   }
 
   function render() {
     if (!D) return;
-    $('mgFilters').hidden = tab !== 'niches';
-    if (!D.niches.length && tab !== 'live') { $('mgOut').innerHTML = head() + importPanel(); return; }
-    const body = tab === 'niches' ? niches() : tab === 'live' ? live() : tab === 'missing' ? missing() : sellers();
+    try { draw(); } catch (e) {                     // a drawing problem shows as a message, never as an empty page
+      console.error(e);
+      $('mgOut').innerHTML = head() + '<div class="panel">' + failPill('This view could not be drawn: ' + (e.message || e)) + '</div>';
+    }
+  }
+  function draw() {
+    $('mgFilters').hidden = tab !== 'niches' && tab !== 'products';
+    ['mgType', 'mgLive', 'mgMin', 'mgAll'].forEach(id => { $(id).closest('label').hidden = tab === 'products'; });
+    if (!D.niches.length && tab !== 'live' && tab !== 'stock') { $('mgOut').innerHTML = head() + importPanel(); return; }
+    const body = tab === 'stock' ? stockTab() : tab === 'products' ? productsTab() : tab === 'niches' ? niches() : tab === 'live' ? live() : tab === 'missing' ? missing() : sellers();
     $('mgOut').innerHTML = head() + body;
   }
 
@@ -113,11 +140,12 @@
   function row(r) {
     const L = r.live, g = r.gap, phrase = (L && L.phrase) || r.name.toLowerCase().replace(/\s*&\s*/g, ' ');
     const pills = `<span class="pill line">${esc(r.category || 'no category')}</span>` + (r.risky ? `<span class="pill warn" title="Phones, laptops, books, renewed and similar niches are hard to enter">${icon('warn')}${esc(r.risk_why)}</span>` : '');
-    const acts = `<button class="btn slim" data-open="${esc(searchUrl(phrase))}" title="Search it on Amazon ${esc(MK[mk])}">${icon('external')}Amazon</button>` +
-      (L && L.phrase ? `<a class="btn slim" href="#/k/${mk}/${encodeURIComponent(L.phrase)}" title="Keyword report for “${esc(L.phrase)}”">Report</a>` : '') +
-      `<button class="btn slim" data-check="${esc(r.key)}" title="Read page 1 and the top buy boxes on Amazon ${esc(MK[mk])} now">${icon('refresh')}Check now</button>` +
-      `<button class="btn slim" data-watch="${esc(r.key)}" title="Check this phrase every day (Watchlist)">${icon('eye')}Watch</button>` +
-      `<button class="btn slim" data-board="${esc(r.key)}" title="Add to your product board">${icon('board')}Board</button>` +
+    const ib = (attr, ic, tip) => `<button class="btn slim ico" ${attr} title="${esc(tip)}" aria-label="${esc(tip)}">${icon(ic)}</button>`;
+    const acts = `<button class="btn slim" data-check="${esc(r.key)}" title="Read page 1, the top buy boxes and the products inside it on Amazon ${esc(MK[mk])} now">${icon('refresh')}Check</button>` +
+      ib(`data-open="${esc(searchUrl(phrase))}"`, 'external', 'Search it on Amazon ' + MK[mk]) +
+      (L && L.phrase ? `<a class="btn slim ico" href="#/k/${mk}/${encodeURIComponent(L.phrase)}" title="Keyword report for “${esc(L.phrase)}”" aria-label="Keyword report">${icon('chart')}</a>` : '') +
+      ib(`data-watch="${esc(r.key)}"`, 'eye', 'Watch: check this phrase every day') +
+      ib(`data-board="${esc(r.key)}"`, 'board', 'Add to your product board') +
       moreBtn(r.key, open.has(r.key));
     const also = (g.also || []).map(a => `<span class="pill line" title="${esc(a.why)}">${esc(a.label)}</span>`).join(' ');
     const sc = r.parts, tip = `Demand ${pct(sc.demand)} · openness ${pct(sc.open)} · reviews ${pct(sc.barrier)} · price ${pct(sc.price)} · growth ${pct(sc.momentum)}`;
@@ -141,7 +169,9 @@
     const t = VTONE[L.verdict] || 'weak';
     const bb = L.buyboxes && Object.values(L.buyboxes).some(Boolean) ? originBar(parts(L.buyboxes, BB), Object.values(L.buyboxes).reduce((a, b) => a + b, 0), 6) : '';
     const hist = (L.history || []).length > 1 ? `<span class="tsub">before: ${L.history.slice(0, -1).map(h => esc((D.verdicts.find(v => v.verdict === h.verdict) || {}).label || h.verdict)).join(' → ')}</span>` : '';
-    return `<span class="pill ${t}" title="${esc((D.verdicts.find(v => v.verdict === L.verdict) || {}).means || '')}">${icon(VICON[t])}${esc(L.label)}</span>
+    const hits = (L.hunt || []).filter(h => h.hit).length;
+    const hunt = (L.hunt || []).length ? `<div style="margin-top:4px"><span class="pill ${hits ? 'good' : 'weak'}">${hits ? icon('ok') : ''}${num(hits)} of ${num(L.hunt.length)} products with few sellers</span></div>` : '';
+    return `<span class="pill ${t}" title="${esc((D.verdicts.find(v => v.verdict === L.verdict) || {}).means || '')}">${icon(VICON[t])}Niche: ${esc(L.label)}</span>${hunt}
       <div class="small">${esc(L.why || '')}</div>${bb ? '<div style="margin-top:4px;max-width:180px">' + bb + '</div>' : ''}
       <span class="tsub">“${esc(L.phrase || '')}” · ${ago(L.ts)}${L.conf ? ' · ' + esc(L.conf) + ' confidence' : ''}${L.price_med != null ? ' · typical ' + esc(curMoney(L.price_med, cur(), 0)) : ''}</span>${hist}
       ${L.stopped ? `<span class="tsub">stopped early: ${esc(L.stopped)}</span>` : ''}`;
@@ -159,8 +189,98 @@
     return `<tr class="mgdetail"><td colspan="7"><div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
       <div><h4>Top brands in the baseline</h4><div class="tablewrap"><table class="itable"><thead><tr><th>Brand · seller</th><th>Share</th><th class="r">a month</th><th class="r">Price</th><th class="r">Sellers</th></tr></thead><tbody>${base}</tbody></table></div></div>
       <div><h4>Brands on page 1 now</h4>${liveB ? `<div class="tablewrap"><table class="itable"><thead><tr><th>Brand</th><th>Share of sales</th><th class="r">Listings</th></tr></thead><tbody>${liveB}</tbody></table></div>` : '<p class="small muted">Press <b>Check now</b> to read page 1.</p>'}</div>
+      ${(L.hunt || []).length ? `<div style="grid-column:1/-1"><h4>Products inside this niche</h4><div class="tablewrap"><table class="itable"><thead><tr><th>What shoppers type</th><th>Verdict</th><th class="r">Sellers</th><th class="r">Bought last month</th><th>Why</th></tr></thead><tbody>
+        ${L.hunt.map(h => `<tr><td><a data-open="${esc(searchUrl(h.phrase))}">${esc(h.phrase)}</a></td><td><span class="pill ${HUNT[h.verdict][0]}">${esc(HUNT[h.verdict][1])}</span></td>
+          <td class="r">${h.sellers != null ? num(h.sellers) : '–'}</td><td class="r">${h.demand ? num(h.demand) + '+' : '–'}</td><td class="small">${esc(h.why)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
       ${tops ? `<div style="grid-column:1/-1"><h4>Top listings now</h4><div class="tablewrap"><table class="itable"><thead><tr><th>Listing</th><th>Ships</th><th>Buy box</th><th class="r">Bought</th><th class="r">Price</th></tr></thead><tbody>${tops}</tbody></table></div></div>` : ''}
     </div></td></tr>`;
+  }
+
+  /* ---------- Out of stock: booming and brand-new products of Product ideas that ran out with few sellers ---------- */
+  const SMK = ['US', 'AU', 'AE'];
+  const SSTATE = {out: ['warn', 'Out of stock'], in: ['line', 'In stock'], missing: ['accent', 'Not there yet'], unread: ['weak', 'Not read']};
+  const short = t => t ? new Date(t * 1000).toLocaleDateString(undefined, {day: 'numeric', month: 'short'}) : '';
+  function stockCell(r, m) {
+    const s = r.markets[m], [tone, label] = SSTATE[s.state] || SSTATE.unread;
+    const sellers = s.sellers != null && s.state !== 'missing' ? ` · ${num(s.sellers)} seller${s.sellers === 1 ? '' : 's'}` : '';
+    const url = (ST.markets[m] || {}).site ? ST.markets[m].site + '/dp/' + r.asin : '';
+    return `<td><span class="pill ${s.fits ? 'good' : tone}" title="${esc(s.why || '')}">${s.fits ? icon('ok') : ''}${esc(label)}${esc(sellers)}</span>
+      ${s.state === 'out' ? `<span class="tsub">${s.since ? 'out since ' + short(s.since) : ''}${s.last_in ? ' · in stock ' + short(s.last_in) : ''}${s.rank ? ' · rank #' + num(s.rank) : ''}</span>` : ''}
+      ${s.price != null && s.state !== 'missing' ? `<span class="tsub">${esc(curMoney(s.price, MK_CUR[m], 2))}</span>` : ''}
+      ${url && s.state !== 'missing' && s.state !== 'unread' ? `<a class="tsub" data-open="${esc(url)}">open</a>` : ''}</td>`;
+  }
+  function stockTab() {
+    if (!stock) { loadStock(); return '<div class="panel">' + busy('Loading…') + '</div>'; }
+    if (stock.error) return '<div class="panel">' + failPill(stock.error) + '</div>';
+    const q = $('mgFind').value.trim().toLowerCase();
+    const rows = stock.rows.filter(r => (stockAll || r.fits) && (!stockMk || (stockAll ? r.markets[stockMk].state !== 'unread' : r.out.includes(stockMk)))
+      && (!q || (r.title || r.asin).toLowerCase().includes(q)));
+    const seg = ['', ...SMK].map(m => `<button type="button" data-smk="${m}" aria-pressed="${m === stockMk}">${m ? esc(MK[m]) : 'All markets'}</button>`).join('');
+    const intro = `<div class="panel stackv"><div class="row" style="justify-content:space-between">
+        <div class="row"><div class="seg" role="group" aria-label="Market">${seg}</div>
+          <label class="small"><input type="checkbox" data-sall ${stockAll ? 'checked' : ''}> Show every watched product</label></div>
+        <div class="row"><span class="small">${stock.last ? 'last read ' + ago(stock.last) : 'not read yet'}${stock.auto ? ' · every day automatically' : ''}</span>
+          <button class="btn primary" data-srun>${icon('refresh')}Check stock now</button></div></div>
+      <p class="small">Watching <b>${num(stock.booming)}</b> booming (sales rank up 300%+) and <b>${num(stock.new)}</b> brand-new (New Releases top 30) products
+        from Product ideas of the last 2 weeks, in the USA, Australia and the UAE. <b>${num(stock.fits)}</b> ran out of stock recently with
+        ${num(stock.max_sellers)} sellers or fewer (change it in Settings → Gap Finder): buyers want it and few can sell it now.
+        "Not there yet" means the product is not on that Amazon at all.</p></div>`;
+    if (!stock.rows.length) return intro + `<div class="panel empty"><h2>No booming or brand-new products yet</h2><p>Run <b>Product ideas</b>
+      (or let the automatic refresh read Movers &amp; Shakers and New Releases): its booming and brand-new products are watched here.</p></div>`;
+    return intro + `<div class="panel"><div class="tablewrap"><table class="mtx"><thead><tr><th class="mtx-prod">Product</th><th>Why it is watched</th>
+      ${SMK.map(m => `<th>${mkFlag(m, true)}</th>`).join('')}</tr></thead><tbody>
+      ${rows.map(r => {
+        const m0 = r.out[0] || r.idea.market, url = ((ST.markets[m0] || {}).site || '') + '/dp/' + r.asin;
+        const words = (r.title || '').split(/\s+/).slice(0, 6).join(' ');
+        const acts = `<button class="btn slim" data-open="${esc(url)}">${icon('external')}Amazon</button>` +
+          (words ? `<button class="btn slim" data-open="${esc(alibabaUrl(words))}" title="Find suppliers">Alibaba</button>` : '') +
+          shortlistBtn(`data-sboard="${esc(r.asin)}"`);
+        return `<tr>${prodCell({image: r.image, url, title: r.title || r.asin, category: r.asin + (r.idea.category ? ' · ' + r.idea.category : ''), flags: []},
+            r.fits ? `<span class="pill good">${icon('ok')}Out of stock, few sellers: ${r.out.map(m => esc(MK_SHORT[m] || m)).join(', ')}</span>` : '', acts)}
+          <td><span class="pill ${r.idea.kind === 'booming' ? 'accent' : 'line'}">${esc(r.idea.why)}</span><span class="tsub">spotted in ${esc(MK[r.idea.market])} · ${ago(r.idea.last_seen)}</span></td>
+          ${SMK.map(m => stockCell(r, m)).join('')}</tr>`;
+      }).join('') || `<tr><td colspan="5" class="empty">${stock.read ? 'No product ran out recently with few sellers' + (stockMk ? ' in ' + esc(MK[stockMk]) : '') + '. Tick <b>Show every watched product</b> to see them all.' : 'Press <b>Check stock now</b>: the watched products have not been read yet.'}</td></tr>`}
+      </tbody></table></div></div>`;
+  }
+
+  /* ---------- Products to sell ---------- */
+  function productsTab() {
+    const all = D.products || [], risky = $('mgRisky').checked, q = $('mgFind').value.trim().toLowerCase();
+    const rows = all.filter(p => (risky || (!p.risk_why && !p.flags.length)) && (!q || (p.title + ' ' + (p.niche || '')).toLowerCase().includes(q)));
+    const hidden = all.length - rows.length;
+    if (!all.length) return `<div class="panel empty"><h2>No products yet</h2><p>Press <b>Refresh AU &amp; UAE</b>, or <b>Check now</b> on a niche you like
+      (Niches tab). Inside each niche the app searches the longer phrases shoppers type there, for example “leg rest pillow” inside Leg &amp; Foot
+      Supports, and counts how many listings sell exactly that product and how many were bought last month. A product with proven demand and
+      ${num(maxSellers())} sellers or fewer shows up here.</p></div>`;
+    const n = k => all.filter(p => (p.tier || p.source) === k).length;
+    return `<div class="panel"><p class="small" style="margin-bottom:8px"><b>${num(n('strong'))} strong</b> (proven demand, ${num(maxSellers())} sellers or fewer: change the limit in
+      Settings → Gap Finder) · <b>${num(n('look'))} worth a look</b> (less proven: up to 10 sellers, or fewer sales) · <b>${num(n('stock'))} out of stock</b> with few sellers ·
+      <b>${num(n('gapfinder'))} Gap Finder gaps</b> · then other listings shipped from abroad, on Amazon ${esc(MK[mk])}. <b>Pay ≤</b> is the most you can pay your supplier per piece
+      and keep 20% (small parcel assumed: check the size). ${hidden ? num(hidden) + ' with warnings (electrical, kids, chemical, clothing...) hidden: tick <b>Show phones, books and other risky niches</b> above to see them.' : ''}</p>
+      <div class="tablewrap"><table class="mtx"><thead><tr><th class="mtx-prod">Product</th><th>Score</th><th>Why it looks good</th><th>Price · pay ≤</th><th>Who sells it now</th></tr></thead><tbody>
+      ${rows.map(p => {
+        const url = site() + '/dp/' + p.asin;
+        const pills = p.source === 'hunt' ? (p.tier === 'look' ? `<span class="pill accent">Worth a look · ${num(p.sellers)} seller${p.sellers === 1 ? '' : 's'} · “${esc(p.phrase)}”</span>`
+            : `<span class="pill good">${icon('ok')}Strong · ${num(p.sellers)} seller${p.sellers === 1 ? '' : 's'} · “${esc(p.phrase)}”</span>`) +
+            (p.niche ? ` <span class="pill line">${esc(p.niche)}</span>` : '')
+          : p.source === 'stock' ? `<span class="pill warn">${icon('warn')}Out of stock, few sellers</span>` + (p.niche ? ` <span class="pill line">${esc(p.niche)}</span>` : '')
+          : p.source === 'gapfinder' ? `<span class="pill good">${icon('globe')}Gap Finder: ${esc(p.why[0] || 'gap')}</span>`
+          : (p.niche ? `<span class="pill line">${esc(p.niche)}</span>` : '') + (p.verdict ? ` <span class="pill ${VTONE[p.verdict] || 'weak'}">${esc((D.verdicts.find(v => v.verdict === p.verdict) || {}).label || p.verdict)}</span>` : p.source === 'best' ? ' <span class="pill accent">Best Seller</span>' : '');
+        const words = p.title.split(/\s+/).slice(0, 6).join(' ');
+        const acts = `<button class="btn slim" data-open="${esc(url)}">${icon('external')}Amazon</button>` +
+          `<button class="btn slim" data-open="${esc(alibabaUrl(words))}" title="Find suppliers">Alibaba</button>` +
+          (p.phrase ? `<a class="btn slim" href="#/k/${mk}/${encodeURIComponent(p.phrase)}">Report</a>` : '') +
+          shortlistBtn(`data-pboard="${esc(p.asin)}"`);
+        return `<tr>${prodCell({image: p.image, url, title: p.title, category: p.asin, flags: p.flags.concat(p.risk_why ? [p.risk_why] : [])}, pills, acts)}
+          <td><b class="tnum">${p.score == null ? '–' : p.score}</b></td>
+          <td><ul class="small" style="margin:0;padding-left:16px">${p.why.map(w => '<li>' + esc(w) + '</li>').join('')}</ul>
+            ${p.rating ? `<span class="tsub">${num(p.rating, 1)}★${p.reviews != null ? ' · ' + num(p.reviews) + ' reviews' : ''}</span>` : p.reviews != null ? `<span class="tsub">${num(p.reviews)} reviews</span>` : ''}</td>
+          <td>${p.price != null ? '<b>' + curMoney(p.price, cur(), 2) + '</b>' + fxSub(p.price, mk) : '<span class="muted small">no price read</span>'}
+            ${p.max_cogs_20 ? `<span class="tsub buy">pay ≤ ${esc(costMoney(p.max_cogs_20))}</span>` : p.price != null ? '<span class="tsub">no 20% margin at this price</span>' : ''}</td>
+          <td>${p.source === 'hunt' ? (p.listings || []).map(l => `<div class="small"><a data-open="${esc(site() + '/dp/' + l.asin)}">${esc((l.title || l.asin).slice(0, 48))}</a>
+              <span class="muted">${l.bought ? num(l.bought) + '+ · ' : ''}${l.origin === 'overseas' ? 'from abroad' : l.speed === 'fast' ? 'stock here' : 'local'}${l.days != null ? ' · ' + l.days + ' d' : ''}</span></div>`).join('')
+            : esc(p.seller || '–') + (p.days != null ? `<span class="tsub">${p.origin === 'overseas' ? 'from abroad' : 'local'} · ${p.days} days</span>` : '')}</td></tr>`;
+      }).join('') || '<tr><td colspan="5" class="empty">Nothing to show with these filters.</td></tr>'}</tbody></table></div></div>`;
   }
 
   /* ---------- Best Sellers read now ---------- */
@@ -262,6 +382,35 @@
     if (e.target.closest('[data-import]')) { importFolder(($('mgFolder') || {}).value || ''); return; }
     const m = e.target.closest('[data-more]');
     if (m) { open.has(m.dataset.more) ? open.delete(m.dataset.more) : open.add(m.dataset.more); render(); return; }
+    const sm = e.target.closest('[data-smk]');
+    if (sm) { stockMk = sm.dataset.smk; render(); return; }
+    if (e.target.closest('[data-sall]')) { stockAll = e.target.closest('[data-sall]').checked; render(); return; }
+    if (e.target.closest('[data-srun]')) {
+      const btn = e.target.closest('[data-srun]'); btn.disabled = true;
+      $('mgProg').innerHTML = busy('Starting…');
+      try {
+        const {job} = await api('/api/stock/run', {markets: stockMk ? [stockMk] : []});
+        const res = await waitJob(job, line => { $('mgProg').innerHTML = busy(line); });
+        stock = {...res, at: Date.now()}; render();
+        toast((res.notes || []).join(' · ') || 'Done', 9000);
+      } catch (err) { toast(err.message); }
+      $('mgProg').innerHTML = '';
+      return;
+    }
+    const sb = e.target.closest('[data-sboard]');
+    if (sb) {
+      const r = ((stock || {}).rows || []).find(x => x.asin === sb.dataset.sboard);
+      if (r) shortlist({title: (r.title || r.asin).slice(0, 120), market: r.out[0] || r.idea.market, asin: r.asin, kw: '',
+        image: r.image || '', source: 'Out of stock (' + r.idea.why + ')'}, sb);
+      return;
+    }
+    const pb = e.target.closest('[data-pboard]');
+    if (pb) {
+      const p = (D.products || []).find(x => x.asin === pb.dataset.pboard);
+      if (p) shortlist({title: p.title.slice(0, 120), market: mk, asin: p.asin, kw: p.phrase || '', image: p.image || '',
+        source: 'Market Gaps' + (p.niche ? ' (' + p.niche + ')' : '')}, pb);
+      return;
+    }
     const c = e.target.closest('[data-check]');
     if (c) { runJob('/api/mgaps/check', {market: mk, niches: [c.dataset.check]}, 'Checking ' + (niche(c.dataset.check) || {}).name + '…'); return; }
     const w = e.target.closest('[data-watch]'), b = e.target.closest('[data-board]');

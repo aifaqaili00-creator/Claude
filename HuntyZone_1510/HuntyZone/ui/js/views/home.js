@@ -1,7 +1,7 @@
 'use strict';
 /* Home: what changed since you last looked. Alerts, gaps, refresh status, and the first-run checklist. */
 (() => {
-  view('home', {title: 'Home', sub: 'What changed in your markets', onShow: () => load(true)});
+  view('home', {title: 'Dashboard', sub: 'Your markets, your products and what changed', onShow: () => load(true)});
   const SEV = {3: ['bad', 'warn', 'Urgent'], 2: ['warn', 'dot', 'Important'], 1: ['weak', 'dot', 'Info']};
   const RULE = {gap_open: 'Gap', gap_closing: 'Gap closing', demand_up: 'Demand up', demand_down: 'Demand down',
     competition_arriving: 'Competition', price_war: 'Price war', new_mover: 'New mover', persistent_riser: 'Riser',
@@ -22,6 +22,30 @@
   function tile(label, value, sub, cls = '') {
     return `<div class="kpi ${cls}"><span class="eyebrow">${esc(label)}</span><span class="v">${value}</span>${sub ? `<span class="s">${sub}</span>` : ''}</div>`;
   }
+  /* the dashboard: one clickable card per thing to act on, with what it means underneath */
+  const STAGES = {idea: 'idea', precheck: 'pre-check', approval: 'approval', sourcing: 'sourcing', launch: 'launching', reorder: 're-order'};
+  function card(href, label, value, sub, ic, tone = '') {
+    const tag = href ? 'a' : 'div';
+    return `<${tag} class="kpi ${tone}"${href ? ` href="${href}"` : ''}><span class="ic">${icon(ic)}</span><span class="eyebrow">${esc(label)}</span>
+      <span class="v">${value}</span><span class="s">${sub}</span>${href ? '<span class="go">Open →</span>' : ''}</${tag}>`;
+  }
+  function dashTiles(d) {
+    const g = d.dashboard || {}, f = g.found || {}, st = g.stock || {}, gp = g.gaps || {}, bd = g.board || {};
+    const found = (f.AU || 0) + (f.AE || 0);
+    const stages = Object.entries(bd.stages || {}).filter(([, n]) => n).map(([k, n]) => n + ' ' + (STAGES[k] || k)).join(' · ');
+    return `<div class="dash-h"><h2>Your markets at a glance</h2><span class="small muted">Click a card to open it</span></div>
+      <div class="kpis dash">
+        ${card('#/mgaps/AU/products', 'Products to sell', num(found), found ? `Australia ${num(f.AU || 0)} · UAE ${num(f.AE || 0)}: proven demand, few sellers`
+          : num(g.checked || 0) + ' niches checked so far: press Refresh in Market Gaps', 'box', found ? 'k-good' : '')}
+        ${card('#/mgaps/AU/stock', 'Out of stock, few sellers', st.fits == null ? '–' : num(st.fits),
+          num(st.watched || 0) + ' booming and brand-new products watched', 'warn', st.fits ? 'k-warn' : '')}
+        ${card('#/gaps', 'Gap Finder: open gaps', num(gp.open || 0), num(gp.checked || 0) + ' proven products checked in 60 days', 'globe', gp.open ? 'k-good' : '')}
+        ${card('#/board', 'Products on the board', num(bd.products || 0), (stages || 'nothing on the board yet') +
+          (bd.late ? ` · <b>${num(bd.late)} late</b>` : ''), 'board', bd.late ? 'k-bad' : '')}
+        ${card('', 'New alerts, 7 days', num(d.new_7d), num(d.market_alerts_7d) + ' about new trends: listed below', 'bell')}
+        ${card('#/watch', 'Watching', num(d.watch_n), d.watch_n ? 'keywords and markets, checked every day' : 'add a keyword to watch', 'eye')}
+      </div>`;
+  }
   const inT = t => { const s = t - Date.now() / 1000; return s <= 60 ? 'now' : s < 3600 ? 'in ' + Math.round(s / 60) + ' min' : s < 86400 ? 'in ' + Math.round(s / 3600) + ' h' : 'in ' + Math.round(s / 86400) + ' d'; };
 
   function render() {
@@ -37,9 +61,9 @@
     $('homeOut').innerHTML = `
       ${captcha.map(([src, v]) => `<div class="verdict some">${icon('warn')}<span><b>${esc(src.replace('amazon:', 'Amazon '))} asked for a captcha</b> during the automatic refresh. It is paused until ${new Date(v.cooldown_until * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}.
         <button class="btn slim" data-solve="${esc(src)}">Solve now</button></span></div>`).join('')}
+      ${dashTiles(d)}
+      <div class="dash-h"><h2>Your watched keywords</h2></div>
       <div class="kpis">
-        ${tile('New alerts, 7 days', d.new_7d, d.market_alerts_7d + ' about new trends')}
-        ${tile('Watching', d.watch_n, d.watch_n ? 'keywords and markets' : '<a href="#/watch">add a keyword</a>')}
         ${tile('Best AU / UAE gap', d.gaps.length ? esc(d.gaps[0].kw) : '–', d.gaps.length ? esc(MK[d.gaps[0].market]) + ' · ' + d.gaps[0].fast + ' fast local sellers' : 'none among watched keywords')}
         ${tile('Data', cooling.length ? cooling.length + ' paused' : 'All good', d.trends && d.trends.paused ? 'Google Trends paused' : num(d.counts.serp_snapshot) + ' searches stored', 'adv')}
         ${tile('Automatic refresh', sc.paused ? esc(sc.paused) : sc.running ? 'Running…' : 'On', sc.last_run ? 'last ' + ago(sc.last_run.ts) + (sc.next_due ? ' · next ' + inT(sc.next_due) : '') : sc.next_due ? 'next ' + inT(sc.next_due) : 'nothing scheduled yet', 'adv')}

@@ -4,8 +4,10 @@ and totals in US$ through `per_usd` ({'USD': 1, 'AUD': 1.55, ...})."""
 import datetime as dt
 import math
 
-STAGES = ('idea', 'approval', 'sourcing', 'launch', 'reorder')
-STAGE_NAMES = {'idea': 'Idea', 'approval': 'Approval', 'sourcing': 'Sourcing & PO', 'launch': 'Launching strategy',
+STAGES = ('idea', 'precheck', 'approval', 'sourcing', 'launch', 'reorder')
+# Pre-check is your own holding column between Idea and Approval: no checks of its own, so it is not in the progress ring
+PROGRESS_STAGES = tuple(s for s in STAGES if s != 'precheck')
+STAGE_NAMES = {'idea': 'Idea', 'precheck': 'Pre-check', 'approval': 'Approval', 'sourcing': 'Sourcing & PO', 'launch': 'Launching strategy',
                'reorder': 'Re-order'}
 # what a new product is checked against before money goes into it; each card can add its own or remove some
 APPROVAL_CHECKS = (
@@ -138,10 +140,10 @@ def approval_status(items):
 
 
 def unlocked(milestones):
-    """The stages a card may be in: Approval once the idea is done, Sourcing after 'Approved', Launch after
-    'Order ready', Re-order after 'Launched'."""
+    """The stages a card may be in: Idea and Pre-check always, Approval once the idea is done, Sourcing after
+    'Approved', Launch after 'Order ready', Re-order after 'Launched'."""
     ms = milestones or {}
-    return ['idea'] + (['approval'] if ms.get('idea_done') else []) + (['sourcing'] if ms.get('approved') else []) + \
+    return ['idea', 'precheck'] + (['approval'] if ms.get('idea_done') else []) + (['sourcing'] if ms.get('approved') else []) + \
         (['launch'] if ms.get('order_ready') else []) + (['reorder'] if ms.get('launched') else [])
 
 
@@ -262,7 +264,8 @@ def sales_rate(days, today=None, window=28):
 def ring(progress, late=False):
     """A card's progress ring: every stage an equal share. {'pct', 'tone': 'bad' (overdue) | 'good' (all done) |
     'accent'}."""
-    p = round(sum(min(1.0, max(0.0, _num((progress or {}).get(k)) or 0.0)) for k in STAGES) / len(STAGES) * 100)
+    p = round(sum(min(1.0, max(0.0, _num((progress or {}).get(k)) or 0.0)) for k in PROGRESS_STAGES) /
+              len(PROGRESS_STAGES) * 100)
     return {'pct': p, 'tone': 'bad' if late else 'good' if p >= 100 else 'accent'}
 
 

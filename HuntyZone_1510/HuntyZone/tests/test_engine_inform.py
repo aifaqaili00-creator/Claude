@@ -72,16 +72,17 @@ def test_the_email_lists_every_product_and_what_changed():
     assert subject == 'Product update, Mon 12 Oct: <b>Lick</b> Mat is new'
     assert text.startswith('Hi Sara and Ahmed,\n\nHere is where our 2 products stand.\n\nNote from Ali Afa:\n'
                            'Quotes by Friday, please.\n\nWhat changed since the last update (Sun 11 Oct):\n- New: <b>Lick</b> Mat')
-    assert ('1. Calming Dog Bed\n   Units needed: USA 300, Australia 200 (500 in all)\n   Target market: USA, Australia\n'
-            '   Sourcing ETA: Mon 19 Oct\n   At Amazon: USA about Fri 4 Dec') in text
+    assert ('1. Calming Dog Bed\n   USA 300, Australia 200 (500 in all) · sourcing by Mon 19 Oct · at Amazon: USA '
+            'about Fri 4 Dec · Sourcing & PO\n   Amazon search https://www.amazon.com/s?k=calming+dog+bed · '
+            'Alibaba search https://www.alibaba.com/trade/search?SearchText=calming+dog+bed\n') in text
     assert '2. <b>Lick</b> Mat [NEW]' in text and text.endswith('Thanks,\nAli Afa\n')
-    assert 'Search on Alibaba: https://www.alibaba.com/trade/search?SearchText=calming+dog+bed' in text
     assert '<b>Lick</b>' not in page and '&lt;b&gt;Lick&lt;/b&gt; Mat' in page and '>NEW</span>' in page
     assert 'href="https://www.amazon.com/s?k=calming+dog+bed"' in page and 'src="https://m.media-amazon.com/images/I/x.jpg"' in page
     assert 'Quotes by Friday, please.' in page and '2 products on the board' in page and 'Reply to this email to reach Ali.' in page
     subject, text, page = inform.texts([item()], [], {'owner': 'Ali', 'now': NOW, 'auto': True})
     assert subject == 'Product update, Mon 12 Oct: 1 product'
-    assert text.startswith('Hi,\n\nThe product board changed, so here is where our product stands.\n\n1. Calming Dog Bed\n')
+    assert text.startswith('Hi,\n\nThe product board changed, so here is where our product stands.\n\n== SOURCING & PO (1) ==\n\n'
+                           '1. Calming Dog Bed\n')
     assert 'You get it when products are added or changed.' in page
     many = [{'kind': k, 'title': 't', 'id': str(i), 'text': 'x'} for i, k in enumerate(['new', 'changed', 'changed', 'removed'])]
     assert inform.subject([item()], many, '2026-10-12') == 'Product update, Mon 12 Oct: 1 new, 2 changed, 1 removed'
@@ -105,3 +106,64 @@ def test_the_deadlines_email_says_how_late_or_how_soon_each_deadline_is():
     subject, text, page = inform.deadline_texts([], {'owner': 'Ali', 'now': NOW, 'none': ['Sauna Hat']})
     assert subject == 'Deadlines, Mon 12 Oct: none set' and text.startswith('Hi,\n\nNo product on our board has a deadline yet.')
     assert '<th' not in page and 'No deadline yet: Sauna Hat.' in page
+
+
+def test_the_plain_text_is_brief_with_short_links():
+    """It goes into a Gmail link in the browser way, so it is kept short: one line of facts and one of links."""
+    ali = ('https://www.alibaba.com/product-detail/Mothproof-Hanger-Assortment-24-Units-Clothes_1601750876688.html?spm=a2700.'
+           'galleryofferlist.normal_offer.d_image.4ebf13a0H8e6hW&priceId=b2ce568da3c64b3fb7732614a8580f8b')
+    assert inform.short_link(ali) == 'https://www.alibaba.com/product-detail/Mothproof-Hanger-Assortment-24-Units-Clothes_1601750876688.html'
+    assert inform.short_link('https://www.alibaba.com/trade/search?SearchText=Dog%20Booster%20Seat&has4Tab=true&tab=all') ==         'https://www.alibaba.com/trade/search?SearchText=Dog+Booster+Seat'
+    assert inform.short_link('https://www.amazon.com.au/Some-Name/dp/B0GLHWP6B7/ref=sr_1_3?crid=X&th=1') ==         'https://www.amazon.com.au/Some-Name/dp/B0GLHWP6B7'
+    assert inform.short_link('https://www.amazon.ae/s?k=dog+bark&ref=nb_sb_noss') == 'https://www.amazon.ae/s?k=dog+bark'
+    assert inform.short_link('not a link') == 'not a link' and inform.short_link('') == ''
+    long = 'Log Barn Natural Firelighters Box of 200. Fire Lighters for Wood Burners, Pizza Ovens, Open Fires, BBQ Lighters'
+    assert inform.short_title(long) == 'Log Barn Natural Firelighters Box of 200. Fire Lighters for Wood Bu...'
+    p = item(units=[['AE', None]], sourcing={'state': 'due', 'day': '2026-10-09'}, at_amazon=[], stage='approval',
+             order='Re-order #2', alibaba=ali, alibaba_search=False, amazon='https://www.amazon.ae/dp/B0H9SR9F85',
+             amazon_search=False)
+    assert inform.facts_line(p, '2026-10-12') == 'UAE (units not set) · sourcing late (was due Fri 9 Oct) · Approval (Re-order #2)'
+    assert inform.links_line(p) == ('Amazon https://www.amazon.ae/dp/B0H9SR9F85 · Alibaba '
+                                    'https://www.alibaba.com/product-detail/Mothproof-Hanger-Assortment-24-Units-Clothes_1601750876688.html')
+    _, text, page = inform.texts([dict(p, id=i, title=long) for i in range(13)], [], {'owner': 'Ali', 'now': NOW})
+    assert len(text) < 4500 and 'priceId' not in text and 'priceId' not in page
+    assert inform.facts_line(item(units=[], sourcing={'state': 'none'}, at_amazon=[])) == 'no market yet · no sourcing date yet · Sourcing & PO'
+
+
+def test_the_update_lists_sourcing_approval_pre_check_then_ideas_with_hashtags():
+    items = [item(1, 'Lick Mat', stage='idea'), item(2, 'Pet Stairs', stage='approval'),
+             item(3, 'Dog Bed', stage='precheck', tags=['Golden', 'verified']), item(4, 'Bird Bath', stage='sourcing')]
+    subject, text, page = inform.texts(items, [], {'owner': 'Ali', 'now': NOW})
+    heads = [ln for ln in text.splitlines() if ln.startswith('== ')]
+    assert heads == ['== SOURCING & PO (1) ==', '== APPROVAL (1) ==', '== PRE-CHECK (1) ==', '== IDEA (1) ==']
+    assert '1. Bird Bath\n' in text and '3. Dog Bed  #Golden #verified\n' in text and '4. Lick Mat\n' in text
+    assert page.index('Sourcing &amp; PO') < page.index('Approval') < page.index('Pre-check') < page.index('>Idea')
+    assert '>#Golden</span>' in page and '>#verified</span>' in page
+    _, text, page = inform.deadline_texts([{'title': 'Dog Bed', 'market': 'AU', 'stage': 'sourcing', 'due_day': '2026-10-13',
+                                            'note': None, 'tags': ['Golden']}], {'owner': 'Ali', 'now': NOW})
+    assert '1. Dog Bed (Australia) #Golden: Sourcing & PO, due Tue 13 Oct (in 1 day)' in text and '#Golden</span>' in page
+
+
+def test_each_stage_has_its_own_readable_colours_in_the_emails():
+    from test_contrast import contrast
+    for stage in inform.EMAIL_ORDER:
+        assert contrast('#ffffff', inform.STAGE_BAND[stage]) >= 4.5                     # white heading text on its bar
+        for ink in (inform.LABEL, '#101828', '#004eeb'):                                 # labels, values, hashtags on the tint
+            assert contrast(ink, inform.STAGE_TINT[stage]) >= 4.5
+    assert len(set(inform.STAGE_TINT.values())) == len(inform.STAGE_TINT)                # every stage looks different
+    _, _, page = inform.texts([item(1, stage='sourcing'), item(2, 'Dog Bed', stage='precheck')], [], {'owner': 'Ali', 'now': NOW})
+    assert 'bgcolor="%s"' % inform.STAGE_BAND['sourcing'] in page and 'bgcolor="%s"' % inform.STAGE_TINT['precheck'] in page
+    assert 'Pre-check <span style="font-weight:600">\u00b7 1 product</span>' in page
+
+
+def test_the_deadlines_email_has_the_same_stage_sections():
+    items = [{'title': 'Lick Mat', 'market': 'AU', 'stage': 'idea', 'due_day': '2026-10-10', 'note': None},
+             {'title': 'Dog Bed', 'market': 'AU', 'stage': 'precheck', 'due_day': '2026-10-11', 'note': None},
+             {'title': 'Pet Stairs', 'market': 'AE', 'stage': 'sourcing', 'due_day': '2026-10-14', 'note': None},
+             {'title': 'Bird Bath', 'market': 'AU', 'stage': 'sourcing', 'due_day': '2026-10-20', 'note': None},
+             {'title': 'Sauna Hat', 'market': 'US', 'stage': 'approval', 'due_day': '2026-10-13', 'note': None}]
+    _, text, page = inform.deadline_texts(items, {'owner': 'Ali', 'now': NOW})
+    heads = [ln for ln in text.splitlines() if ln.startswith('== ')]
+    assert heads == ['== SOURCING & PO (2) ==', '== APPROVAL (1) ==', '== PRE-CHECK (1) ==', '== IDEA (1) ==']
+    assert text.index('1. Pet Stairs') < text.index('2. Bird Bath') < text.index('3. Sauna Hat') < text.index('5. Lick Mat')
+    assert 'Sourcing &amp; PO <span style="font-weight:600">\u00b7 2 deadlines</span>' in page

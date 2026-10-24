@@ -3,6 +3,7 @@
 Finished jobs are kept for 30 minutes (at most 50), and each job's log is capped, so memory stays flat
 when the app runs for days. The UI polls /api/job; an expired job answers 410 (Gone).
 """
+import concurrent.futures
 import logging
 import threading
 import time
@@ -41,6 +42,8 @@ class JobManager:
             try:
                 job['result'] = fut.result()
                 job['status'] = 'done'
+            except (concurrent.futures.CancelledError, KeyboardInterrupt):
+                job['status'], job['error'] = 'stopped', 'Stopped: what was read so far is kept.'
             except Exception as e:                              # noqa: BLE001 - reported to the UI
                 log.exception('job %s failed', kind)
                 msg = str(e).strip() or e.__class__.__name__
@@ -51,11 +54,31 @@ class JobManager:
                 self.on_user_end()
         self.on_user_start()
         try:
-            self.run_coro(fn(progress)).add_done_callback(done)
+            job['_fut'] = self.run_coro(fn(progress))
+            job['_fut'].add_done_callback(done)
         except Exception:
             self.on_user_end()
             raise
         return jid
+
+    def stop(self, jid):
+        """Stop a running job (you pressed Stop): what it already read and saved is kept. True when it was running."""
+        job = self.jobs.get(jid)
+        if not job or job['status'] != 'running' or not job.get('_fut'):
+            return False
+        job['log'].append('Stopping…')
+        return job['_fut'].cancel() or True
+
+    def public(self, job):
+        """A job as the page sees it (without the handle that stops it)."""
+        return {k: v for k, v in job.items() if not k.startswith('_')}
+
+    def running_list(self):
+        """The running jobs, oldest first: [{'id', 'kind', 'line', 'started'}]."""
+        with self.lock:
+            rs = [j for j in self.jobs.values() if j['status'] == 'running']
+        return [{'id': j['id'], 'kind': j['kind'], 'line': (j['log'] or [''])[-1][:160], 'started': j['started']}
+                for j in sorted(rs, key=lambda j: j['started'])]
 
     def broadcast(self, msg):
         """Add a general message (a captcha to solve, a location being set) to every running job's log."""

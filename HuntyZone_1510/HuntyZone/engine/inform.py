@@ -6,13 +6,29 @@ update. Pure functions; board.inform_items builds the products:
 import hashlib
 import html
 import json
-from urllib.parse import quote_plus, urlsplit
+import re
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 from engine import board as rules
 from engine import remind
 
 ALIBABA_SEARCH = 'https://www.alibaba.com/trade/search?SearchText='
-STAGE_COLORS = {'idea': '#64748b', 'approval': '#d97706', 'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
+TITLE_MAX = 70                  # a longer product name is shortened in the plain-text email
+# what tracks the click, not what the page shows: dropped from links (Alibaba's spm and priceId, Amazon's ref...)
+TRACKING = {'spm', 'priceid', 'has4tab', 'tab', 'ref', 'ref_', 'psc', 'th', 'tag', 'qid', 'sr', 'crid', 'sprefix', 'scm',
+            'pvid', 'smid', 'linkcode', 'dib', 'dib_tag', 'content-id', '_encoding', 'algo_pvid', 'algo_exp_id',
+            'trafficchannel', 'cm_sw_r'}
+STAGE_COLORS = {'idea': '#64748b', 'precheck': '#0891b2', 'approval': '#d97706', 'sourcing': '#2f6fd6', 'launch': '#7a5af8', 'reorder': '#0e9384'}
+# each stage's own colours in the emails, so a section is easy to find: a solid heading bar (white text on it reaches
+# 4.5:1) and a light tint behind its products
+STAGE_BAND = {'idea': '#475569', 'precheck': '#0e7490', 'approval': '#b45309', 'sourcing': '#1d4ed8', 'launch': '#6d28d9',
+              'reorder': '#0f766e'}
+STAGE_TINT = {'idea': '#f1f3f6', 'precheck': '#e6f6fa', 'approval': '#fef3e2', 'sourcing': '#eaf1fd', 'launch': '#f1edfe',
+              'reorder': '#e6f5f3'}
+LABEL = '#475467'               # fact labels: dark enough on every tint
+# both board emails list the products under their stage, in this order: Sourcing & PO, Approval, Pre-check, Idea (then
+# Launching strategy and Re-order)
+EMAIL_ORDER = ('sourcing', 'approval', 'precheck', 'idea', 'launch', 'reorder')
 MARK = {'new': ('NEW', '#ecfdf3', '#067647'), 'changed': ('CHANGED', '#fffaeb', '#b54708')}
 
 
@@ -30,6 +46,29 @@ def alibaba_link(url, kw):
     return ALIBABA_SEARCH + quote_plus(kw or ''), True
 
 
+def short_link(url):
+    """The same page without the tracking after "?" (Alibaba's spm and priceId, Amazon's ref, utm_...): an Alibaba
+    product link goes from about 250 to about 110 characters. Searches keep their words."""
+    try:
+        s = urlsplit(str(url or ''))
+    except ValueError:
+        return url
+    if not s.scheme or not s.netloc:
+        return url
+    keep = [(k, v) for k, v in parse_qsl(s.query) if k.lower() not in TRACKING
+            and not k.lower().startswith(('utm_', 'pd_rd', 'pf_rd'))]
+    path = s.path
+    if 'amazon.' in s.netloc:
+        m = re.match(r'(.*?/dp/[A-Z0-9]{10})', path)
+        path = m.group(1) if m else path
+    return urlunsplit((s.scheme, s.netloc, path, urlencode(keep, quote_via=quote_plus), ''))
+
+
+def short_title(t):
+    t = ' '.join(str(t or '').split())
+    return t if len(t) <= TITLE_MAX else t[:TITLE_MAX - 3].rstrip(' ,.-') + '...'
+
+
 def supplier_name(url):
     host = (urlsplit(url).hostname or '').lower()
     return 'Alibaba' if any(host == d or host.endswith('.' + d) for d in ('alibaba.com', '1688.com')) else 'Supplier'
@@ -37,6 +76,27 @@ def supplier_name(url):
 
 def _name(mk):
     return rules.MARKET_NAMES.get(mk, mk)
+
+
+def email_rank(stage):
+    return EMAIL_ORDER.index(stage) if stage in EMAIL_ORDER else len(EMAIL_ORDER)
+
+
+def groups(items):
+    """The products under their stage headings, in EMAIL_ORDER: [(stage, [items])], empty stages left out."""
+    out = {}
+    for p in sorted(items, key=lambda p: email_rank(p['stage'])):      # stable: each stage keeps the board's order
+        out.setdefault(p['stage'], []).append(p)
+    return list(out.items())
+
+
+def hashtags(tags):
+    """'#Golden #verified' from a card's tags."""
+    return ' '.join('#' + t for t in tags or [] if t)
+
+
+def stage_name(stage):
+    return rules.STAGE_NAMES.get(stage, stage)
 
 
 def snapshot(items):
@@ -138,6 +198,38 @@ def rows(p, today=None):
     return out
 
 
+def facts_line(p, today=None):
+    """The facts of one product in one line for the plain-text email: 'Australia 25, UAE 25 (50 in all) · sourcing
+    by Mon 19 Oct · at Amazon: USA about Fri 4 Dec · Idea'."""
+    units = [(mk, u) for mk, u in p['units']]
+    set_ = [u for _, u in units if u]
+    need = ', '.join('%s %s' % (_name(mk), '{:,}'.format(u) if u else '(units not set)') for mk, u in units)
+    if len(set_) > 1:
+        need += ' (%s in all)' % '{:,}'.format(sum(set_))
+    s = p['sourcing'] or {}
+    if s.get('state') == 'done':
+        src = 'sourcing done' + (' %s' % remind.nice_day(s['day']) if rules.day(s.get('day')) else '')
+    elif s.get('state') == 'due' and rules.day(s.get('day')):
+        late = today is not None and rules.day(s['day']) < rules.day(today)
+        src = ('sourcing late (was due %s)' if late else 'sourcing by %s') % remind.nice_day(s['day'])
+    else:
+        src = 'no sourcing date yet'
+    bits = [need or 'no market yet', src]
+    at = ['%s %s' % (_name(mk), amazon_text(v)) for mk, v in p['at_amazon'] if amazon_text(v)]
+    if at:
+        bits.append('at Amazon: ' + ', '.join(at))
+    stage = rules.STAGE_NAMES.get(p['stage'], p['stage'])
+    bits.append(stage if p['order'] == 'First order' else '%s (%s)' % (stage, p['order']))
+    return ' \u00b7 '.join(bits)
+
+
+def links_line(p):
+    """'Amazon https://... · Alibaba https://...': short links Gmail and Outlook turn into links by themselves."""
+    a = 'Amazon search' if p['amazon_search'] else 'Amazon'
+    b = 'Alibaba search' if p['alibaba_search'] else supplier_name(p['alibaba'])
+    return '%s %s \u00b7 %s %s' % (a, short_link(p['amazon']), b, short_link(p['alibaba']))
+
+
 def link_labels(p):
     """('View on Amazon' or 'Search on Amazon', 'Alibaba page' / 'Supplier page' or 'Search on Alibaba')."""
     return ('Search on Amazon' if p['amazon_search'] else 'View on Amazon',
@@ -180,12 +272,14 @@ def texts(items, changed, ctx):
         lines += ['', 'Note from %s:' % owner, note]
     if changed:
         lines += ['', head] + ['- ' + c['text'] for c in changed]
-    for i, p in enumerate(items, 1):
-        tag = MARK.get(marks.get(str(p['id'])))
-        a, b = link_labels(p)
-        lines += ['', '%d. %s%s' % (i, p['title'], ' [%s]' % tag[0] if tag else '')]
-        lines += ['   %s: %s' % kv for kv in rows(p, today)]
-        lines += ['   %s: %s' % (a, p['amazon']), '   %s: %s' % (b, p['alibaba'])]
+    i = 0
+    for stage, group in groups(items):                  # brief: it must fit in an email link (mailer.URL_MAX)
+        lines += ['', '== %s (%d) ==' % (stage_name(stage).upper(), len(group))]
+        for p in group:
+            i += 1
+            tag, tags = MARK.get(marks.get(str(p['id']))), hashtags(p.get('tags'))
+            lines += ['', '%d. %s%s%s' % (i, short_title(p['title']), ' [%s]' % tag[0] if tag else '', '  ' + tags if tags else ''),
+                      '   ' + facts_line(p, today), '   ' + links_line(p)]
     lines += ['', 'Thanks,', owner]
     text = '\n'.join(lines) + '\n'
 
@@ -200,33 +294,51 @@ def texts(items, changed, ctx):
                     'padding-left:18px">%s</ul></div>' % (e(head), ''.join('<li style="margin:2px 0">%s</li>' % e(c['text'])
                                                                          for c in changed)))
     cards = []
-    for p in items:
-        tag = MARK.get(marks.get(str(p['id'])))
-        a, b = link_labels(p)
-        pic = ('<td width="64" valign="top" style="padding-right:12px"><img src="%s" width="56" height="56" alt="" '
-               'style="display:block;width:56px;height:56px;border-radius:8px;border:1px solid #e4e7ec;object-fit:contain;'
-               'background:#fff"></td>' % e(p['image'], quote=True)) if p.get('image') else ''
-        badge = ('<span style="display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;font-size:11px;'
-                 'font-weight:700;letter-spacing:.04em;background:%s;color:%s;vertical-align:middle">%s</span>'
-                 % (tag[1], tag[2], tag[0])) if tag else ''
-        facts = ''.join('<tr><td style="padding:4px 12px 4px 0;color:#667085;white-space:nowrap;vertical-align:top;'
-                        'width:120px">%s</td><td style="padding:4px 0;font-weight:600;color:#101828">%s</td></tr>'
-                        % (e(k), e(v)) for k, v in rows(p, today))
-        btn = ('<a href="%s" style="display:inline-block;margin:0 8px 6px 0;padding:8px 14px;border-radius:8px;'
-               'background:%s;color:#ffffff;text-decoration:none;font-weight:600;font-size:13px">%s</a>')
-        cards.append(
-            '<tr><td style="padding:0 24px 14px"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" '
-            'style="border:1px solid #e4e7ec;border-left:4px solid %s;border-radius:10px"><tr><td style="padding:14px 16px">'
-            '<table role="presentation" cellpadding="0" cellspacing="0"><tr>%s<td valign="top">'
-            '<div style="font-size:16px;font-weight:700;color:#101828;line-height:1.3">%s%s</div></td></tr></table>'
-            '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:10px;font-size:14px">%s</table>'
-            '<div style="margin-top:12px">%s%s</div></td></tr></table></td></tr>'
-            % (STAGE_COLORS.get(p['stage'], '#98a2b3'), pic, e(p['title']), badge, facts,
-               btn % (e(p['amazon'], quote=True), '#232f3e', e(a)), btn % (e(p['alibaba'], quote=True), '#c2410c', e(b))))
+    for stage, group in groups(items):
+        band = STAGE_BAND.get(stage, '#475467')
+        cards.append('<tr><td style="padding:14px 24px 10px"><table role="presentation" width="100%%" cellpadding="0" '
+                     'cellspacing="0"><tr><td bgcolor="%s" style="background:%s;border-radius:8px;padding:9px 14px;color:#ffffff;'
+                     'font-size:14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">%s '
+                     '<span style="font-weight:600">· %d product%s</span></td></tr></table></td></tr>'
+                     % (band, band, e(stage_name(stage)), len(group), '' if len(group) == 1 else 's'))
+        cards += [_card_html(p, marks, today) for p in group]
     page = _page('Product update \u00b7 ' + remind.nice_day(today), '%d product%s on the board' % (n, '' if n == 1 else 's'),
                  ''.join(body), ''.join(cards), owner,
                  ' You get it when products are added or changed.' if ctx.get('auto') else '')
     return subject(items, changed, today), text, page
+
+
+def _card_html(p, marks, today):
+    """One product of the product update as an HTML table row: picture, name, NEW/CHANGED badge, hashtags, facts and
+    the Amazon and Alibaba buttons."""
+    e = html.escape
+    tag = MARK.get(marks.get(str(p['id'])))
+    a, b = link_labels(p)
+    pic = ('<td width="64" valign="top" style="padding-right:12px"><img src="%s" width="56" height="56" alt="" '
+           'style="display:block;width:56px;height:56px;border-radius:8px;border:1px solid #e4e7ec;object-fit:contain;'
+           'background:#fff"></td>' % e(p['image'], quote=True)) if p.get('image') else ''
+    badge = ('<span style="display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;font-size:11px;'
+             'font-weight:700;letter-spacing:.04em;background:%s;color:%s;vertical-align:middle">%s</span>'
+             % (tag[1], tag[2], tag[0])) if tag else ''
+    tags = ''.join('<span style="display:inline-block;margin:4px 6px 0 0;padding:1px 8px;border-radius:99px;font-size:12px;'
+                   'font-weight:600;background:#ffffff;border:1px solid #b2ccff;color:#004eeb">#%s</span>' % e(t) for t in p.get('tags') or [] if t)
+    facts = ''.join('<tr><td style="padding:4px 12px 4px 0;color:%s;white-space:nowrap;vertical-align:top;'
+                    'width:120px">%s</td><td style="padding:4px 0;font-weight:600;color:#101828">%s</td></tr>'
+                    % (LABEL, e(k), e(v)) for k, v in rows(p, today))
+    btn = ('<a href="%s" style="display:inline-block;margin:0 8px 6px 0;padding:8px 14px;border-radius:8px;'
+           'background:%s;color:#ffffff;text-decoration:none;font-weight:600;font-size:13px">%s</a>')
+    return ('<tr><td style="padding:0 24px 14px"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" '
+            'bgcolor="%s" style="background:%s;border:1px solid #e4e7ec;border-left:5px solid %s;border-radius:10px">'
+            '<tr><td style="padding:14px 16px">'
+            '<table role="presentation" cellpadding="0" cellspacing="0"><tr>%s<td valign="top">'
+            '<div style="font-size:16px;font-weight:700;color:#101828;line-height:1.3">%s%s</div>%s</td></tr></table>'
+            '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:10px;font-size:14px">%s</table>'
+            '<div style="margin-top:12px">%s%s</div></td></tr></table></td></tr>'
+            % (STAGE_TINT.get(p['stage'], '#ffffff'), STAGE_TINT.get(p['stage'], '#ffffff'),
+               STAGE_BAND.get(p['stage'], '#98a2b3'), pic, e(p['title']), badge,
+               '<div>%s</div>' % tags if tags else '', facts,
+               btn % (e(short_link(p['amazon']), quote=True), '#232f3e', e(a)),
+               btn % (e(short_link(p['alibaba']), quote=True), '#c2410c', e(b))))
 
 
 def _note(owner, note):
@@ -268,8 +380,9 @@ def due_text(day, today):
 
 
 def deadline_texts(items, ctx):
-    """(subject, plain text, HTML) of the deadlines email: every open deadline on the board, the soonest first.
-    items: [{'title', 'market', 'stage', 'due_day', 'note'}] sorted by due day; ctx: {'owner', 'to_names',
+    """(subject, plain text, HTML) of the deadlines email: every open deadline on the board under its stage (in
+    EMAIL_ORDER), the soonest first in each. items: [{'title', 'market', 'stage', 'due_day', 'note', 'tags'}] sorted by
+    due day; ctx: {'owner', 'to_names',
     'message', 'now', 'none': [products without a deadline]}."""
     today = remind.today(ctx['now'])
     owner = ctx.get('owner') or 'Product Checker'
@@ -281,18 +394,23 @@ def deadline_texts(items, ctx):
     parts = (['%d late' % late] if late else []) + (['%d coming up' % (len(items) - late)] if len(items) > late else [])
     subject_ = 'Deadlines, %s: %s' % (day, ', '.join(parts) or 'none set')
     hello = 'Hi %s,' % who if who else 'Hi,'
-    intro = 'Here are the deadlines on our product board, the soonest first.' if items else \
+    intro = 'Here are the deadlines on our product board by stage, the soonest first in each.' if items else \
         'No product on our board has a deadline yet.'
     stage = lambda i: rules.STAGE_NAMES.get(i['stage'], i['stage'])          # noqa: E731
 
     lines = [hello, '', intro]
     if note:
         lines += ['', 'Note from %s:' % owner, note]
-    lines.append('')
-    for n, i in enumerate(items, 1):
-        lines.append('%d. %s (%s): %s, %s' % (n, i['title'], _name(i['market']), stage(i), due_text(i['due_day'], today)))
-        if i.get('note'):
-            lines.append('   Note: %s' % i['note'])
+    n = 0
+    for st, group in groups(items):
+        lines += ['', '== %s (%d) ==' % (stage_name(st).upper(), len(group))]
+        for i in group:
+            n += 1
+            tags = hashtags(i.get('tags'))
+            lines.append('%d. %s (%s)%s: %s, %s' % (n, i['title'], _name(i['market']), ' ' + tags if tags else '', stage(i),
+                                                   due_text(i['due_day'], today)))
+            if i.get('note'):
+                lines.append('   Note: %s' % i['note'])
     if none:
         lines += ['', 'No deadline yet: %s.' % ', '.join(none)]
     lines += ['', 'Thanks,', owner]
@@ -302,14 +420,26 @@ def deadline_texts(items, ctx):
     para = 'margin:0 0 12px'
     body = '<p style="%s">%s</p><p style="%s">%s</p>' % (para, e(hello), para, e(intro)) + (_note(owner, note) if note else '')
     cell = 'padding:10px 12px;border-top:1px solid #e4e7ec;vertical-align:top'
-    trs = ''.join(
-        '<tr><td style="%s"><div style="font-weight:600">%s</div><div style="font-size:12px;color:#667085">%s%s</div></td>'
-        '<td style="%s;white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:50%%;'
-        'background:%s;margin-right:6px"></span>%s</td><td style="%s;%s">%s</td></tr>'
-        % (cell, e(i['title']), e(_name(i['market'])), ' \u00b7 ' + e(i['note']) if i.get('note') else '',
-           cell, STAGE_COLORS.get(i['stage'], '#98a2b3'), e(stage(i)), cell,
+    row = lambda i: (                                                        # noqa: E731
+        '<tr bgcolor="%s" style="background:%s"><td style="%s;border-left:5px solid %s"><div style="font-weight:600">%s</div>'
+        '<div style="font-size:12px;color:%s">%s%s%s</div></td>'
+        '<td style="%s;white-space:nowrap"><span style="display:inline-block;padding:2px 9px;border-radius:99px;'
+        'background:%s;color:#ffffff;font-size:12px;font-weight:700">%s</span></td><td style="%s;%s">%s</td></tr>'
+        % (STAGE_TINT.get(i['stage'], '#ffffff'), STAGE_TINT.get(i['stage'], '#ffffff'), cell,
+           STAGE_BAND.get(i['stage'], '#98a2b3'), e(i['title']), LABEL, e(_name(i['market'])),
+           ' \u00b7 <span style="color:#004eeb;font-weight:600">%s</span>' % e(hashtags(i['tags'])) if i.get('tags') else '',
+           ' \u00b7 ' + e(i['note']) if i.get('note') else '',
+           cell, STAGE_BAND.get(i['stage'], '#475467'), e(stage(i)), cell,
            'color:#b42318;font-weight:600' if rules.day(i['due_day']) < today else 'color:#101828',
-           e(due_text(i['due_day'], today))) for i in items)
+           e(due_text(i['due_day'], today))))
+    trs = ''
+    for st, group in groups(items):
+        band = STAGE_BAND.get(st, '#475467')
+        trs += ('<tr><td colspan="3" bgcolor="%s" style="background:%s;padding:8px 12px;color:#ffffff;font-size:13px;'
+                'font-weight:700;letter-spacing:.05em;text-transform:uppercase">%s <span style="font-weight:600">'
+                '\u00b7 %d deadline%s</span></td></tr>' % (band, band, e(stage_name(st)), len(group),
+                                                          '' if len(group) == 1 else 's'))
+        trs += ''.join(row(i) for i in group)
     head = ''.join('<th align="left" style="padding:8px 12px;font-size:12px;color:#667085;font-weight:600">%s</th>' % x
                    for x in ('Product', 'Stage', 'Deadline'))
     rows = ('<tr><td style="padding:0 24px 14px"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" '

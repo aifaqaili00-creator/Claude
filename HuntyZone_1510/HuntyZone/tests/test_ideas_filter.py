@@ -48,3 +48,15 @@ def test_price_range_and_tech_filter():
 def test_without_a_range_the_old_targets_still_score():
     out = ideas.score_ideas([item('B01', 'Toilet Paper Holder Stand', 35.0), item('B02', 'Sink Strainer', 9.0)], 'AU')
     assert {i['asin'] for i in out} == {'B01', 'B02'} and 'cheap' in out[-1]['flags']
+
+
+
+def test_a_product_climbing_fast_is_booming_without_movers_and_shakers():
+    items = [{'asin': 'B0CLIMB', 'title': 'Silicone Stretch Lids 6 Pack', 'kind': 'new', 'rank': 5, 'price': 30.0, 'reviews': 12,
+              'category': 'Kitchen', 'slug': 'kitchen', 'image': '', 'url': ''},
+             {'asin': 'B0STILL', 'title': 'Bamboo Utensil Holder', 'kind': 'new', 'rank': 4, 'price': 30.0, 'reviews': 12,
+              'category': 'Kitchen', 'slug': 'kitchen', 'image': '', 'url': ''}]
+    out = {i['asin']: i for i in ideas.score_ideas(items, 'AU', price_range=(1, 999),
+                                                   climbing={'B0CLIMB': 'Climbing fast: #38 to #5 in New Releases, Kitchen'})}
+    assert out['B0CLIMB']['label'] == 'Booming' and 'climbing fast: #38 to #5 in New Releases, Kitchen' in out['B0CLIMB']['why']
+    assert out['B0STILL']['label'] == 'New' and out['B0CLIMB']['score'] > out['B0STILL']['score']
