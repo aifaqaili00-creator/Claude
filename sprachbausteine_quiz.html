@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprachbausteine Schritt für Schritt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* Layout: one narrow exercise-book column on squared paper; blue fountain-pen ink for the learner, teacher red/green for corrections. */
+:root {
+  --paper: #f8faf6; --grid: rgba(60, 95, 160, .10); --card: #ffffff; --line: #d9dfe8;
+  --ink: #1c2433; --muted: #5c6577; --blue: #1f3fbf; --blue-soft: #e6ebfb;
+  --red: #c4302a; --red-soft: #fbe6e4; --green: #1d7a48; --green-soft: #e1f3e8;
+  --display: "Zilla Slab", Georgia, serif; --body: "Source Sans 3", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #11151d; --grid: rgba(130, 155, 215, .07); --card: #19202b; --line: #2b3444;
+  --ink: #e6e9f0; --muted: #9aa3b5; --blue: #93abff; --blue-soft: #1f2a46;
+  --red: #ff8b80; --red-soft: #3b1f1d; --green: #6fd39a; --green-soft: #17331f; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --paper: #11151d; --grid: rgba(130, 155, 215, .07); --card: #19202b; --line: #2b3444;
+  --ink: #e6e9f0; --muted: #9aa3b5; --blue: #93abff; --blue-soft: #1f2a46;
+  --red: #ff8b80; --red-soft: #3b1f1d; --green: #6fd39a; --green-soft: #17331f; color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background-color: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.5;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 22px max(16px, env(safe-area-inset-right, 0px)) 64px max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 16px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; line-height: 1.15; }
+h1 { font-size: 2.1rem; }
+h2 { font-size: 1.55rem; }
+h3 { font-size: 1.1rem; }
+.lead { color: var(--muted); margin: 0; max-width: 62ch; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; font-weight: 600; cursor: pointer; border-radius: 10px; border: 1.5px solid var(--line); background: var(--card); color: var(--ink); padding: 9px 16px; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+button:disabled { cursor: default; }
+.primary { background: var(--blue); border-color: var(--blue); color: var(--card); }
+.ghost { background: transparent; border-color: transparent; color: var(--blue); padding-left: 0; }
+.muted { color: var(--muted); }
+.small { font-size: .9rem; }
+
+/* progress overview */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.stat b { font-family: var(--display); font-size: 1.5rem; display: block; font-variant-numeric: tabular-nums; }
+.bar { height: 8px; background: var(--blue-soft); border-radius: 99px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--blue); border-radius: 99px; }
+
+/* lesson map */
+.level { display: flex; flex-direction: column; gap: 8px; }
+.level-head { display: flex; align-items: baseline; gap: 10px; }
+.level-head .num { font-family: var(--display); color: var(--blue); font-size: 1.05rem; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.tile { text-align: left; display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: start; padding: 12px 14px; font-weight: 400; }
+.tile .no { font-family: var(--display); font-weight: 700; color: var(--blue); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.tile .tt { font-weight: 700; }
+.tile .sub { grid-column: 2 / 4; color: var(--muted); font-size: .88rem; line-height: 1.35; }
+.chip { font-size: .8rem; font-weight: 700; border-radius: 99px; padding: 2px 9px; white-space: nowrap; background: var(--blue-soft); color: var(--blue); }
+.chip.good { background: var(--green-soft); color: var(--green); }
+.chip.mid { background: #fff3d6; color: #8a5a00; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip.mid { background: #3a2f12; color: #f2c46b; } }
+:root[data-theme="dark"] .chip.mid { background: #3a2f12; color: #f2c46b; }
+.tile.next { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+
+/* rule card */
+.rule p, .rule ul, .rule ol { margin: 0; }
+.rule ul, .rule ol { padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+th { background: var(--blue-soft); }
+.rule em, .rule i { color: var(--muted); }
+.ex { border-left: 4px solid var(--blue); padding: 4px 10px; background: var(--blue-soft); border-radius: 0 8px 8px 0; }
+
+/* quiz */
+.dots { display: flex; flex-wrap: wrap; gap: 4px; }
+.dot { width: 14px; height: 14px; border-radius: 4px; background: var(--line); }
+.dot.ok { background: var(--green); } .dot.bad { background: var(--red); } .dot.now { outline: 2px solid var(--blue); outline-offset: 1px; }
+.q { font-size: 1.3rem; line-height: 1.45; }
+.gap { display: inline-block; min-width: 4.5em; border-bottom: 3px solid var(--blue); text-align: center; color: var(--blue); font-weight: 700; padding: 0 4px; }
+.gap.ok { color: var(--green); border-color: var(--green); }
+.opts { display: grid; gap: 8px; }
+.opt { text-align: left; display: flex; gap: 12px; align-items: center; padding: 12px 14px; font-size: 1.08rem; font-weight: 600; }
+.opt kbd { font-family: var(--body); font-size: .8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
+.opt.ok { border-color: var(--green); background: var(--green-soft); }
+.opt.bad { border-color: var(--red); background: var(--red-soft); }
+.opt:not(:disabled):hover { border-color: var(--blue); }
+.fb { border-radius: 10px; padding: 10px 12px; font-size: .98rem; }
+.fb.ok { background: var(--green-soft); border-left: 5px solid var(--green); }
+.fb.bad { background: var(--red-soft); border-left: 5px solid var(--red); }
+.fb b.mark { font-family: var(--display); font-size: 1.1rem; }
+.typed { display: flex; gap: 8px; flex-wrap: wrap; }
+.typed input { font: inherit; font-size: 1.1rem; padding: 9px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--card); color: var(--ink); flex: 1 1 200px; min-width: 0; }
+.typed input.ok { border-color: var(--green); } .typed input.bad { border-color: var(--red); }
+.hint { color: var(--muted); font-size: .92rem; }
+details.rulebox summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+details.rulebox[open] { gap: 10px; }
+
+/* word box (Teil 2 training) */
+.bank { display: flex; flex-wrap: wrap; gap: 6px; }
+.bank span { border: 1px dashed var(--muted); border-radius: 8px; padding: 2px 9px; font-weight: 600; font-size: .95rem; }
+.bank span.used { opacity: .35; text-decoration: line-through; }
+.boxtext { font-size: 1.08rem; line-height: 2.1; white-space: pre-line; }
+.boxtext select { font: inherit; font-weight: 700; color: var(--blue); background: var(--card); border: 1.5px solid var(--blue); border-radius: 8px; padding: 1px 4px; }
+.boxtext select.ok { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+.boxtext select.bad { border-color: var(--red); color: var(--red); background: var(--red-soft); }
+.boxtext .fix { color: var(--green); font-weight: 700; font-size: .9rem; }
+.timer { font-family: var(--display); font-variant-numeric: tabular-nums; font-size: 1.2rem; color: var(--blue); }
+
+/* result */
+.big { font-family: var(--display); font-size: 2.6rem; font-variant-numeric: tabular-nums; line-height: 1; }
+.stars { font-size: 1.6rem; letter-spacing: 3px; color: #d8a21a; }
+.wronglist { display: flex; flex-direction: column; gap: 6px; }
+.wronglist div { border-left: 4px solid var(--red); padding: 3px 10px; background: var(--red-soft); border-radius: 0 8px 8px 0; font-size: .95rem; }
+
+@media (max-width: 480px) { h1 { font-size: 1.7rem; } .q { font-size: 1.15rem; } .stats { grid-template-columns: 1fr 1fr 1fr; } .stat b { font-size: 1.2rem; } }
+@media (prefers-reduced-motion: no-preference) { .opt, .tile { transition: border-color .15s, background .15s; } }
+</style>
+</head>
+<body>
+<main class="wrap" id="app" aria-live="polite"></main>
+
+<script>
+// Each item: mc = multiple choice (first option in the list is correct, shown shuffled), inp = typed answer, box = word-box text.
+const mc = (q, o, w) => ({ t: "mc", q, o, w });
+const inp = (q, a, w, hint) => ({ t: "in", q, a: Array.isArray(a) ? a : [a], w, hint });
+const box = (title, text, words, a) => ({ t: "box", title, text, words, a });
+
+const LEVELS = ["Sätze bauen · building a sentence", "Fälle · cases", "Endungen · endings", "Verben · verbs", "Kleine Wörter · small words", "Prüfungstraining · exam training"];
+
+const LESSONS = [
+/* ---------------- LEVEL 1 ---------------- */
+{ lv: 0, title: "Wo steht das Verb?", sub: "Find the verb first – then you know what fits the gap.",
+  rule: `<p>A German verb has only <b>3 places</b>:</p>
+  <ol><li><b>Position 2</b> in a normal sentence, whatever comes first: <i>Heute <b>lerne</b> ich. · Deshalb <b>lerne</b> ich.</i></li>
+  <li><b>The end</b> after weil, dass, wenn, ob, obwohl, als (and in relative clauses): <i>…, weil ich heute <b>lerne</b>.</i></li>
+  <li><b>Position 1</b> in yes/no questions and requests: <i><b>Lernst</b> du? <b>Ruf</b> mich an!</i></li></ol>
+  <h3>The gap test: look at what comes right after the gap</h3>
+  <div class="tbl"><table><tr><th>After the gap</th><th>The gap needs</th><th>Example</th></tr>
+  <tr><td>a <b>verb</b></td><td>a position-1 word: oft, heute, deshalb, trotzdem</td><td>___ <b>fahren</b> wir … → <b>Oft</b></td></tr>
+  <tr><td>a subject, <b>verb at the end</b></td><td>weil, dass, wenn, ob, obwohl</td><td>…, ___ wir Lust <b>hätten</b> → <b>weil</b></td></tr>
+  <tr><td>subject + verb (normal order)</td><td>a „zero“ word: aber, und, oder, denn</td><td>___ ich <b>würde</b> gern … → <b>Aber</b></td></tr>
+  <tr><td>no verb in the clause</td><td>the gap <b>is</b> the verb</td><td>…, wo wir alle Wege ___ → <b>kennen</b></td></tr></table></div>`,
+  items: [
+    mc("___ fahren wir in die Berge.", ["Oft", "Weil"], "The verb <b>fahren</b> comes right after the gap, so the gap is position 1 → <b>Oft</b>. After <i>weil</i> the verb would go to the end."),
+    mc("Ich lerne Deutsch, ___ ich in Deutschland arbeiten möchte.", ["weil", "deshalb"], "<b>möchte</b> is at the end → a word that sends the verb to the end → <b>weil</b>. With deshalb: …, deshalb <b>möchte</b> ich …"),
+    mc("Ich habe wenig Zeit. ___ lerne ich jeden Tag.", ["Trotzdem", "Obwohl"], "The verb <b>lerne</b> comes right after the gap → position 1 → <b>Trotzdem</b>. Obwohl would push the verb to the end."),
+    mc("Ich wohne gern auf dem Land, ___ ich vermisse die Disco.", ["aber", "trotzdem"], "After the gap: subject <b>ich</b>, then the verb – normal order → a „zero“ word: <b>aber</b>. Trotzdem needs the verb right after it: <i>trotzdem vermisse ich</i>. (Your Exam 8 mistake.)"),
+    mc("Wir fahren in die Gegend, wo wir alle Wanderwege ___.", ["kennen", "oft"], "The clause <i>wo wir alle Wanderwege …</i> has no verb yet, and after <b>wo</b> the verb goes to the end → the gap is the verb: <b>kennen</b>. (Exam 10.)"),
+    mc("___ Sie Fragen haben, rufen Sie mich an.", ["Wenn", "Deshalb"], "<b>haben</b> is at the end of the first part → <b>Wenn</b>. The second part then starts with the verb: <i>rufen Sie</i>."),
+    mc("Daher ___ wir uns auf gemeinsame Radtouren freuen.", ["würden", "weil"], "After <i>Daher</i> (position 1) comes the verb in position 2 → <b>würden</b>; <i>freuen</i> waits at the end. (Exam 10.)"),
+    mc("Leider ___ ich Sie im Moment nicht anrufen.", ["kann", "weil", "deshalb"], "After <i>Leider</i> the next place is position 2 = the verb → <b>kann</b> (+ anrufen at the end)."),
+    mc("Das Telefon ist immer belegt. ___ schreibe ich Ihnen eine Mail.", ["Deshalb", "Weil", "Obwohl"], "The verb <b>schreibe</b> comes right after the gap → position 1 → <b>Deshalb</b>."),
+    mc("Ich bin sehr zufrieden, ___ mein Zimmer recht klein ist.", ["obwohl", "aber", "trotzdem"], "<b>ist</b> is at the end → <b>obwohl</b>. With aber it would be: aber mein Zimmer <b>ist</b> klein."),
+    inp("Tee und Kalender ___ Ihnen unser Katalog.", "zeigt", "Find the verb, then the real subject: <b>unser Katalog</b> (singular) stands after the verb → <b>zeigt</b>. „Tee und Kalender“ is only the object. (Exam 5.)", "zeigen"),
+    inp("Morgen ___ ich nach Berlin.", "fahre", "<i>Morgen</i> is position 1, so the verb comes second: <b>Morgen fahre ich</b> – never „Morgen ich fahre“.", "fahren"),
+    mc("Welcher Satz ist richtig?", ["Jetzt mache ich bald die B1-Prüfung.", "Jetzt ich mache bald die B1-Prüfung."], "Position 2 = verb: <b>Jetzt mache ich</b>. You wrote „jetzt ich habe“ in your Exam 2 letter."),
+    mc("Welcher Satz ist richtig?", ["…, weil es der Traum meiner Mutter ist.", "…, weil es ist der Traum meiner Mutter."], "After <b>weil</b> the conjugated verb goes to the very end: <i>…, weil es der Traum meiner Mutter <b>ist</b>.</i>")
+  ] },
+
+{ lv: 0, title: "Konnektoren", sub: "aber · deshalb · weil – three groups, three word orders.",
+  rule: `<div class="tbl"><table><tr><th>Group</th><th>Words</th><th>Verb</th><th>Example</th></tr>
+  <tr><td><b>0</b> – doesn't count</td><td>und, aber, oder, denn, sondern</td><td>normal (position 2)</td><td>…, <b>denn</b> ich <b>bin</b> krank.</td></tr>
+  <tr><td><b>1</b> – takes position 1</td><td>deshalb, deswegen, trotzdem, außerdem, dann, danach, sonst</td><td>right after it</td><td><b>Deshalb bleibe</b> ich zu Hause.</td></tr>
+  <tr><td><b>End</b></td><td>weil, da, dass, ob, wenn, falls, obwohl, damit, als, bis, nachdem, während</td><td>at the end</td><td>…, <b>weil</b> ich krank <b>bin</b>.</td></tr></table></div>
+  <ul><li>Reason: <b>weil / denn</b> · result: <b>deshalb</b> · against expectation: <b>obwohl</b> (clause) / <b>trotzdem</b> (adverb) / <b>trotz</b> + Genitiv</li>
+  <li><b>sondern</b> only after a negative: <i>nicht A, sondern B</i> · otherwise <b>aber</b></li>
+  <li><b>um … zu</b> (same subject) · <b>damit</b> (other subject) · <b>statt … zu</b> = instead of</li>
+  <li>Pairs: <b>zwar … aber</b> · <b>sowohl … als auch</b> · <b>entweder … oder</b> · <b>nicht nur … sondern auch</b></li></ul>`,
+  items: [
+    mc("Ich bleibe zu Hause, ___ ich bin krank.", ["denn", "weil"], "Normal order after the gap (ich <b>bin</b>) → <b>denn</b>. weil would need: weil ich krank <b>bin</b>."),
+    mc("Ich bleibe zu Hause, ___ ich krank bin.", ["weil", "denn"], "<b>bin</b> is at the end → <b>weil</b>."),
+    mc("Ich bin krank. ___ bleibe ich zu Hause.", ["Deshalb", "Weil"], "The verb comes right after the gap → <b>Deshalb</b> (= that's why). It gives the result."),
+    mc("Es regnet. ___ gehe ich spazieren.", ["Trotzdem", "Obwohl"], "Verb right after the gap → <b>Trotzdem</b> (= nevertheless)."),
+    mc("___ es regnet, gehe ich spazieren.", ["Obwohl", "Trotzdem"], "<b>regnet</b> is at the end → <b>Obwohl</b>."),
+    mc("Das ist nicht mein Auto, ___ das Auto von meinem Bruder.", ["sondern", "aber"], "<b>nicht</b> A, <b>sondern</b> B – sondern corrects a negative."),
+    mc("Das Auto ist alt, ___ es fährt noch gut.", ["aber", "sondern"], "Nothing negative to correct, just a contrast → <b>aber</b>."),
+    mc("Wir schreiben Ihnen, ___ wir Lust hätten, etwas in einer Gruppe zu machen.", ["weil", "wenn", "wann"], "This is the <b>reason</b> for writing and <i>hätten</i> is at the end → <b>weil</b>. (Your Exam 10 mistake.)"),
+    mc("___ allein zu spielen, spielen Sie mit uns in einer Gruppe.", ["Statt", "Damit", "Weil"], "Look for <b>zu spielen</b>: <b>statt … zu</b> + infinitive = instead of (like ohne … zu, um … zu). (Exam 9.)"),
+    mc("Ich erkläre es langsam, ___ alle es verstehen.", ["damit", "um", "deshalb"], "Different subjects (ich / alle) and the verb at the end → <b>damit</b> (= so that)."),
+    mc("Ich gehe früh ins Bett, ___ morgen fit zu sein.", ["um", "damit", "weil"], "<b>zu sein</b> at the end, same subject → <b>um … zu</b>."),
+    mc("Ich bin ___ schon 72 Jahre alt, aber noch sehr gesund.", ["zwar", "schon", "trotzdem"], "You can see <b>aber</b> later → <b>zwar … aber</b> = admittedly …, but. (Exam 6.)"),
+    mc("Ich interessiere mich sowohl für Musik ___ für Sport.", ["als auch", "oder", "und auch"], "<b>sowohl … als auch</b> = both … and. (Exam 3.)"),
+    inp("Du kannst entweder mitkommen ___ zu Hause bleiben.", "oder", "<b>entweder … oder</b> = either … or.")
+  ] },
+
+{ lv: 0, title: "ob · wenn · wann · als · dass", sub: "Your #1 mistake – quick review.",
+  rule: `<div class="tbl"><table><tr><th>Word</th><th>When</th><th>Example</th></tr>
+  <tr><td><b>dass</b></td><td>a fact or statement</td><td>Ich weiß, <b>dass</b> er krank ist.</td></tr>
+  <tr><td><b>ob</b></td><td>a hidden <b>yes/no</b> question</td><td>Ich weiß nicht, <b>ob</b> er kommt. (Kommt er?)</td></tr>
+  <tr><td><b>wann</b></td><td>a question about <b>time</b></td><td>Ich weiß nicht, <b>wann</b> er kommt. (Um 8.)</td></tr>
+  <tr><td><b>wenn</b></td><td>if · every time · once in the future</td><td><b>Wenn</b> es regnet, bleibe ich hier.</td></tr>
+  <tr><td><b>als</b></td><td><b>one</b> time in the <b>past</b></td><td><b>Als</b> ich Kind war, …</td></tr></table></div>
+  <p class="ex"><b>2-second test</b> after wissen / fragen / möchte wissen: turn it into a direct question. Answer yes/no → <b>ob</b> · answer is a time → <b>wann</b> · it is a fact → <b>dass</b>.</p>`,
+  items: [
+    mc("Ich weiß nicht, ___ er heute kommt.", ["ob", "wenn"], "Hidden question: <i>Kommt er heute?</i> → yes/no → <b>ob</b>."),
+    mc("Können Sie mir sagen, ___ der Kurs beginnt?", ["wann", "wenn"], "Hidden question: <i>Wann beginnt der Kurs?</i> → a time → <b>wann</b>."),
+    mc("___ ich ein Kind war, wohnte ich auf dem Land.", ["Als", "Wenn"], "One period in the past → <b>als</b>."),
+    mc("Immer ___ ich Zeit habe, lese ich ein Buch.", ["wenn", "als"], "Every time (<i>immer</i>) → <b>wenn</b>."),
+    mc("Ich hoffe, ___ Sie mir helfen können.", ["dass", "ob"], "A hope/statement, not a yes/no question → <b>dass</b>."),
+    mc("___ ich gestern nach Hause kam, war niemand da.", ["Als", "Wann"], "<b>gestern</b> = one time in the past → <b>als</b>. wann is only for questions."),
+    mc("Fragen wollte ich, ___ es bei Ihnen auch Nachhilfe gibt.", ["ob", "wann", "dass"], "<i>Gibt es Nachhilfe?</i> → yes/no → <b>ob</b>. (Exam 5 – you missed this one.)"),
+    mc("Sie fragt, ___ die Party anfängt – um 19 oder um 20 Uhr.", ["wann", "ob", "wenn"], "<i>Wann fängt die Party an?</i> → the answer is a time → <b>wann</b>. Don't let „oder“ trick you."),
+    mc("Ich weiß nicht, ___ ich mit dem Bus oder mit dem Zug fahren soll.", ["ob", "wann", "wenn"], "Bus or train – a choice, no question word → <b>ob</b>."),
+    mc("Wir möchten Sie darüber informieren, ___ Herr Kuhne Ihre Versicherungen bearbeitet.", ["dass", "ob", "wenn"], "Information = a fact → <b>dass</b>. (Exam 8 ✓)"),
+    mc("Leider habe ich noch keine Ahnung, ___ ich in Berlin ankomme.", ["wann", "als", "wenn"], "<i>Wann komme ich an?</i> → a time → <b>wann</b>. (Exam 8 ✓)"),
+    mc("Bieten Sie solche Reisen an? Und ___ ja, zu welchem Preis?", ["wenn", "ob", "als"], "<b>wenn ja</b> = if so – a fixed phrase. (Exam 7 ✓)"),
+    inp("___ Sie noch Fragen haben, rufen Sie mich bitte an.", ["wenn", "falls"], "A condition → <b>Wenn</b> or <b>Falls</b>.", "= if"),
+    inp("Ich möchte wissen, ___ man im Voraus bezahlen muss.", "ob", "<i>Muss man im Voraus bezahlen?</i> → yes/no → <b>ob</b>.")
+  ] },
+
+/* ---------------- LEVEL 2 ---------------- */
+{ lv: 1, title: "Akkusativ oder Dativ?", sub: "mich / mir · Sie / Ihnen · uns.",
+  rule: `<div class="tbl"><table><tr><th></th><th>ich</th><th>du</th><th>er</th><th>sie</th><th>wir</th><th>Sie</th></tr>
+  <tr><td>Akk</td><td>mich</td><td>dich</td><td>ihn</td><td>sie</td><td>uns</td><td>Sie</td></tr>
+  <tr><td>Dat</td><td>mir</td><td>dir</td><td>ihm</td><td>ihr</td><td>uns</td><td><b>Ihnen</b></td></tr></table></div>
+  <p><b>Dativ</b> when:</p>
+  <ol><li>someone <b>receives</b> something: geben, schicken, anbieten, zeigen, sagen, empfehlen, mitteilen → <i>Ich schicke <b>Ihnen</b> die Unterlagen.</i></li>
+  <li>a <b>Dativ verb</b>: helfen, danken, gefallen, gehören, antworten, gratulieren, schmecken · <i>Spaß machen · Wie geht es Ihnen?</i></li>
+  <li>after <b>aus, bei, mit, nach, seit, von, zu</b> → <i>bei Ihnen, zu Ihnen</i></li></ol>
+  <p><b>Akkusativ</b> with: fragen, besuchen, anrufen, kennen(lernen), sehen, einladen → <i>Darf ich <b>Sie</b> fragen?</i></p>`,
+  items: [
+    mc("Kann ich ___ helfen?", ["Ihnen", "Sie"], "<b>helfen</b> + Dativ → <b>Ihnen</b>."),
+    mc("Darf ich ___ etwas fragen?", ["Sie", "Ihnen"], "<b>fragen</b> + Akkusativ → <b>Sie</b>."),
+    mc("Eine Freundin hat ___ ein Zimmer angeboten.", ["mir", "mich"], "Someone offers something <b>to me</b> → Dativ → <b>mir</b>; <i>ein Zimmer</i> is the Akk thing. (Exam 10.)"),
+    mc("Ich rufe ___ morgen an.", ["dich", "dir"], "<b>anrufen</b> + Akkusativ → <b>dich</b>."),
+    mc("Das Essen hat ___ sehr gut geschmeckt.", ["mir", "mich"], "<b>schmecken</b> works like gefallen: the person is Dativ → <b>mir</b>."),
+    mc("Dagegen macht es ___ viel Spaß, Fahrrad zu fahren.", ["uns", "wir"], "<b>jemandem Spaß machen</b> → Dativ → <b>uns</b>. (Exam 10.)"),
+    mc("Guten Tag, Frau Weber! Wie geht es ___?", ["Ihnen", "Sie"], "Fixed: <b>Wie geht es Ihnen / dir?</b> (Dativ)."),
+    mc("Vielleicht liegt es an uns, weil wir ___ nicht das richtige Angebot gemacht haben.", ["Ihnen", "euch", "Sie"], "<b>jemandem ein Angebot machen</b> → Dativ; the letter uses Sie → <b>Ihnen</b>. (Exam 5.)"),
+    mc("Wir danken ___ für Ihr Vertrauen.", ["Ihnen", "Sie", "Ihr"], "<b>danken</b> + Dativ → <b>Ihnen</b>. (Exam 8 ✓)"),
+    mc("Ich freue mich, ___ kennenzulernen.", ["Sie", "Ihnen", "Ihr"], "<b>kennenlernen</b> + Akkusativ → <b>Sie</b>."),
+    mc("Ich bin gerne bereit, mich bei ___ vorzustellen.", ["Ihnen", "Sie", "Ihr"], "<b>bei</b> always takes the Dativ → <b>bei Ihnen</b>. (Exam 6.)"),
+    inp("Das Kleid gefällt ___ sehr gut.", "mir", "<b>gefallen</b> + Dativ → <b>mir</b>.", "ich"),
+    inp("Ich besuche ___ am Wochenende.", "dich", "<b>besuchen</b> + Akkusativ → <b>dich</b>.", "du"),
+    inp("Ich komme morgen zu ___.", "Ihnen", "<b>zu</b> + Dativ → <b>Ihnen</b>. (Polite forms always with a capital letter!)", "Sie")
+  ] },
+
+{ lv: 1, title: "Reflexiv: mich · mir · sich", sub: "Two quick checks and you never miss it again.",
+  rule: `<div class="tbl"><table><tr><th>Subject</th><th>Akk</th><th>Dat</th></tr>
+  <tr><td>ich</td><td>mich</td><td><b>mir</b></td></tr><tr><td>du</td><td>dich</td><td><b>dir</b></td></tr>
+  <tr><td>er / sie / es / <b>man</b></td><td colspan="2">sich</td></tr><tr><td>wir · ihr · sie/Sie</td><td colspan="2">uns · euch · sich</td></tr></table></div>
+  <ol><li><b>Who is the subject?</b> ich → mich/mir · du → dich/dir · man → sich.</li>
+  <li><b>Is there another object without a preposition?</b> (die Hände, Sorgen, ein Auto) → yes: <b>mir/dir</b> · no: <b>mich/dich</b>.</li></ol>
+  <p class="ex">Ich freue <b>mich</b> über den Brief. (über = preposition, doesn't count) · Ich mache <b>mir</b> Sorgen. (+ Sorgen)</p>`,
+  items: [
+    mc("Ich freue ___ auf die Ferien.", ["mich", "mir"], "No other object (<i>auf die Ferien</i> has a preposition) → Akk → <b>mich</b>."),
+    mc("Ich mache ___ große Sorgen um meinen Sohn.", ["mir", "mich"], "There is another object: <b>Sorgen</b> → the reflexive becomes Dativ → <b>mir</b>. (Exam 5.)"),
+    mc("Man kann ___ hier gut erholen.", ["sich", "mich"], "Subject <b>man</b> → <b>sich</b> (like er/sie/es)."),
+    mc("Du musst ___ beeilen, der Zug fährt gleich!", ["dich", "dir"], "<b>sich beeilen</b> has no other object → <b>dich</b>."),
+    mc("Hast du ___ schon die Zähne geputzt?", ["dir", "dich"], "Another object: <b>die Zähne</b> → <b>dir</b>."),
+    mc("Ich wünsche ___ zum Geburtstag ein neues Fahrrad.", ["mir", "dir"], "Subject <b>ich</b> → mich/mir; + <i>ein Fahrrad</i> → <b>mir</b>."),
+    mc("Wir treffen ___ morgen um 8 Uhr.", ["uns", "sich"], "Subject <b>wir</b> → <b>uns</b>."),
+    mc("Außerdem kann man ___ seinen Speiseplan selbst erstellen.", ["sich", "mir", "dir"], "Subject <b>man</b> → <b>sich</b>. (Exam 6.)"),
+    mc("Ich habe ___ sehr über deinen Brief gefreut.", ["mich", "mir", "sich"], "<i>über deinen Brief</i> has a preposition, so it is not a second object → <b>mich</b>."),
+    mc("Ich habe ___ einen neuen Laptop gekauft.", ["mir", "mich", "sich"], "+ <i>einen Laptop</i> (Akk object) → <b>mir</b>."),
+    mc("Kannst du ___ das vorstellen?", ["dir", "dich", "sich"], "+ <i>das</i> (object) → <b>dir</b>. sich etwas vorstellen = to imagine something."),
+    inp("Ich interessiere ___ sehr für Musik.", "mich", "Only the reflexive (<i>für Musik</i> = preposition) → <b>mich</b>."),
+    inp("Wascht ihr ___ die Hände?", "euch", "Subject <b>ihr</b> → <b>euch</b> (same form for Akk and Dat).", "ihr")
+  ] },
+
+{ lv: 1, title: "Präpositionen + Kasus", sub: "mit dem · auf dem · unter der Nummer · zum / zur.",
+  rule: `<div class="tbl"><table>
+  <tr><th>Akkusativ</th><td>durch, für, gegen, ohne, um (+ bis)</td><td><i>für meine Mutter, ohne Probleme</i></td></tr>
+  <tr><th>Dativ</th><td>aus, bei, mit, nach, seit, von, zu</td><td><i>mit dem Zug, bei Ihnen</i></td></tr>
+  <tr><th>Both</th><td>an, auf, hinter, in, neben, über, unter, vor, zwischen</td><td><b>where? → Dat</b> (auf dem Tisch) · <b>where to? → Akk</b> (auf den Tisch)</td></tr>
+  <tr><th>Genitiv</th><td>wegen, trotz, während, innerhalb, statt</td><td><i>trotz des Wetters</i></td></tr></table></div>
+  <p>Short forms: <b>zum</b> = zu dem · <b>zur</b> = zu der · <b>im</b> = in dem · <b>ins</b> = in das · <b>am</b> = an dem · <b>beim</b> · <b>vom</b></p>
+  <p class="ex">Fixed: <b>unter der Nummer</b> · unter freiem Himmel · im Internet · am Meer · zum Thema · zur Verfügung</p>`,
+  items: [
+    mc("Wir fahren mit ___ Zug nach Hamburg.", ["dem", "den"], "<b>mit</b> + Dativ; der Zug → <b>dem</b>."),
+    mc("Das Geschenk ist für ___ Mutter.", ["meine", "meiner"], "<b>für</b> + Akkusativ; die Mutter → <b>meine</b>."),
+    mc("In Australien machen wir alle Aufgaben auf ___ Computer.", ["dem", "den"], "Where? (no movement) → Dativ → <b>auf dem</b>. (Exam 9.)"),
+    mc("Ich lege das Buch auf ___ Tisch.", ["den", "dem"], "Where to? (movement) → Akkusativ → <b>auf den</b>."),
+    mc("Ich gehe heute ___ Arzt.", ["zum", "zur"], "der Arzt → zu dem = <b>zum</b>."),
+    mc("Sie fährt jeden Tag mit dem Bus ___ Arbeit.", ["zur", "zum"], "die Arbeit → zu der = <b>zur</b>."),
+    mc("Wir sollen Informationen ___ Thema Gesundheit suchen.", ["zum", "zur"], "das Thema → zu dem = <b>zum</b>. (Exam 6.)"),
+    mc("Ab 19.30 Uhr bin ich ___ der Nummer 0428-1734 zu erreichen.", ["unter", "mit", "vor"], "Fixed phrase: <b>unter der Nummer</b>. (You missed this twice!)"),
+    mc("Meine Eltern wohnen in einem Haus ___ Mittelmeer.", ["am", "im", "zum"], "Right next to the sea → an dem = <b>am</b> Meer. (Exam 10 ✓)"),
+    mc("Schläft man auf der Wüstenreise immer ___ freiem Himmel?", ["unter", "auf", "in"], "Fixed: <b>unter freiem Himmel</b> = outdoors. (Exam 7 ✓)"),
+    mc("___ des schlechten Wetters machen wir einen Ausflug.", ["Trotz", "Obwohl", "Trotzdem"], "A noun in the Genitiv follows (<i>des Wetters</i>) → the preposition <b>Trotz</b>."),
+    mc("Sollte Ihre Kundennummer ___ den richtigen Zahlen sein, gewinnen Sie ein Auto.", ["unter", "neben", "vor"], "<b>unter</b> + Dativ = among. (Exam 7 – the book's key was wrong there.)"),
+    inp("Ich wohne noch ___ meinen Eltern.", "bei", "<b>bei</b> + Dativ = at someone's place.", "at their place"),
+    inp("Heute Abend gehen wir ___ Kino.", "ins", "Where to? in + das = <b>ins</b>.", "in + das")
+  ] },
+
+{ lv: 1, title: "Zeitwörter", sub: "in · vor · seit · ab · bis jetzt · für.",
+  rule: `<div class="tbl"><table><tr><th>Word</th><th>Meaning</th><th>Example</th></tr>
+  <tr><td><b>in</b> + time</td><td>future: in … from now</td><td><b>in</b> zwei Jahren</td></tr>
+  <tr><td><b>vor</b> + time</td><td>past: … ago</td><td><b>vor</b> zwei Jahren</td></tr>
+  <tr><td><b>seit</b> + time</td><td>started in the past, still true</td><td><b>seit</b> sechs Wochen</td></tr>
+  <tr><td><b>ab</b></td><td>from … on</td><td><b>ab</b> Montag, <b>ab</b> jetzt</td></tr>
+  <tr><td><b>bis</b></td><td>until</td><td><b>bis</b> Freitag, <b>bis jetzt</b> (so far)</td></tr>
+  <tr><td><b>für</b></td><td>planned duration</td><td><b>für</b> drei Wochen</td></tr></table></div>
+  <p><b>am</b> Montag · <b>im</b> Mai · <b>um</b> 8 Uhr · <b>nächste</b> Woche (no article) = in der <b>nächsten</b> Woche</p>`,
+  items: [
+    mc("Mein Sohn macht ___ zwei Jahren sein Abitur.", ["in", "vor"], "Future → <b>in</b> zwei Jahren. vor = ago. (Exam 5.)"),
+    mc("Ich habe ihn ___ zwei Jahren kennengelernt.", ["vor", "in"], "Past, finished → <b>vor</b> zwei Jahren = two years ago."),
+    mc("Wir wohnen jetzt schon ___ sechs Wochen in der neuen Wohnung.", ["seit", "vor"], "Started in the past and still true → <b>seit</b>. (Exam 3 ✓)"),
+    mc("___ jetzt habe ich jede Woche von ihnen gehört.", ["Bis", "Ab"], "So far, until now → <b>bis jetzt</b>. ab jetzt = from now on. (Exam 10.)"),
+    mc("___ morgen lerne ich jeden Tag eine Stunde.", ["Ab", "Seit"], "From a point on, into the future → <b>ab</b>."),
+    mc("Ich fahre ___ drei Wochen nach Spanien.", ["für", "seit"], "Planned duration → <b>für</b> drei Wochen."),
+    mc("Der Kurs beginnt ___ Montag ___ 9 Uhr.", ["am … um", "im … am"], "Days → <b>am</b> Montag · clock time → <b>um</b> 9 Uhr · months → im Mai."),
+    mc("Ich bin ___ lange Rentner und bekomme wenig Geld.", ["schon", "noch", "erst"], "<b>schon lange</b> = for a long time already. (Exam 6.)"),
+    mc("___ Anfang Mai sind meine Eltern in Spanien.", ["Seit", "Vor", "Bis"], "Since May and still there → <b>seit</b>."),
+    mc("In der ___ Woche kommen endlich die neuen Möbel.", ["nächsten", "nächste", "nächstes"], "in + Dativ after <i>der</i> → always <b>-en</b>. (Exam 3 ✓)"),
+    mc("Wenn Sie ___ der kommenden vier Wochen antworten, nehmen Sie teil.", ["innerhalb", "seit", "bis"], "<b>innerhalb</b> + Genitiv = within. (Exam 7.)"),
+    inp("___ Woche habe ich meine Prüfung.", "nächste", "Without an article: <b>nächste Woche</b> · nächsten Monat · nächstes Jahr.", "next – no article"),
+    inp("Wir treffen uns morgen ___ 8 Uhr.", "um", "Clock time → <b>um</b>.", "at")
+  ] },
+
+/* ---------------- LEVEL 3 ---------------- */
+{ lv: 2, title: "Artikelwörter", sub: "dieses · einige + plural · nichts / kein · wenig.",
+  rule: `<ul><li><b>dieser, jeder, welcher</b> take the endings of der/die/das: dies<b>er</b> Mann · dies<b>e</b> Frau · dies<b>es</b> Land · dies<b>en</b> Mann (Akk)</li>
+  <li><b>mein, kein, Ihr</b> take the endings of ein: kein Hund · kein<b>en</b> Hund (Akk) · Ihr<b>e</b> Unterlagen (plural)</li>
+  <li><b>einige, viele, drei, die beiden</b> → the noun is <b>plural</b>: einige Unterschied<b>e</b>, drei Freundinn<b>en</b></li>
+  <li><b>nichts</b> = nothing (alone) · <b>kein/keine</b> + noun: keine Zeit</li>
+  <li><b>viel / wenig</b> + uncountable noun → no ending: viel Geld, wenig Zeit · <b>viele</b> + plural: viele Bücher</li></ul>`,
+  items: [
+    mc("Ich kenne ___ Land jetzt schon recht gut.", ["dieses", "diesen"], "das Land → neuter → <b>dieses</b> (same ending as das). (Exam 9.)"),
+    mc("Ich habe ___ Mann schon oft gesehen.", ["diesen", "dieses"], "der Mann, Akkusativ → den → <b>diesen</b>."),
+    mc("Zwischen den beiden Schulsystemen gibt es einige ___.", ["Unterschiede", "Unterschied"], "<b>einige</b> → plural → <b>Unterschiede</b>. (Exam 9.)"),
+    mc("Ich wohne jetzt mit drei ___ zusammen.", ["Freundinnen", "Freundin"], "<b>drei</b> → plural → <b>Freundinnen</b>. (Exam 10 ✓)"),
+    mc("Über Ermäßigungen schreiben Sie leider ___ in Ihrer Anzeige.", ["nichts", "keine"], "<b>nichts</b> = nothing, it stands alone. (Exam 2.)"),
+    mc("Für einen Sprachkurs habe ich leider ___ Zeit.", ["keine", "nichts"], "<b>keine</b> + noun: keine Zeit. (Exam 1 ✓)"),
+    mc("Wie ___ Geld brauchst du für die Reise?", ["viel", "viele"], "Uncountable (Geld, Zeit) → <b>viel</b> without ending. viele + plural: viele Bücher."),
+    mc("…wenn ich daran denke, wie ___ Zeit ich mir für Hausaufgaben nehme.", ["wenig", "wenigen", "weniger"], "Uncountable → <b>wenig</b> Zeit. weniger = less (a comparison). (Exam 10.)"),
+    mc("Gibt es für die ___ Seminare noch genügend freie Plätze?", ["beiden", "einige", "eine"], "Between the article and the noun → <b>die beiden</b> = both. (Exam 3.)"),
+    mc("Dazu habe ich noch ___ Fragen.", ["einige", "eine", "einiges"], "<i>Fragen</i> is plural → <b>einige</b>."),
+    mc("Ihm wurden ___ Unterlagen übergeben.", ["Ihre", "Ihren", "Ihrer"], "die Unterlagen (plural subject) → <b>Ihre</b>. (Exam 8 ✓)"),
+    inp("Ich habe ___ Hund.", "keinen", "der Hund, Akkusativ → <b>keinen</b>.", "kein…"),
+    inp("Er denkt, er brauche ___ Fächer nicht.", "diese", "Plural → <b>diese</b>. (Exam 5 ✓)", "dies…")
+  ] },
+
+{ lv: 2, title: "Adjektivendungen", sub: "freundliche Grüße · mit freundlichen Grüßen.",
+  rule: `<ol><li><b>No noun after it → no ending:</b> <i>Sie ist freundlich.</i></li>
+  <li><b>After der/die/das:</b> only 5 forms end in <b>-e</b> (der/die/das + Nominativ, die/das + Akk); everything else <b>-en</b>.</li>
+  <li><b>Dativ → always -en:</b> <i>in der nächst<b>en</b> Woche, mit dem neu<b>en</b> Auto</i></li>
+  <li><b>After ein/kein/mein:</b> like 2, but ein + masc. Nom → <b>-er</b> (ein nett<b>er</b> Mann), ein + neuter → <b>-es</b> (ein klein<b>es</b> Kind)</li>
+  <li><b>No article:</b> the adjective shows the case: <i>freundlich<b>e</b> Grüße · mit freundlich<b>en</b> Grüßen · schön<b>e</b> Gewinne</i></li></ol>`,
+  items: [
+    mc("Die Verkäuferin ist sehr ___.", ["freundlich", "freundliche"], "No noun after it → <b>no ending</b>."),
+    mc("___ Grüße aus Berlin!", ["Viele", "Vielen"], "No article, plural Nominativ → <b>-e</b>: Viele / Liebe / Freundliche Grüße. (Exam 5.)"),
+    mc("Mit ___ Grüßen", ["freundlichen", "freundliche"], "<b>mit</b> + Dativ plural → <b>-en</b>."),
+    mc("Wir sehen uns in der ___ Woche.", ["nächsten", "nächste"], "Dativ → always <b>-en</b>."),
+    mc("Das ist ein ___ Kind.", ["kleines", "kleine"], "ein + neuter (das Kind) → the adjective shows the gender: <b>-es</b>."),
+    mc("Ich habe einen ___ Brief bekommen.", ["langen", "langer"], "einen (masculine Akk) → <b>-en</b>."),
+    mc("Es warten auf Sie sehr ___ Gewinne.", ["schöne", "schönen"], "No article, plural Nominativ (Gewinne is the subject) → <b>-e</b>. (Exam 7.)"),
+    mc("Wir haben uns fast ein ___ Jahr nicht gesehen.", ["halbes", "halbe", "halben"], "ein + das Jahr → <b>-es</b>. (Exam 8 ✓)"),
+    mc("Diese Internetseite ist für ___ Leute gemacht.", ["junge", "jungen", "junges"], "für + Akk, plural, no article → <b>-e</b>. (Exam 6 ✓)"),
+    mc("Seine ___ Anschrift finden Sie oben rechts.", ["richtige", "richtigen", "richtiger"], "seine + feminine Nominativ → <b>-e</b>. (Exam 8 ✓)"),
+    mc("Nach ___ Schichten bin ich oft ziemlich erschöpft.", ["langen", "lange", "langer"], "nach + Dativ plural, no article → <b>-en</b>."),
+    inp("Vielen Dank für Ihre ___ Antwort.", "schnelle", "für + Akk, feminine, after Ihre → <b>-e</b>.", "schnell"),
+    inp("Das ist der ___ Mann von nebenan.", "nette", "der + Nominativ → <b>-e</b>.", "nett")
+  ] },
+
+{ lv: 2, title: "Relativpronomen", sub: "der · den · dem · denen – your old weak point.",
+  rule: `<div class="tbl"><table><tr><th></th><th>masc.</th><th>fem.</th><th>neut.</th><th>plural</th></tr>
+  <tr><td>Nom</td><td>der</td><td>die</td><td>das</td><td>die</td></tr>
+  <tr><td>Akk</td><td><b>den</b></td><td>die</td><td>das</td><td>die</td></tr>
+  <tr><td>Dat</td><td>dem</td><td>der</td><td>dem</td><td><b>denen</b></td></tr></table></div>
+  <ol><li><b>Gender/number</b> from the noun before the comma.</li><li><b>Case</b> from its job <b>inside</b> the relative clause (or the preposition in front of it).</li><li>The verb goes to the end.</li></ol>
+  <p class="ex">Check: <i>der Kurs, ___ ich besuche</i> → <i>Ich besuche <b>den</b> Kurs</i> → <b>den</b>.</p>`,
+  items: [
+    mc("Das ist der Kurs, ___ ich hier besuche.", ["den", "der"], "Check: ich besuche <b>den</b> Kurs → Akk → <b>den</b>. (Exam 6.)"),
+    mc("Das ist der Lehrer, ___ mir am besten gefällt.", ["der", "den"], "Der Lehrer gefällt mir → he is the subject → <b>der</b>."),
+    mc("Die Leute, ___ ich geholfen habe, waren sehr nett.", ["denen", "die"], "helfen + Dativ, plural → <b>denen</b>."),
+    mc("Das ist das Hotel, ___ direkt am Meer liegt.", ["das", "dem"], "Das Hotel liegt … → subject → <b>das</b>."),
+    mc("Wir warten auf die Möbel, ___ wir gekauft haben.", ["die", "denen"], "Wir haben die Möbel gekauft → Akk plural → <b>die</b>. (Exam 3.)"),
+    mc("Das ist die Firma, ___ mein Vater arbeitet.", ["bei der", "bei die"], "bei + Dativ, die Firma → <b>bei der</b>."),
+    mc("Das ist das Thema, ___ ich mich sehr interessiere.", ["für das", "für dem"], "für + Akkusativ → <b>für das</b>. The preposition decides the case."),
+    mc("Für Menschen, ___ ein paar Kilos zu viel haben, gibt es Tipps.", ["die", "denen", "deren"], "Die Menschen haben … → subject, plural → <b>die</b>. (Exam 6 ✓)"),
+    mc("Es gibt im Internet die Mitfahrzentrale, ___ so etwas organisiert.", ["die", "das", "der"], "Die Mitfahrzentrale organisiert → feminine subject → <b>die</b>. (Exam 8 ✓)"),
+    mc("Das sind die Schüler, ___ der Lehrer gratuliert hat.", ["denen", "die", "der"], "gratulieren + Dativ, plural → <b>denen</b>."),
+    mc("Wie heißt der Freund, ___ du in Urlaub fährst?", ["mit dem", "mit den", "mit der"], "mit + Dativ, der Freund → <b>mit dem</b>."),
+    inp("Wo ist die Kollegin, ___ heute Geburtstag hat?", "die", "Die Kollegin hat Geburtstag → subject → <b>die</b>."),
+    inp("Das sind meine Eltern, mit ___ ich jeden Sonntag telefoniere.", "denen", "mit + Dativ, plural → <b>denen</b> (one n in the middle!).")
+  ] },
+
+/* ---------------- LEVEL 4 ---------------- */
+{ lv: 3, title: "Trennbare Verben", sub: "nehmen … teil · machen … mit · hilft … weiter.",
+  rule: `<ul><li>In a normal sentence the prefix goes to the <b>end</b>: <i>Ich <b>rufe</b> dich morgen <b>an</b>.</i></li>
+  <li>After weil/dass/wenn the verb stays <b>together</b> at the end: <i>…, weil ich dich <b>anrufe</b>.</i></li>
+  <li>Perfekt: <b>ge</b> in the middle: an<b>ge</b>rufen · zu + infinitive: an<b>zu</b>rufen</li>
+  <li>Common: an|rufen, an|kommen, ab|fahren, auf|stehen, aus|machen, ein|kaufen, mit|machen, teil|nehmen, statt|finden, zurück|senden, weiter|helfen, vor|stellen</li></ul>
+  <p class="ex"><b>Sprachbausteine trick:</b> a gap in position 2 and a little word at the end (teil, mit, an, weiter, zurück) → choose the verb that belongs to that prefix.</p>`,
+  items: [
+    mc("Gleichzeitig nehmen Sie an einem Preisausschreiben ___.", ["teil", "mit"], "<b>teilnehmen</b> an + Dativ → nehmen … <b>teil</b>. (Exam 7.)"),
+    mc("Als Gratisspiel: ___ Sie hier unbedingt mit!", ["Machen", "Nehmen"], "<b>mit</b> at the end → <b>mitmachen</b> → Machen Sie … mit! (Exam 9.)"),
+    mc("Auch im Schadensfall ___ er Ihnen schnell und zuverlässig weiter.", ["hilft", "informiert"], "<b>weiter</b> at the end → <b>weiterhelfen</b> + Dativ (Ihnen). (Exam 8.)"),
+    mc("Ich ___ dich morgen Abend an.", ["rufe", "sage"], "<b>an</b> at the end → <b>anrufen</b>."),
+    mc("Der Zug ___ um 8 Uhr in München ab.", ["fährt", "kommt"], "<b>abfahren</b> = to depart (ankommen = to arrive)."),
+    mc("Ich habe dich gestern zweimal ___.", ["angerufen", "geanrufen"], "Perfekt: <b>ge</b> goes in the middle → an<b>ge</b>rufen."),
+    mc("Ich habe keine Lust, heute noch ___.", ["einzukaufen", "zu einkaufen"], "<b>zu</b> goes in the middle → ein<b>zu</b>kaufen."),
+    mc("Senden Sie uns einfach das beigefügte Antwortschreiben ___.", ["zurück", "weg", "mit"], "<b>zurücksenden</b> = to send back. (Exam 7 ✓)"),
+    mc("Wann ___ der Kurs statt?", ["findet", "gibt", "macht"], "<b>stattfinden</b> = to take place."),
+    mc("Ich weiß noch nicht, wann der Zug ___.", ["ankommt", "kommt an", "an kommt"], "After wann/weil/dass the verb is at the end and <b>stays together</b>: ankommt."),
+    mc("Das frühe Aufstehen macht mir gar nichts ___.", ["aus", "an", "mit"], "<b>etwas macht mir nichts aus</b> = I don't mind. (Exam 6 ✓)"),
+    inp("Ich ___ jeden Morgen um 6 Uhr auf.", "stehe", "aufstehen → ich <b>stehe</b> … <b>auf</b>.", "aufstehen"),
+    inp("Er hat das Fenster ___.", "aufgemacht", "auf + ge + macht → <b>aufgemacht</b>.", "aufmachen – Partizip II")
+  ] },
+
+{ lv: 3, title: "Verbformen", sub: "sind · erzählt · hätte · wäre · werde · Schreib!",
+  rule: `<ul><li><b>Sie</b> (polite) takes the verb like sie (they): Sie <b>sind</b>, Sie <b>haben</b> · ihr <b>seid</b></li>
+  <li><b>Perfekt</b> = haben/sein + Partizip II at the end: <i>ich habe <b>erzählt</b></i></li>
+  <li><b>Modal verb</b> + infinitive at the end: <i>Sie durften sich die Farben <b>aussuchen</b>.</i></li>
+  <li><b>Konjunktiv II</b> (polite / unreal): hätte, wäre, könnte, würde · <i><b>Könnten</b> Sie …? Wenn ich Zeit <b>hätte</b>, …</i></li>
+  <li><b>Futur</b>: werden + infinitive · <b>Passiv</b>: werden + Partizip II</li>
+  <li><b>Imperativ</b>: du → <b>Schreib!</b> · ihr → <b>Schreibt!</b> · Sie → <b>Schreiben Sie!</b></li>
+  <li><b>und</b> joins two verbs with the same subject → same form: <i>er berät und <b>informiert</b></i></li></ul>`,
+  items: [
+    mc("Schade, dass Sie bisher noch nicht Kunde ___.", ["sind", "seid"], "<b>Sie</b> (polite) takes the verb like sie (they): <b>sind</b>; ihr seid. (Exam 5.)"),
+    mc("Seit ich dir von der Schweiz ___ habe, ist viel passiert.", ["erzählt", "erzähle"], "Perfekt: haben + Partizip II → <b>erzählt</b>. (Exam 9 ✓)"),
+    mc("Die Kinder durften sich die Farben selbst ___.", ["aussuchen", "ausgesucht"], "Modal verb (durften) + <b>infinitive</b> at the end."),
+    mc("Wenn ich die Möglichkeit ___, würde mir das sehr helfen.", ["hätte", "habe"], "Unreal condition → Konjunktiv II: <b>hätte</b> … würde. (Exam 6 ✓)"),
+    mc("Mal wieder eine ganze Nacht tanzen – das ___ mein Traum!", ["wäre", "hätte"], "sein → Konjunktiv II <b>wäre</b>. (Exam 8 ✓)"),
+    mc("Liebe Jelena, ___ mir doch bald zurück!", ["Schreib", "Schreiben"], "Liebe … → du → imperative <b>Schreib(e)!</b> For Sie: Schreiben Sie! (Exam 6.)"),
+    mc("Herr Kuhne berät und ___ Sie gern.", ["informiert", "informieren"], "<b>und</b> joins two verbs with the same subject (er) → same form: berät und <b>informiert</b>. (Exam 8.)"),
+    mc("___ ich am Ende auch eine Kursbestätigung erhalten?", ["Werde", "Soll", "Möchte"], "Future: <b>werden</b> + infinitive (erhalten) → Werde ich … erhalten? (Exam 3.)"),
+    mc("___ Sie mir die Unterlagen bitte vorher schicken?", ["Könnten", "Konnten", "Könnte"], "Polite request with Sie → <b>Könnten</b> Sie …? (Konnten = past.)"),
+    mc("Alle Kundendaten ___ selbstverständlich streng vertraulich behandelt.", ["werden", "wird", "worden"], "Passive: werden + Partizip II; plural subject → <b>werden</b>. (Exam 8 ✓)"),
+    mc("Mir wäre es sehr wichtig, dass Sie meinem Sohn helfen ___.", ["könnten", "konnte", "gekonnt"], "Polite Konjunktiv at the end of the dass clause → <b>könnten</b>. (Exam 5 ✓)"),
+    inp("Ich ___ gern einen Kaffee, bitte.", "möchte", "ich <b>möchte</b> (no -n).", "möchten – ich"),
+    inp("___ Sie bitte Platz!", "nehmen", "Sie-imperative: verb first + Sie → <b>Nehmen</b> Sie Platz!", "nehmen – Imperativ, Sie")
+  ] },
+
+/* ---------------- LEVEL 5 ---------------- */
+{ lv: 4, title: "da-Wörter", sub: "darauf · darin · danach · dabei · dort.",
+  rule: `<p><b>da + preposition</b> = „it / that“ + preposition. Before a vowel add <b>r</b>: da<b>r</b>auf, da<b>r</b>in, da<b>r</b>über, da<b>r</b>an.</p>
+  <div class="tbl"><table><tr><th>Word</th><th>Meaning</th><th>Example</th></tr>
+  <tr><td>darauf</td><td>on it / for it</td><td>Ich freue mich <b>darauf</b>. (freuen auf)</td></tr>
+  <tr><td>darüber</td><td>about it</td><td>Ich habe mich <b>darüber</b> gefreut. (freuen über)</td></tr>
+  <tr><td>daran</td><td>of it / to it</td><td>Er hat sich <b>daran</b> gewöhnt.</td></tr>
+  <tr><td>dafür / dagegen</td><td>for / against it</td><td>Ich interessiere mich <b>dafür</b>.</td></tr>
+  <tr><td>darin</td><td>in it</td><td>die Anzeige – <b>darin</b> steht, dass …</td></tr>
+  <tr><td>danach</td><td>afterwards</td><td>Zuerst wandern, <b>danach</b> ans Meer.</td></tr>
+  <tr><td>dabei</td><td>present, with it</td><td>Ist ein Arzt <b>dabei</b>?</td></tr>
+  <tr><td>davon</td><td>of / from it</td><td>Ich habe <b>davon</b> gehört.</td></tr>
+  <tr><td>dort</td><td>there (a place said before)</td><td>In der Rechnung … Leider ist <b>dort</b> die Adresse falsch.</td></tr></table></div>`,
+  items: [
+    mc("Nächste Woche besuche ich dich. Ich freue mich schon sehr ___.", ["darauf", "darüber"], "Looking forward (future) → sich freuen <b>auf</b> → <b>darauf</b>. (Exam 8 ✓)"),
+    mc("Am Anfang war es schwer, aber jetzt hat er sich ___ gewöhnt.", ["daran", "darauf"], "sich gewöhnen <b>an</b> → <b>daran</b>. (Exam 3.)"),
+    mc("Ich habe Ihre Anzeige gelesen. ___ steht, dass Sie Wüstenreisen anbieten.", ["Darin", "Danach"], "In the ad → <b>darin</b> = in it. (Exam 7.)"),
+    mc("Zuerst machen wir eine Wanderreise, und ___ fahren wir ans Meer.", ["danach", "dabei"], "zuerst … → <b>danach</b> = afterwards. (Exam 7.)"),
+    mc("Ist bei der Wanderreise auch ein Arzt ___?", ["dabei", "darin"], "<b>dabei sein</b> = to be present / come along. (Exam 7.)"),
+    mc("Das Thema finde ich toll. Ich interessiere mich sehr ___.", ["dafür", "darauf"], "sich interessieren <b>für</b> → <b>dafür</b>."),
+    mc("Vielen Dank für deinen Brief. Ich habe mich sehr ___ gefreut.", ["darüber", "darauf"], "Happy about something that already happened → freuen <b>über</b> → <b>darüber</b>."),
+    mc("…wenn ich ___ denke, wie wenig Zeit ich mir nehme.", ["daran", "darauf", "darüber"], "denken <b>an</b> → <b>daran</b>. (Exam 10 ✓)"),
+    mc("In unserer letzten Rechnung war ein Fehler. Leider ist ___ die Adresse nicht korrekt.", ["dort", "dabei", "danach"], "There, in the bill → <b>dort</b>. (Exam 8.)"),
+    mc("Ich habe nichts ___, wenn du mitkommst.", ["dagegen", "dafür", "davon"], "<b>nichts dagegen haben</b> = not to mind."),
+    mc("Hast du schon ___ gehört? Die Disco macht zu.", ["davon", "dabei", "darin"], "hören <b>von</b> → <b>davon</b>."),
+    inp("Wartest du auf den Bus? – Ja, ich warte ___.", "darauf", "warten <b>auf</b> → <b>darauf</b>."),
+    inp("Sprechen wir über das Problem? – Ja, wir müssen ___ sprechen.", "darüber", "sprechen <b>über</b> → <b>darüber</b>.")
+  ] },
+
+{ lv: 4, title: "Kleine Wörter", sub: "schon · noch · erst · einmal · nämlich · bereits.",
+  rule: `<div class="tbl"><table><tr><th>Word</th><th>Meaning</th><th>Example</th></tr>
+  <tr><td>schon</td><td>already</td><td><b>schon</b> lange, <b>schon</b> jetzt</td></tr>
+  <tr><td>noch / immer noch</td><td>still</td><td>Gibt es die Disco <b>noch</b>?</td></tr>
+  <tr><td>noch nicht</td><td>not yet</td><td>Ich habe es <b>noch nicht</b> gemacht.</td></tr>
+  <tr><td>nicht mehr</td><td>no longer</td><td>Ich rauche <b>nicht mehr</b>.</td></tr>
+  <tr><td>erst</td><td>not before, only then</td><td>Er kommt <b>erst</b> um 21 Uhr.</td></tr>
+  <tr><td>einmal / doch einmal</td><td>once · softens a request</td><td>Rufen Sie doch <b>einmal</b> an!</td></tr>
+  <tr><td>einfach</td><td>simply, just</td><td>Senden Sie es <b>einfach</b> zurück.</td></tr>
+  <tr><td>unbedingt</td><td>definitely</td><td>Antworten Sie <b>unbedingt</b> bald!</td></tr>
+  <tr><td>bereits</td><td>= schon</td><td><b>bereits</b> 700 Gruppen</td></tr>
+  <tr><td>nämlich</td><td>namely / you see</td><td>für uns – <b>nämlich</b> für mich und …</td></tr>
+  <tr><td>ganz</td><td>completely</td><td><b>ganz</b> automatisch</td></tr></table></div>`,
+  items: [
+    mc("Ich bin ___ lange Rentner.", ["schon", "noch"], "<b>schon lange</b> = for a long time already. (Exam 6.)"),
+    mc("Weißt du, ob die Disco am Wittenbergplatz ___ existiert?", ["noch", "schon"], "<b>noch</b> = still – does it still exist? (Exam 8.)"),
+    mc("Früher bin ich viel Auto gefahren, aber jetzt fahre ich nicht ___ Auto.", ["mehr", "noch"], "<b>nicht mehr</b> = no longer."),
+    mc("Der Film beginnt ___ um 21 Uhr, nicht schon um 20 Uhr.", ["erst", "schon"], "<b>erst</b> = not before / later than you might think."),
+    mc("Rufen Sie uns doch ___ an: Tel. 09243/7448.", ["einmal", "oft"], "<b>doch einmal</b> makes a request soft and friendly. (Exam 10.)"),
+    mc("Senden Sie uns ___ das beigefügte Antwortschreiben zurück!", ["einfach", "immer"], "<b>einfach</b> = simply / just – typical in adverts. (Exam 7.)"),
+    mc("Antworten Sie ___ noch diese Woche!", ["unbedingt", "bereits"], "<b>unbedingt</b> = definitely, make sure you do it. (Exam 7.)"),
+    mc("Wenn Sie in vier Wochen antworten, nehmen Sie immer ___ an der Verlosung teil.", ["noch", "schon", "schnell"], "<b>immer noch</b> = still. (Exam 7.)"),
+    mc("Vielleicht haben Sie das richtige Angebot für uns – ___ für mich und meine 17-jährige Tochter.", ["nämlich", "deshalb", "dabei"], "<b>nämlich</b> = namely – it explains who exactly. (Exam 7.)"),
+    mc("___ 700 Gruppen haben zusammen schon über sieben Millionen Euro gewonnen.", ["Bereits", "Gestern", "Einmal"], "<b>Bereits</b> = schon = already. (Exam 9.)"),
+    mc("Dadurch erhöhen sich ___ automatisch Ihre Chancen!", ["ganz", "einmal", "über"], "<b>ganz automatisch</b> = completely automatically. (Exam 9.)"),
+    inp("Die Prüfung ist im November. Ich habe sie ___ nicht gemacht.", "noch", "<b>noch nicht</b> = not yet.", "not yet"),
+    inp("Ich möchte mich ___ jetzt auf das Seminar vorbereiten.", "schon", "<b>schon jetzt</b> = already now. (Exam 3.)", "already")
+  ] },
+
+{ lv: 4, title: "Feste Verbindungen", sub: "sich freuen auf · im Voraus · sich wenden an.",
+  rule: `<div class="tbl"><table><tr><th>+ Akkusativ</th><th>+ Dativ</th></tr>
+  <tr><td>sich freuen <b>auf</b> (future) / <b>über</b> (past) · warten <b>auf</b> · sich interessieren <b>für</b> · sich entschuldigen <b>für</b> · sich kümmern <b>um</b> · sich Sorgen machen <b>um</b> · es geht <b>um</b> · sich wenden <b>an</b> · denken <b>an</b> · geeignet <b>für</b></td>
+  <td>teilnehmen <b>an</b> · abhängen <b>von</b> · träumen <b>von</b> · sprechen <b>mit</b> · sich beschäftigen <b>mit</b> · Angst haben <b>vor</b> · sich erkundigen <b>nach</b></td></tr></table></div>
+  <p class="ex">Letter blocks: mit großem Interesse · im Voraus · unter der Nummer … zu erreichen · Ich freue mich auf Ihre Antwort · Mit freundlichen Grüßen</p>`,
+  items: [
+    mc("Ich interessiere mich sehr ___ das Angebot.", ["für", "über"], "sich interessieren <b>für</b> + Akk."),
+    mc("Ich bedanke mich im ___ für die Informationen.", ["Voraus", "Vorher"], "Fixed: <b>im Voraus</b> = in advance. (Exam 2 ✓)"),
+    mc("Ich warte schon lange ___ Ihre Antwort.", ["auf", "für"], "warten <b>auf</b> + Akk."),
+    mc("Ihre Anzeige habe ich mit großem ___ gelesen.", ["Interesse", "Interessen"], "Fixed: <b>mit großem Interesse</b>."),
+    mc("Wir möchten uns ___ den Fehler in der Rechnung entschuldigen.", ["für", "über"], "sich entschuldigen <b>für</b> + Akk. (Exam 8 ✓)"),
+    mc("Ich bin ___ die Tätigkeit sehr gut geeignet.", ["für", "zu"], "geeignet sein <b>für</b> + Akk. (Exam 6 ✓)"),
+    mc("Wenn Sie Fragen haben, wenden Sie sich bitte ___ Herrn Kuhne.", ["an", "zu", "bei"], "sich wenden <b>an</b> + Akk = to contact. (Exam 8.)"),
+    mc("Ich mache mir große Sorgen ___ meinen Sohn.", ["um", "für", "über"], "sich Sorgen machen <b>um</b> + Akk."),
+    mc("In der Radiosendung geht es ___ die Klassenfahrt.", ["um", "über", "von"], "<b>es geht um</b> + Akk = it is about."),
+    mc("Ich nehme gern ___ dem Kurs teil.", ["an", "bei", "in"], "teilnehmen <b>an</b> + Dativ."),
+    mc("Ob wir fahren, hängt ___ dem Wetter ab.", ["von", "an", "mit"], "abhängen <b>von</b> + Dativ = to depend on."),
+    inp("Ich freue mich ___ Ihre Antwort.", "auf", "Future → sich freuen <b>auf</b>.", "future"),
+    inp("Ich bin unter der ___ 0171-1234567 zu erreichen.", "Nummer", "Fixed: <b>unter der Nummer</b> … zu erreichen.")
+  ] },
+
+/* ---------------- LEVEL 6 ---------------- */
+{ lv: 5, title: "Wortkasten-Training", sub: "Sprachbausteine Teil 2 – practise the speed method.",
+  rule: `<ol><li><b>First 30 seconds:</b> sort the words – verbs · conjunctions · prepositions · adverbs · others.</li>
+  <li><b>For each gap, look right after it:</b> a verb → position-1 word · verb at the end → conjunction · no verb → a verb · a prefix at the end → its verb.</li>
+  <li><b>Easy gaps first.</b> Stuck for 40 seconds? Skip and come back.</li>
+  <li><b>Never leave a gap empty</b> – use a leftover word.</li></ol>
+  <p class="ex">Each text here has more words than gaps, like the exam. Aim for about <b>3 minutes per text</b> (the timer runs while you work).</p>`,
+  items: [
+    box("Eine Einladung", "Liebe Anna,\nvielen Dank [1] deine Einladung zur Party. Ich komme sehr gern, [2] ich habe am Samstag erst ab 18 Uhr Zeit. [3] muss ich bis 17 Uhr arbeiten. Kannst du mir sagen, [4] ich etwas mitbringen soll? Ich [5] mich schon sehr auf die Party!\nViele Grüße\nTom",
+      ["für", "aber", "Vorher", "ob", "freue", "weil", "wann", "über"], ["für", "aber", "Vorher", "ob", "freue"]),
+    box("Eine Anfrage", "Sehr geehrte Damen und Herren,\nich habe Ihre Anzeige [1] Internet gelesen und interessiere mich für den Deutschkurs. [2] habe ich noch einige Fragen: Wie lange [3] der Kurs? Ich möchte auch wissen, [4] der Kurs am Abend stattfindet. [5] Sie mir bitte Informationsmaterial schicken?\nIch freue mich [6] Ihre Antwort.\nMit freundlichen Grüßen",
+      ["im", "Dazu", "dauert", "ob", "Könnten", "auf", "wenn", "am", "dass"], ["im", "Dazu", "dauert", "ob", "Könnten", "auf"]),
+    box("Eine neue Wohnung", "Liebe Maria,\nendlich habe ich eine Wohnung gefunden, [1] mir sehr gut gefällt. Sie liegt direkt [2] Park. Nächste Woche [3] ich ein. Kannst du mir beim Umzug [4]? Ich würde mich sehr [5] freuen. [6] koche ich dann für dich!\nLiebe Grüße\nSara",
+      ["die", "am", "ziehe", "helfen", "darüber", "Dafür", "der", "im", "zieht"], ["die", "am", "ziehe", "helfen", "darüber", "Dafür"])
+  ] },
+
+{ lv: 5, title: "Abschlusstest", sub: "15 mixed gaps – everything from Levels 1–5.",
+  rule: `<p>Mixed questions from all lessons, like Sprachbausteine Teil 1. For each gap: <b>1.</b> find the verb · <b>2.</b> check the case · <b>3.</b> look for a fixed partner.</p><p class="ex">Goal: 12 of 15 or better. That is about 80 %, safely above the 60 % pass mark.</p>`,
+  items: [
+    mc("Ich lerne Deutsch, ___ ich in Berlin studieren möchte.", ["weil", "deshalb", "denn"], "<b>möchte</b> is at the end → <b>weil</b>."),
+    mc("Können Sie ___ sagen, wann der Kurs beginnt?", ["mir", "mich", "ich"], "jemandem etwas sagen → Dativ → <b>mir</b>."),
+    mc("Das ist der Mann, ___ ich gestern im Supermarkt getroffen habe.", ["den", "der", "dem"], "Ich habe <b>den</b> Mann getroffen → Akk → <b>den</b>."),
+    mc("Wir wohnen ___ einem Jahr in Hamburg.", ["seit", "vor", "in"], "Since a year and still → <b>seit</b>."),
+    mc("Ich weiß nicht, ___ er morgen kommt oder nicht.", ["ob", "wenn", "dass"], "Yes or no → <b>ob</b>."),
+    mc("Mit ___ Grüßen", ["freundlichen", "freundliche", "freundlicher"], "mit + Dativ plural → <b>-en</b>."),
+    mc("Bitte rufen Sie mich ___ der Nummer 0176-5551234 an.", ["unter", "mit", "bei"], "Fixed: <b>unter der Nummer</b>."),
+    mc("Der Deutschkurs ___ jeden Montag im Gemeindehaus ___.", ["findet … statt", "stattfindet … –", "findet … an"], "<b>stattfinden</b>: findet … statt."),
+    mc("Ich habe wenig Geld. ___ fahre ich im Sommer in den Urlaub.", ["Trotzdem", "Obwohl", "Trotz"], "The verb comes right after the gap → <b>Trotzdem</b>."),
+    mc("Ich freue mich schon sehr ___ das Wochenende.", ["auf", "über", "für"], "Future → sich freuen <b>auf</b>."),
+    mc("___ ich jung war, habe ich viel Sport gemacht.", ["Als", "Wenn", "Wann"], "A period in the past → <b>Als</b>."),
+    mc("In unserer Stadt gibt es viele interessante ___.", ["Museen", "Museum", "Museums"], "<b>viele</b> → plural: das Museum → die <b>Museen</b>."),
+    mc("Ich bin ___ müde, aber ich lerne noch eine Stunde.", ["zwar", "schon", "sondern"], "<b>aber</b> follows → <b>zwar … aber</b>."),
+    mc("Kann ich ___ helfen, Frau Meier?", ["Ihnen", "Sie", "Ihr"], "helfen + Dativ, polite → <b>Ihnen</b>."),
+    mc("Das Wetter war schlecht. ___ sind wir zu Hause geblieben.", ["Deshalb", "Weil", "Denn"], "The verb comes right after the gap → <b>Deshalb</b>.")
+  ] }
+];
+
+/* ---------------- state ---------------- */
+const KEY = "sbSchritt";
+const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
+const save = d => { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) {} };
+let best = load();
+const $ = s => document.querySelector(s);
+const app = $("#app");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const norm = s => String(s).toLowerCase().replace(/ß/g, "ss").replace(/[.,!?;:„“"'’]/g, "").replace(/\s+/g, " ").trim();
+const shuffle = a => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+const pts = it => it.t === "box" ? it.a.length : 1;
+
+let S = { view: "home", li: 0, queue: [], qi: 0, got: {}, answered: false, opts: null, timer: null, t0: 0 };
+
+function setHash(h) { try { if (location.hash !== h) history.replaceState(null, "", h || " "); } catch (e) {} }
+
+function starsFor(p) { return p >= 90 ? "★★★" : p >= 70 ? "★★☆" : p >= 50 ? "★☆☆" : "☆☆☆"; }
+function chipFor(p) { return p == null ? `<span class="chip">neu</span>` : `<span class="chip ${p >= 80 ? "good" : p >= 60 ? "mid" : ""}">${p} %</span>`; }
+
+/* ---------------- views ---------------- */
+function home() {
+  stopTimer(); S.view = "home"; setHash("");
+  const done = LESSONS.filter((_, i) => best[i] != null);
+  const avg = done.length ? Math.round(LESSONS.reduce((a, _, i) => a + (best[i] ?? 0), 0) / done.length) : 0;
+  const nextIdx = LESSONS.findIndex((_, i) => best[i] == null || best[i] < 60);
+  let html = `<header class="card" style="gap:8px">
+    <h1>Sprachbausteine Schritt für Schritt</h1>
+    <p class="lead">Small lessons built from your own mistakes in Exams 1–10. Read the rule (one minute), then answer: click an option or type the word, and you see at once if it is right and why.</p>
+  </header>
+  <div class="stats">
+    <div class="stat"><span class="muted small">Lessons done</span><b>${done.length} / ${LESSONS.length}</b></div>
+    <div class="stat"><span class="muted small">Average score</span><b>${done.length ? avg + " %" : "–"}</b></div>
+    <div class="stat"><span class="muted small">Exam pass mark</span><b>60 %</b></div>
+  </div>
+  <div class="bar" aria-hidden="true"><i style="width:${Math.round(done.length / LESSONS.length * 100)}%"></i></div>`;
+  if (nextIdx >= 0) html += `<div class="row"><button class="primary" data-open="${nextIdx}">Weiter mit Lektion ${nextIdx + 1}: ${esc(LESSONS[nextIdx].title)} →</button></div>`;
+  LEVELS.forEach((name, lv) => {
+    const ls = LESSONS.map((l, i) => ({ l, i })).filter(x => x.l.lv === lv);
+    html += `<section class="level"><div class="level-head"><span class="num">Stufe ${lv + 1}</span><h3>${esc(name)}</h3></div><div class="tiles">` +
+      ls.map(({ l, i }) => `<button class="tile${i === nextIdx ? " next" : ""}" data-open="${i}">
+        <span class="no">${i + 1}</span><span class="tt">${esc(l.title)}</span>${chipFor(best[i])}
+        <span class="sub">${esc(l.sub)}</span></button>`).join("") + `</div></section>`;
+  });
+  html += `<p class="muted small">Scores are saved in this browser only. Keyboard: press 1 / 2 / 3 to choose, Enter for the next question.</p>`;
+  app.innerHTML = html;
+  app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openLesson(+b.dataset.open));
+}
+
+function openLesson(li) {
+  stopTimer(); S.view = "rule"; S.li = li; setHash("#lektion-" + (li + 1));
+  const l = LESSONS[li];
+  app.innerHTML = `<div class="row"><button class="ghost" id="back">← Übersicht</button></div>
+  <div><span class="muted">Lektion ${li + 1} · ${esc(LEVELS[l.lv])}</span><h2>${esc(l.title)}</h2></div>
+  <section class="card rule"><h3>Die Regel</h3>${l.rule}</section>
+  <div class="row"><button class="primary" id="go">Quiz starten · ${l.items.reduce((a, it) => a + pts(it), 0)} Punkte</button>
+  ${best[li] != null ? `<span class="muted">Best so far: ${best[li]} %</span>` : ""}</div>`;
+  $("#back").onclick = home;
+  $("#go").onclick = () => startQuiz(l.items.map((_, i) => i));
+  window.scrollTo(0, 0);
+}
+
+function startQuiz(queue) {
+  S.view = "quiz"; S.queue = queue; S.qi = 0; S.got = {}; S.answered = false; S.opts = null;
+  S.t0 = Date.now(); startTimer(); showQ();
+}
+
+function showQ() {
+  const l = LESSONS[S.li], idx = S.queue[S.qi], it = l.items[idx];
+  S.answered = false;
+  const dots = S.queue.map((qi, k) => {
+    const r = S.got[qi]; const cls = r == null ? "" : (r === true || (typeof r === "number" && r === pts(l.items[qi])) ? "ok" : "bad");
+    return `<span class="dot ${cls}${k === S.qi ? " now" : ""}"></span>`;
+  }).join("");
+  let body = "";
+  if (it.t === "mc") {
+    S.opts = shuffle(it.o.map((o, k) => ({ o, ok: k === 0 })));
+    body = `<p class="q">${qText(it.q)}</p><div class="opts">` +
+      S.opts.map((x, k) => `<button class="opt" data-k="${k}"><kbd>${k + 1}</kbd>${esc(x.o)}</button>`).join("") + `</div>`;
+  } else if (it.t === "in") {
+    body = `<p class="q">${qText(it.q)}</p>${it.hint ? `<p class="hint">Hint: ${esc(it.hint)}</p>` : ""}
+      <form class="typed" id="tf"><label class="muted small" for="ti" style="flex-basis:100%">Type the missing word</label>
+      <input id="ti" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="primary" type="submit">Prüfen</button></form>`;
+  } else {
+    let n = 0;
+    const text = esc(it.text).replace(/\[(\d+)\]/g, (_, d) => `<select data-n="${d}" id="bx${d}" aria-label="Lücke ${d}"><option value="">(${d}) …</option>` +
+      it.words.slice().sort((a, b) => a.localeCompare(b, "de")).map(w => `<option>${esc(w)}</option>`).join("") + `</select><span class="fix" id="fx${d}"></span>`);
+    body = `<h3>${esc(it.title)}</h3><div class="bank" id="bank">${it.words.map(w => `<span data-w="${esc(w)}">${esc(w)}</span>`).join("")}</div>
+      <div class="boxtext">${text}</div>`;
+  }
+  app.innerHTML = `<div class="row" style="justify-content:space-between"><button class="ghost" id="back">← ${esc(l.title)}</button><span class="timer" id="clock">0:00</span></div>
+  <div class="dots" aria-label="Fortschritt">${dots}</div>
+  <section class="card"><span class="muted small">Frage ${S.qi + 1} von ${S.queue.length}</span>${body}<div id="fb"></div></section>
+  <details class="card rulebox"><summary>Regel anzeigen</summary>${l.rule}</details>`;
+  $("#back").onclick = () => openLesson(S.li);
+  tick();
+  if (it.t === "mc") app.querySelectorAll(".opt").forEach(b => b.onclick = () => answerMC(+b.dataset.k));
+  if (it.t === "in") { const f = $("#tf"); f.onsubmit = e => { e.preventDefault(); answerIn(); }; $("#ti").focus(); }
+  if (it.t === "box") { S.boxStart = Date.now(); app.querySelectorAll(".boxtext select").forEach(s => s.onchange = () => answerBox(s)); }
+}
+
+function qText(q) { return esc(q).replace(/___/g, `<span class="gap">&nbsp;</span>`); }
+function fillGap(ans) { const g = app.querySelectorAll(".gap"); if (g.length === 1) { g[0].textContent = ans; g[0].classList.add("ok"); } }
+
+function feedback(ok, right, why) {
+  $("#fb").innerHTML = `<div class="fb ${ok ? "ok" : "bad"}"><b class="mark">${ok ? "✓ Richtig!" : "✗ Leider falsch."}</b>
+    ${ok ? "" : ` Richtig ist: <b>${esc(right)}</b>.`}<br>${why}</div>
+    <div class="row" style="margin-top:10px"><button class="primary" id="next">${S.qi + 1 < S.queue.length ? "Weiter →" : "Ergebnis ansehen"}</button></div>`;
+  S.answered = true;
+  const n = $("#next"); n.onclick = nextQ; n.focus({ preventScroll: true });
+  $("#fb").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function answerMC(k) {
+  if (S.answered) return;
+  const l = LESSONS[S.li], idx = S.queue[S.qi], it = l.items[idx], ok = S.opts[k].ok;
+  S.got[idx] = ok;
+  app.querySelectorAll(".opt").forEach((b, j) => { b.disabled = true; if (S.opts[j].ok) b.classList.add("ok"); else if (j === k) b.classList.add("bad"); });
+  fillGap(it.o[0]);
+  feedback(ok, it.o[0], it.w);
+}
+
+function answerIn() {
+  if (S.answered) return;
+  const l = LESSONS[S.li], idx = S.queue[S.qi], it = l.items[idx], inpEl = $("#ti");
+  if (!inpEl.value.trim()) { inpEl.focus(); return; }
+  const ok = it.a.some(a => norm(a) === norm(inpEl.value));
+  S.got[idx] = ok; inpEl.disabled = true; inpEl.classList.add(ok ? "ok" : "bad");
+  app.querySelector("#tf button").disabled = true;
+  fillGap(it.a[0]);
+  feedback(ok, it.a.join(" / "), it.w);
+}
+
+function answerBox(sel) {
+  const l = LESSONS[S.li], idx = S.queue[S.qi], it = l.items[idx], n = +sel.dataset.n, right = it.a[n - 1];
+  if (!sel.value) return;
+  const ok = sel.value === right;
+  sel.classList.add(ok ? "ok" : "bad"); sel.disabled = true;
+  if (!ok) $("#fx" + n).textContent = " → " + right;
+  const used = app.querySelector(`#bank span[data-w="${CSS.escape(right)}"]`); if (used) used.classList.add("used");
+  S.got[idx] = (S.got[idx] || 0) + (ok ? 1 : 0);
+  const left = [...app.querySelectorAll(".boxtext select")].filter(s => !s.disabled).length;
+  if (left === 0) {
+    const sec = Math.round((Date.now() - S.boxStart) / 1000);
+    feedback(S.got[idx] === it.a.length, it.a.join(", "),
+      `${S.got[idx]} of ${it.a.length} gaps correct · time ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")} (goal: about 3:00).`);
+  }
+}
+
+function nextQ() {
+  if (S.qi + 1 < S.queue.length) { S.qi++; showQ(); window.scrollTo({ top: 0 }); } else result();
+}
+
+function result() {
+  stopTimer(); S.view = "done";
+  const l = LESSONS[S.li];
+  const max = S.queue.reduce((a, i) => a + pts(l.items[i]), 0);
+  const score = S.queue.reduce((a, i) => a + (S.got[i] === true ? 1 : typeof S.got[i] === "number" ? S.got[i] : 0), 0);
+  const p = Math.round(score / max * 100);
+  const full = S.queue.length === l.items.length;
+  if (full && (best[S.li] == null || p > best[S.li])) { best[S.li] = p; save(best); }
+  const wrong = S.queue.filter(i => !(S.got[i] === true || S.got[i] === pts(l.items[i])));
+  const sec = Math.round((Date.now() - S.t0) / 1000);
+  const msg = p >= 90 ? "Ausgezeichnet! This topic is safe." : p >= 70 ? "Gut! Look at the red ones once more." : p >= 50 ? "Fast! Read the rule again and retry the wrong ones." : "Read the rule slowly, then try again – it gets easier.";
+  app.innerHTML = `<div class="row"><button class="ghost" id="back">← Übersicht</button></div>
+  <section class="card"><span class="muted">Lektion ${S.li + 1} · ${esc(l.title)}${full ? "" : " · Wiederholung"}</span>
+    <div class="row" style="gap:16px;align-items:flex-end"><span class="big">${score} / ${max}</span><span class="stars" aria-label="${p} Prozent">${starsFor(p)}</span></div>
+    <div class="bar"><i style="width:${p}%"></i></div>
+    <p style="margin:0"><b>${p} %</b> · ${msg} <span class="muted">Time ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}</span></p>
+    <div class="row">${wrong.length ? `<button class="primary" id="redo">Falsche nochmal üben (${wrong.length})</button>` : ""}
+    <button id="again">Ganze Lektion wiederholen</button>
+    ${S.li + 1 < LESSONS.length ? `<button id="nextL">Nächste Lektion →</button>` : ""}</div></section>
+  ${wrong.length ? `<section class="card"><h3>Noch einmal ansehen</h3><div class="wronglist">` + wrong.map(i => {
+      const it = l.items[i]; const ans = it.t === "mc" ? it.o[0] : it.t === "in" ? it.a[0] : it.a.join(", ");
+      return `<div>${it.t === "box" ? esc(it.title) : esc(it.q).replace(/___/g, `<b>${esc(ans)}</b>`)}<br><span class="muted small">${it.t === "box" ? "Answers: " + esc(ans) : it.w}</span></div>`;
+    }).join("") + `</div></section>` : ""}`;
+  $("#back").onclick = home;
+  if (wrong.length) $("#redo").onclick = () => startQuiz(wrong);
+  $("#again").onclick = () => startQuiz(l.items.map((_, i) => i));
+  if ($("#nextL")) $("#nextL").onclick = () => openLesson(S.li + 1);
+  window.scrollTo(0, 0);
+}
+
+/* ---------------- timer & keys ---------------- */
+function tick() { const c = $("#clock"); if (!c) return; const s = Math.round((Date.now() - S.t0) / 1000); c.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+function startTimer() { stopTimer(); S.timer = setInterval(tick, 1000); }
+function stopTimer() { clearInterval(S.timer); S.timer = null; }
+
+document.addEventListener("keydown", e => {
+  if (S.view !== "quiz") return;
+  const it = LESSONS[S.li].items[S.queue[S.qi]];
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (!S.answered && it.t === "mc" && /^[1-9]$/.test(e.key) && +e.key <= S.opts.length) { e.preventDefault(); answerMC(+e.key - 1); }
+  else if (S.answered && e.key === "Enter" && document.activeElement?.id !== "next") { e.preventDefault(); nextQ(); }
+});
+
+function route() {
+  const m = /^#lektion-(\d+)$/.exec(location.hash);
+  if (m && LESSONS[+m[1] - 1]) openLesson(+m[1] - 1); else home();
+}
+window.addEventListener("hashchange", () => { if (S.view !== "quiz") route(); });
+route();
+</script>
+</body>
+</html>
