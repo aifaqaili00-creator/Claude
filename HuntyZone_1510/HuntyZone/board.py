@@ -409,6 +409,17 @@ def update_card(conn, card_id, d, settings, now=None):
             else:
                 links.pop('alibaba', None)
             _event(conn, card_id, 'edit', 'Alibaba link saved' if url else 'Alibaba link removed', now)
+    if 'supplier' in d:                       # the supplier's product page you order from (Launching strategy, Sourcing)
+        url = str(d['supplier'] or '').strip()
+        if url and (len(url) > 500 or not LINK_RX.match(url)):
+            raise BoardError('Paste the whole link, starting with https://')
+        links = c['data'].setdefault('links', {})
+        if url != links.get('supplier', ''):
+            if url:
+                links['supplier'] = url
+            else:
+                links.pop('supplier', None)
+            _event(conn, card_id, 'edit', 'Supplier product link saved' if url else 'Supplier product link removed', now)
     if 'kw' in d:
         kw = config.norm_kw(d['kw'] or '')[:120]
         if not kw:
@@ -1365,9 +1376,26 @@ def _owner(settings):
     return settings.get('mail_from_name') or (settings.get('mail_address') or '').split('@')[0] or 'Product Checker'
 
 
-def _inform_item(conn, c):
+def _launch_facts(conn, c, orders, settings, now):
+    """What the emails say about a product in Launching strategy or Re-order: its launch steps done and still to do,
+    the day it went live in each market, and per market its stock left, daily sales and re-order day."""
+    today = dt.date.fromtimestamp(now)
+    ls = rules.launch_status(_hints(conn, c['id']), c['data']['live'])
+    stock = []
+    if c['data']['milestones'].get('order_ready'):
+        for mk in _markets(orders, c):
+            s = _stock(conn, c, orders, mk, settings, today)
+            if s:
+                stock.append([mk, {k: s.get(k) for k in ('sent', 'left', 'counted', 'rate', 'days_left', 'reorder_by',
+                                                         'order_now', 'level')}])
+    return {'launch': {'done': ls['done'], 'total': ls['total'], 'missing': ls['missing']},
+            'live': [[mk, (c['data']['live'] or {}).get(mk)] for mk in _markets(orders, c)], 'stock': stock}
+
+
+def _inform_item(conn, c, settings=None, now=None):
     """One product as the product update shows it: its newest order's units and markets, when its sourcing is due
-    (the deadline of Sourcing & PO, or Re-order for a re-order) and links to Amazon and Alibaba."""
+    (the deadline of Sourcing & PO, or Re-order for a re-order) and links to Amazon and Alibaba. With settings, a
+    product in Launching strategy or Re-order also gets its launch and stock facts (_launch_facts)."""
     orders = _orders(conn, c['id'])
     o = orders[-1] if orders else None
     lines = o['lines'] if o else []
@@ -1385,17 +1413,23 @@ def _inform_item(conn, c):
             at.append([ln['market'], 'eta:' + eta])
     amazon, a_search = inform.amazon_link(ac.MARKETS.get(c['market'], ac.MARKETS['US'])['site'], c['asin'], c['kw'])
     alibaba, b_search = inform.alibaba_link((c['data'].get('links') or {}).get('alibaba'), c['kw'])
-    return {'id': c['id'], 'title': c['title'], 'image': c['image'], 'stage': c['stage'], 'tags': c['data'].get('tags') or [],
-            'order': 'First order' if not o or o['n'] == 1 else 'Re-order #%d' % o['n'],
-            'units': [[ln['market'], ln['units']] for ln in lines], 'sourcing': src, 'at_amazon': at,
-            'amazon': amazon, 'amazon_search': a_search, 'alibaba': alibaba, 'alibaba_search': b_search}
+    out = {'id': c['id'], 'title': c['title'], 'image': c['image'], 'stage': c['stage'], 'tags': c['data'].get('tags') or [],
+           'order': 'First order' if not o or o['n'] == 1 else 'Re-order #%d' % o['n'],
+           'units': [[ln['market'], ln['units']] for ln in lines], 'sourcing': src, 'at_amazon': at,
+           'amazon': amazon, 'amazon_search': a_search, 'alibaba': alibaba, 'alibaba_search': b_search,
+           'supplier': (c['data'].get('links') or {}).get('supplier') if c['stage'] in inform.SUPPLIER_STAGES else None}
+    if settings is not None and c['stage'] in ('launch', 'reorder'):
+        out.update(_launch_facts(conn, c, orders, settings, int(now or time.time())))
+    return out
 
 
-def inform_items(conn):
-    """Every product on the board for the product update, in the email's stage order (Sourcing & PO, Pre-check, ...)."""
+def inform_items(conn, settings=None, now=None):
+    """Every product on the board for the product update, in the email's stage order (Sourcing & PO, Pre-check, ...).
+    With settings, the launch and stock facts of the products in Launching strategy and Re-order too (the snapshot
+    that decides whether anything changed leaves them out: stock counts change every day)."""
     cards = [_card(conn, r[0]) for r in conn.execute('SELECT id FROM board_card WHERE archived_at IS NULL').fetchall()]
     cards.sort(key=lambda c: (inform.email_rank(c['stage']), c['pos'] or 0, c['id']))
-    return [_inform_item(conn, c) for c in cards]
+    return [_inform_item(conn, c, settings, now) for c in cards]
 
 
 def _inform_mail(conn, settings, to_ids, message, now, auto=False):
@@ -1404,7 +1438,7 @@ def _inform_mail(conn, settings, to_ids, message, now, auto=False):
     people = notifiers(conn)
     pick = people if to_ids is None else [p for p in people if p['id'] in set(to_ids)]
     last = storage.get_state(conn, INFORM_KEY) or {}
-    items = inform_items(conn)
+    items = inform_items(conn, settings, now)
     snap = inform.snapshot(items)
     changed = inform.changes(last['snapshot'], snap) if last.get('snapshot') is not None else []
     since = {'ts': last['sent_at'], 'sent': True} if last.get('sent_at') else {'ts': last['at'], 'sent': False} \
@@ -1532,15 +1566,27 @@ def inform_waiting(db, settings):
 DEADLINES_KEY = 'board_deadlines'    # ui_state: the last deadlines email {'sent_at', 'to', 'subject', 'opened'}
 
 
-def deadline_items(conn):
-    """Every open deadline on the board, the soonest first, and the products without one: (items, titles)."""
+def deadline_items(conn, settings=None, now=None):
+    """Every open deadline on the board, the soonest first, and the products without one: (items, titles). With
+    settings, the re-order day of each product on sale (stock left at its daily sales, less the shipping time) is a
+    deadline too, under Re-order, unless a re-order deadline is already set."""
     items, none = [], []
     for r in conn.execute('SELECT id, title, market, data_json FROM board_card WHERE archived_at IS NULL ORDER BY pos, id').fetchall():
-        open_ = [t for t in _tasks(conn, r['id']).values() if not t['done_at']]
+        tasks = _tasks(conn, r['id'])
+        open_ = [t for t in tasks.values() if not t['done_at']]
         tags = json.loads(r['data_json'] or '{}').get('tags') or []
         items += [{'id': r['id'], 'title': r['title'], 'market': r['market'], 'stage': t['stage'], 'due_day': t['due_day'],
                    'note': t['note'], 'tags': tags} for t in open_]
-        if not open_:
+        stock = []
+        if settings is not None and not any(t['stage'] == 'reorder' for t in open_):
+            c = _card(conn, r['id'])
+            if c['data']['milestones'].get('order_ready'):
+                orders = _orders(conn, r['id'])
+                stock = [s for s in (_stock(conn, c, orders, mk, settings, dt.date.fromtimestamp(int(now or time.time())))
+                                     for mk in _markets(orders, c)) if s and s['reorder_by']]
+        items += [{'id': r['id'], 'title': r['title'], 'market': s['market'], 'stage': 'reorder', 'due_day': s['reorder_by'],
+                   'note': inform.stock_text(s), 'tags': tags} for s in stock]
+        if not open_ and not stock:
             none.append(r['title'])
     items.sort(key=lambda i: (i['due_day'], i['title'].lower()))
     return items, none
@@ -1549,7 +1595,7 @@ def deadline_items(conn):
 def _deadlines_mail(conn, settings, to_ids, message, now):
     people = notifiers(conn)
     pick = people if to_ids is None else [p for p in people if p['id'] in set(to_ids)]
-    items, none = deadline_items(conn)
+    items, none = deadline_items(conn, settings, now)
     subject, text, page = inform.deadline_texts(items, {'owner': _owner(settings), 'to_names': [p['name'] for p in pick],
                                                         'message': message, 'now': now, 'none': none})
     return {'to': [(p['name'], p['email']) for p in pick], 'people': people, 'items': items, 'none': none,
@@ -1846,10 +1892,10 @@ def card_detail(db, card_id, settings, now=None):
             money[mk] = {'searched': r['searched'], 'price': r.get('price'), 'cur': r['cur'], 'econ': {
                 k: e.get(k) for k in ('Profit', 'Margin', 'ROI', 'BreakEvenACoS', 'Landed', 'FBA', 'Referral', 'Duty',
                                       'ImportTax', 'tier_label')} if e else None, 'sim': sim, 'newcomer': r.get('newcomer')}
-        item = _inform_item(conn, c)
+        item = _inform_item(conn, c, settings, now)
         labels = inform.link_labels(item)
         team = {'rows': inform.rows(item, today), 'amazon': item['amazon'], 'alibaba': item['alibaba'],
-                'amazon_label': labels[0], 'alibaba_label': labels[1]}
+                'amazon_label': labels[0], 'alibaba_label': labels[1], 'supplier': item.get('supplier')}
         return {'card': _summary(conn, c, settings, per_usd, now), 'data': c['data'], 'orders': orders, 'hints': hs,
                 'launch': rules.launch_status(hs, c['data']['live']), 'markets': markets, 'money': money, 'team': team,
                 'stock': [s for s in (_stock(conn, c, orders, mk, settings, today) for mk in markets) if s],

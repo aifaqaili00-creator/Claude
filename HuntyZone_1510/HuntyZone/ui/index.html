@@ -225,13 +225,15 @@
               <input type="search" id="mgFind" placeholder="Find a niche or brand" aria-label="Find a niche or brand" style="width:200px">
             </div>
             <div class="row"><span class="small" id="mgWhen"></span>
-              <button class="btn" id="mgImport" title="Import SmartScout brands and sellers exports (the baseline)"><svg class="icon sm"><use href="#i-upload"/></svg>Import SmartScout files</button>
+              <button class="btn" id="mgImport" title="Import SmartScout exports: brands, sellers, subcategories, products and cross-border sellers' offers (files in the SmartScout folder are also picked up by themselves every hour)"><svg class="icon sm"><use href="#i-upload"/></svg>Import SmartScout files</button>
               <button class="btn" id="mgExcel"><svg class="icon sm"><use href="#i-download"/></svg>Save to Excel</button>
               <button class="btn primary" id="mgRun" title="Read Amazon Australia and the UAE now: Best Sellers of your categories, then the next open niches"><svg class="icon sm"><use href="#i-refresh"/></svg>Refresh AU &amp; UAE</button></div>
           </div>
           <div class="itabs" role="tablist" id="mgTabs" aria-label="Views">
-            <button type="button" role="tab" data-tab="products" aria-selected="false">Products to sell</button><button type="button" role="tab" data-tab="stock" aria-selected="false">Out of stock</button><button type="button" role="tab" data-tab="niches" aria-selected="true">Niches</button><button type="button" role="tab" data-tab="live" aria-selected="false">Best Sellers now</button>
-            <button type="button" role="tab" data-tab="missing" aria-selected="false">Brands missing here</button><button type="button" role="tab" data-tab="sellers" aria-selected="false">Top sellers</button>
+            <button type="button" role="tab" data-tab="overview" aria-selected="true" title="The market in one page: what to sell, who ships in from abroad, the best niches and brands to contact">Overview</button><button type="button" role="tab" data-tab="smartscout" aria-selected="false" title="SmartScout's own data for this market, in charts and tables: categories, niches, brands, sellers and products">SmartScout</button><button type="button" role="tab" data-tab="products" aria-selected="false">Products to sell<span class="n"></span></button><button type="button" role="tab" data-tab="shipped" aria-selected="false" title="Who ships into this market from abroad (Amazon's Global Store, import resellers), the brands they dominate and their products">Shipped in from abroad<span class="n"></span></button><button type="button" role="tab" data-tab="niches" aria-selected="false">Niches<span class="n"></span></button><button type="button" role="tab" data-tab="contacts" aria-selected="false" title="Brands worth writing to about stocking them here, and what you know about each">Brands to contact<span class="n"></span></button>
+            <details class="tabmore" id="mgMore"><summary>More<span id="mgMoreName"></span> <svg class="icon sm" aria-hidden="true"><use href="#i-chev"/></svg></summary><div>
+              <button type="button" role="tab" data-tab="stock" aria-selected="false">Out of stock</button><button type="button" role="tab" data-tab="live" aria-selected="false">Best Sellers now</button><button type="button" role="tab" data-tab="missing" aria-selected="false">Brands missing here<span class="n"></span></button><button type="button" role="tab" data-tab="sellers" aria-selected="false">Top sellers</button>
+            </div></details>
           </div>
           <div class="row" id="mgFilters">
             <label class="small">Gap <select id="mgType" aria-label="Gap type"><option value="">Every gap</option></select></label>
@@ -240,7 +242,7 @@
             <label class="small"><input type="checkbox" id="mgRisky"> Show phones, books and other risky niches</label>
             <label class="small adv"><input type="checkbox" id="mgAll"> Show spread-out niches</label>
           </div>
-          <details class="explain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note">The <b>baseline</b> is your SmartScout
+          <details class="explain" id="mgExplain"><summary><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg><span>What this means</span></summary><div class="note" id="mgExplainText">The <b>baseline</b> is your SmartScout
             export: every brand's revenue in its main niche and who sells most of it. A niche is a <b>gap</b> when most of it is shipped in from abroad
             (<b>Amazon's Global Store</b>: Amazon US, UK or Germany selling here, or import resellers), when <b>Amazon itself</b> sells most of it and the next
             brand is far behind, when <b>few brands</b> sell it with few sellers each, or when it is much <b>bigger in the USA</b>. SmartScout's numbers are
@@ -669,6 +671,7 @@
             <label class="small"><input type="checkbox" data-set="oos_auto"> Watch booming and brand-new products for stock-outs every day (Market Gaps → Out of stock)</label>
             <label class="small">Out of stock: show products that ran out with at most <input type="number" data-set="oos_max_sellers" min="1" max="20" style="width:64px" aria-label="Most sellers of an out-of-stock product"> sellers</label>
             <label class="small">Market Gaps: a product counts when at most <input type="number" data-set="mg_max_sellers" min="1" max="20" style="width:64px" aria-label="Most sellers of a product"> listings sell it</label>
+            <label class="small">SmartScout subscription ends on <input type="date" data-set="ss_until" aria-label="Last day of the SmartScout subscription"> (after that day Market Gaps calls the SmartScout data a snapshot)</label>
             <div class="field"><span class="lbl">“Sells well” means at least this many sold a month</span>
               <div class="row">
                 <div class="field"><label for="setProofUS">USA</label><input type="number" id="setProofUS" data-set="proof_us" min="10" max="100000" style="width:100px"></div>

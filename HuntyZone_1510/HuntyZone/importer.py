@@ -172,15 +172,18 @@ def import_file(db, path, market=None, kind=None, keyword=None, name=None):
     path = Path(path)
     name = name or path.name
     try:
+        import smartscout
+        if path.suffix.lower() == '.json':
+            return smartscout.import_json(db, path, name) if smartscout.looks_like(path) else \
+                {'file': name, 'status': 'not a Helium 10 export'}
         sha1 = file_sha1(path)
         if db.read(lambda c: storage.import_known(c, sha1)):
             return {'file': name, 'status': 'already imported'}
         raw = fr.load(path)
+        if not kind and smartscout.kind_of(raw.columns):     # before Helium 10: a SmartScout products export has ASIN,
+            return smartscout.import_file(db, path, name, market, raw)   # Title and Revenue too, like an Xray
         kind = kind or kind_of(name, raw.columns)
         if not kind:
-            import smartscout
-            if smartscout.kind_of(raw.columns):
-                return smartscout.import_file(db, path, name, market, raw)
             return {'file': name, 'status': 'not a Helium 10 export'}
         when = as_of(path, name)
         if kind in ('magnet', 'cerebro'):
@@ -221,7 +224,8 @@ def candidates(folders, now=None, max_age_days=MAX_AGE_DAYS):
     for folder in folders:
         try:
             for p in Path(folder).iterdir():
-                if p.suffix.lower() in EXTS and p.is_file() and not p.name.startswith('~$'):
+                ok = p.suffix.lower() in EXTS or (p.suffix.lower() == '.json' and p.name.lower().startswith('smartscout-mcp'))
+                if ok and p.is_file() and not p.name.startswith('~$'):
                     mtime = p.stat().st_mtime
                     if now - mtime <= max_age_days * 86400:
                         found.append((mtime, p))
@@ -252,6 +256,8 @@ def scan(db, folders, progress=None):
 
 def _looks_like_h10(path):
     """A cheap header check, so scanning a big Downloads folder stays fast."""
+    if path.suffix.lower() == '.json':
+        return path.name.lower().startswith('smartscout-mcp')
     head = ''
     if path.suffix.lower() == '.csv':
         with open(path, 'rb') as f:

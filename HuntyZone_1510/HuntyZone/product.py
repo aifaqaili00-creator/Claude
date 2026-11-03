@@ -117,7 +117,7 @@ SELLER_JS = r"""
   const q = s => document.querySelector(s);
   const text = el => el ? ((el.innerText || '').trim() || (el.textContent || '').replace(/\s+/g, ' ').trim()) : '';
   return {name: text(q('#seller-name, #sellerName-rd, #sellerName')).slice(0, 200),
-          detail: text(q('#page-section-detail-seller-info')).slice(0, 2000),
+          detail: text(q('#page-section-detail-seller-info')).slice(0, 4000),
           feedback: text(q('#seller-info-feedback-summary, #feedback-summary-table')).slice(0, 600)};
 }
 """
@@ -296,6 +296,45 @@ def parse_seller(raw):
     return {'name': name, 'business_name': ' '.join(business.group(1).split())[:160] if business else None, 'country': country,
             'rating_pct': float(pct.group(1)) if pct else None, 'ratings': int(re.sub(r'[,.]', '', n.group(1))) if n else None,
             'status': 'ok' if name or detail else 'empty'}
+
+
+EMAIL_IN_TEXT = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}')
+PHONE_IN_TEXT = re.compile(r'(?:phone(?:\s+number)?|telephone|tel\.?)\s*:?\s*(\+?[\d][\d\s()\-./]{6,}\d)', re.I)
+ADDRESS_END = r'(?=\n\s*(?:phone|telephone|tel\b|e-?mail|customer servic|trade register|commercial register|vat|business type|' \
+              r'registration)|\Z)'
+
+
+def parse_contact(raw):
+    """The business details on a seller's profile page ("Detailed Seller Information"): {business_name, address (one
+    line), country, phone, email, detail}. Amazon shows a phone and an email for some sellers (Europe mostly), never for
+    all; anything missing is None."""
+    detail = raw.get('detail') or ''
+    business = re.search(r'business name\s*:\s*([^\n]+)', detail, re.I)
+    address = re.search(r'business address\s*:?\s*(.+?)' + ADDRESS_END, detail, re.I | re.S)
+    lines = [x.strip() for x in address.group(1).splitlines() if x.strip()] if address else []
+    email = EMAIL_IN_TEXT.search(detail)
+    phone = PHONE_IN_TEXT.search(detail)
+    country = next((c for c in (countries.code_of(x) for x in reversed(lines)) if c), None) or parse_seller(raw)['country']
+    return {'business_name': ' '.join(business.group(1).split())[:160] if business else None,
+            'address': ', '.join(lines)[:400] or None, 'country': country,
+            'phone': ' '.join(phone.group(1).split())[:40] if phone else None,
+            'email': email.group(0)[:120] if email else None, 'detail': detail[:4000] or None}
+
+
+async def read_seller_page(checker, seller_id, code):
+    """A seller's profile page -> (parse_seller(), parse_contact()): the profile and its business details."""
+    await checker.start()
+    page = await checker.new_page()
+    try:
+        await checker._goto(page, seller_url(code, seller_id), code)
+        try:
+            await page.wait_for_selector('#seller-name, #page-section-detail-seller-info', timeout=6000)
+        except Exception:
+            pass
+        raw = await page.evaluate(SELLER_JS)
+    finally:
+        await page.close()
+    return parse_seller(raw), parse_contact(raw)
 
 
 def availability(raw):

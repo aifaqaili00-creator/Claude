@@ -1,0 +1,59 @@
+SmartScout one-month harvest - progress log (plan: C:\Users\danis\.claude\plans\huntyzone-1510-drive-data-scout-i-have-peppy-sutton.md)
+
+Facts learned
+- Switch marketplace with the URL: https://app.smartscout.com/app/<page>?marketplace=AU | AE | US
+- Exports contain ALL filtered rows (not just the page on screen). Cap: 20,000 rows per export.
+- Niche Finder (Subcategories page, 2nd tab) = flat list of every subcategory: Columns panel > tick select-all > Excel > Excel icon.
+- Chrome saves exports here with SmartScout's own name (e.g. "SmartScout - Niche Finder.xlsx"): rename at once to
+  "smartscout <AU|UAE|US> <kind>[-<slice>] <YYYY-MM-DD>.xlsx".
+- Keep the Chrome window wide (1500 px) so the Filters button is visible.
+- AU/UAE sellers have no country/business name in SmartScout (Country=CN filter on AU sellers gave 0 rows).
+- MCP (US only, Business plan): ASIN batches work: query_analytics "Full profile of product <ASIN>" -> handle,
+  then run_query(handle, filterValues=[up to ~50 ASINs]). Phrase searches do not work.
+
+Done
+- 2026-10-25 01:05  smartscout AU subcategories 2026-10-25.xlsx   (12,214 rows, all 30 columns incl. Node ID)
+- 2026-10-25 01:07  smartscout UAE subcategories 2026-10-25.xlsx  (16,564 rows)
+
+- 2026-10-25 02:51  smartscout AU brands 2026-10-25 part 1.xlsx  (19,054 rows, revenue >= A$2,500)
+- 2026-10-25 02:52  smartscout AU brands 2026-10-25 part 2.xlsx  (15,071 rows, A$1,000-2,500)  -> 34,125 = all AU brands >= A$1,000
+- 2026-10-25 02:53  smartscout UAE brands 2026-10-25 part 1.xlsx (16,246 rows, >= AED 2,500)
+- 2026-10-25 02:54  smartscout UAE brands 2026-10-25 part 2.xlsx (8,122 rows, AED 1,000-2,500)
+- 2026-10-25 02:56  smartscout AU sellers 2026-10-25.xlsx  (18,562 rows >= A$1,000, 27 cols; address/country empty for AU)
+- 2026-10-25 02:59  smartscout UAE sellers 2026-10-25.xlsx (10,715 rows >= AED 1,000)
+Notes: Export menu says "20,000 max rows". The filter panel closes after Apply. Sellers headers changed since October
+("Seller Name", "Monthly Revenue"). Sellers column visibility: switch all on in Filters > Columns (no select-all there).
+
+- AU products-few-sellers parts 1-4 (<=6 sellers; units >=100 / 65-99 / 50-64 / 30-49): 13,617 + 6,910 + 13,756 + 19,278 = 53,561
+- AU products-top (units >=100, any sellers) 15,271 | products-mid (units 10-29, top 20,000 of 121,015) | products-top-new 26
+- UAE products-few-sellers parts 1-4 (<=6 sellers; >=100 / 50-99 / 30-49 / 20-29): 12,050 + 14,350 + 13,520 + 16,085 = 56,005
+- UAE products-top (>=100 units) 14,829 | products-mid (10-19 units, top 20,000 of 52,838) | products-top-new 3
+Notes: products exports have 49 columns incl. Main Category Rank + Primary Subcategory Rank (BSR) -> calibration.
+"Amazon In-Stock Rate" filter is useless in AU (values are only 0 or ~1) - no amazon-oos slice; use In-Stock Rate 90 Day.
+Products filters are set by JS (window.__ssInput) + typing; blur and wait ~1 s before Apply or the last value is lost.
+CAUTION: DST ended 2026-10-25 03:00 -> file times jump back an hour. ss_take.sh only takes files < 10 min old.
+
+- Cross-border "Offers" (Sellers > magnifier > Offers > Excel side button > Excel icon), top 20,000 by revenue each:
+  AU: amazon-us (of 3,081,200), amazon-uk (550,293), amazon-germany (407,271), amazon-japan (128,315)
+  UAE: amazon-us (4,921,246), jetsouq (528,273), amazon-germany (1,079,908), desertcartae (581,714),
+       exbordersfze (280,296), amazon-uk (551,913)
+  Offer columns: Image, ASIN, Monthly Revenue, Buy Box Percentage, Brand, Category, Rank, Subcategory, FBA, Offer Price.
+
+- smartscout US subcategories 2026-10-25.xlsx (23,825 rows: the Niche Finder export is NOT capped at 20,000)
+- Checked, nothing to export on this plan: Movers & Shakers (upgrade needed), API and Data Lake (sales pages),
+  Brand Reports (one brand at a time, no contacts), Seller Map (visual only).
+
+- MCP US twins: smartscout-mcp US asin-profiles 2026-10-25 a..f.json (connector, handle reused with 50 ASINs a call):
+  498 AU/UAE SmartScout finds (batches 1-7; 1-6 matched 19/17/11/14/13/5 in the US, 7 none: UAE-only listings, so
+  batches 8-10 of UAE finds were skipped) and 124 shipped-in products (matched 28/40/12). About 12 connector questions used.
+
+- 2026-10-25 09:12  Product Checker 8.8 imported all 39 files (33 exports + 6 connector files) from this folder at start:
+  AU brands 34,125 / sellers 18,562 / products 168,807 (11 files) / subcategories 12,214;
+  UAE brands 24,368 / sellers 10,715 / products 210,650 (13 files) / subcategories 16,505; US subcategories 23,819;
+  US twins 159. Sales curves refitted: AU calibrated (9,931 points, 22 categories), UAE calibrated (6,575, 19).
+
+Still open (optional): a brand's Marketplaces Excel for top cross-border brands. Ubuy was not among the UAE's top
+sellers this month (JetSouq, DesertcartAE and ExbordersFZE were), so it has no Offers file.
+Not possible on this plan: Movers & Shakers (upgrade), Data Lake / API (sales pages).
+
+Repeat it later: the "smartscout-harvest" skill in HuntyZone\.claude\skills\smartscout-harvest\SKILL.md.

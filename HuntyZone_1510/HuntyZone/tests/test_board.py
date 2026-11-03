@@ -750,3 +750,41 @@ def test_pre_check_is_open_to_every_idea_and_not_in_the_progress_ring(db):
     with pytest.raises(board.BoardError, match='Idea'):
         db.write(board.move_card, cid, 'approval', None, NOW)                     # Approval still needs both links
     assert 'Pre-check (1)' in board.summary_text(db, S, NOW)
+
+
+def test_the_emails_carry_the_launch_and_the_re_order_day(db):
+    cid = launched(db)
+    db.write(board.move_card, cid, 'launch', None, NOW)
+    line = detail(db, cid)['orders'][0]['lines'][0]['id']
+    db.write(board.set_line, cid, 1, 'US', {'steps': {'arrived': '2026-10-01'}}, S, NOW)
+    db.write(board.add_count, line, 200, S, NOW - 5 * DAY)
+    db.write(board.add_count, line, 90, S, NOW)
+    people(db, ('Sara', 'sara@example.com'))
+    it = next(i for i in db.read(board.inform_items, S, NOW) if i['id'] == cid)
+    assert it['live'] == [['US', '2026-10-01']] and it['stock'][0][0] == 'US' and it['stock'][0][1]['left'] == 90
+    assert it['stock'][0][1]['reorder_by'] and it['launch']['done'] == 0 and 'missing' in it['launch']
+    assert 'live' not in db.read(board.inform_items)[0]                              # the change snapshot leaves them out
+    view = board.inform_view(db, S, None, '', NOW)
+    assert 'Live on Amazon' in view['html'] and 'Re-order by' in view['html'] and 'USA 90 left' in view['text']
+    dl = board.deadlines_view(db, S, None, '', NOW)
+    reorder = [i for i in db.read(board.deadline_items, S, NOW)[0] if i['stage'] == 'reorder']
+    assert len(reorder) == 1 and reorder[0]['market'] == 'US' and '90 of 300 left' in reorder[0]['note']
+    assert '== RE-ORDER (1) ==' in dl['text'] and dl['none'] == []
+    assert db.read(board.deadline_items)[1] == ['Calming Dog Bed']                   # without settings: deadlines only
+
+
+def test_a_supplier_product_link_shows_in_the_email_only_for_sourcing_launch_and_re_order(db):
+    cid = launched(db)
+    with pytest.raises(board.BoardError, match='https://'):
+        db.write(board.update_card, cid, {'supplier': 'alibaba.com/x'}, S, NOW)
+    db.write(board.update_card, cid, {'supplier': 'https://www.alibaba.com/product-detail/x_1.html'}, S, NOW)
+    assert detail(db, cid)['data']['links']['supplier'] == 'https://www.alibaba.com/product-detail/x_1.html'
+    for stage, shown in (('launch', True), ('reorder', True), ('sourcing', True), ('approval', False), ('idea', False)):
+        db.write(board.move_card, cid, stage, None, NOW)
+        it = next(i for i in db.read(board.inform_items) if i['id'] == cid)
+        assert bool(it['supplier']) is shown, stage
+    assert detail(db, cid)['team']['supplier'] is None                                    # in Idea: no button
+    db.write(board.move_card, cid, 'launch', None, NOW)
+    assert detail(db, cid)['team']['supplier']
+    db.write(board.update_card, cid, {'supplier': ''}, S, NOW)
+    assert 'supplier' not in detail(db, cid)['data']['links']

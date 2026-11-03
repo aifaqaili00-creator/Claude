@@ -35,12 +35,40 @@ def _ideas(conn, now):
     return rows
 
 
+SS_WATCH = 40                   # SmartScout products watched per market (after the booming and brand-new ones)
+
+
+def ss_candidates(conn):
+    """SmartScout's best sellers with few sellers on the listing (Australia and the UAE), as watched products: the app
+    re-reads them itself (stock, sellers, rank), so they stay current after the SmartScout month. Risky ones (food,
+    clothing sizes, electrical...) are left out."""
+    from engine import marketgaps as mg
+    out = []
+    for mk in ('AU', 'AE'):
+        rows = storage.ss_watch_rows(conn, mk, mg.HUNT['min_demand'][mk], 3, SS_WATCH * 3)
+        n = 0
+        for r in rows:
+            if n >= SS_WATCH or mg.risk_of(r['title'], '%s %s' % (r.get('category') or '', r.get('subcategory') or '')):
+                continue
+            n += 1
+            out.append({'asin': r['asin'], 'market': mk, 'title': r['title'], 'image': r.get('image'),
+                        'category': r.get('subcategory'), 'price': r.get('price'), 'kind': 'smartscout',
+                        'why': 'SmartScout: about %s sold a month, %d seller%s' % ('{:,}'.format(int(r['units'])), r['sellers'],
+                                                                              '' if r['sellers'] == 1 else 's'),
+                        'pct': None, 'pos': None, 'last_seen': r.get('as_of'), 'priority': 10 + min(r['units'] / 500, 10)})
+    return out
+
+
 def watched(db, now=None):
-    """(candidates, readings) for the tab and the next run."""
+    """(candidates, readings) for the tab and the next run: the booming and brand-new products of Product ideas, then
+    SmartScout's best sellers with few sellers."""
     now = now or time.time()
 
     def build(conn):
-        return sw.candidates(_ideas(conn, now), now), storage.stock_checks(conn, now - 90 * 86400)
+        cands = sw.candidates(_ideas(conn, now), now)
+        seen = {(c['market'], c['asin']) for c in cands}
+        cands += [c for c in ss_candidates(conn) if (c['market'], c['asin']) not in seen]
+        return cands, storage.stock_checks(conn, now - 90 * 86400)
     return db.read(build)
 
 
@@ -53,6 +81,7 @@ def table(db, settings, now=None):
     auto = db.one("SELECT MAX(last_run_at) AS t FROM task WHERE kind='stock'") or {}
     return {'rows': rs[:SHOWN], 'watched': len(cands), 'fits': sum(1 for r in rs if r['fits']),
             'booming': sum(1 for c in cands if c['kind'] == 'booming'), 'new': sum(1 for c in cands if c['kind'] == 'new'),
+            'smartscout': sum(1 for c in cands if c['kind'] == 'smartscout'),
             'read': sum(1 for r in rs if any(s['state'] != 'unread' for s in r['markets'].values())),
             'last': last, 'auto_last': auto.get('t'), 'max_sellers': max_sellers(settings),
             'auto': bool(settings.get('oos_auto', True) and settings.get('auto_refresh', True))}

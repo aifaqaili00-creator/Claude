@@ -675,7 +675,8 @@ const Charts = (() => {
   }
 
   /* ---------- horizontal bars in HTML, a flag next to the label when there is one ----------
-     o.items: [{label, flag ('CN'), tag, value (bar length), text (shown at the end), color}]; o.columns: table head. */
+     o.items: [{label, flag ('CN'), tag, value (bar length), text (shown at the end), color}]; o.columns: table head;
+     o.onPick(item): a row is a button that does this (and says so in its tooltip, o.pickTip). */
   function bars(el, o) {
     const f = frame(el, o), items = o.items || [];
     legendItems(f.legend, o.legend || []);
@@ -683,7 +684,12 @@ const Charts = (() => {
     if (!items.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No data yet.'); return; }
     const max = Math.max(...items.map(i => i.value || 0)) || 1, list = htmlEl('div', 'hbars', f.body);
     for (const it of items) {
-      const row = htmlEl('div', 'hbar', list), lab = htmlEl('div', 'hbar-label', row);
+      const row = htmlEl(o.onPick ? 'button' : 'div', 'hbar' + (o.onPick ? ' pick' : ''), list), lab = htmlEl('div', 'hbar-label', row);
+      if (o.onPick) {
+        row.type = 'button';
+        row.title = it.label + ': ' + it.text + (o.pickTip ? ' · ' + o.pickTip : '');
+        row.addEventListener('click', () => o.onPick(it));
+      }
       if (it.flag) lab.insertAdjacentHTML('beforeend', cflag(it.flag));
       htmlEl('span', 'hbar-name', lab, it.label).title = it.label;
       if (it.tag) htmlEl('span', 'pill line', lab, it.tag);
@@ -694,5 +700,81 @@ const Charts = (() => {
     }
   }
 
-  return {timeseries, columns, shares, seasonStrip, histogram, spark, sellerBars, oppMap, bars, monthT, monthKey, monthLabel, MONTHS};
+  /* ---------- niche map: money a month (log) against the brands selling in it (log), one dot per niche ----------
+     o.points: [{name, category, revenue, brands, amazon_share, top_brand, top_brand_share, risk}]; o.money(v): money text;
+     o.onOpen(p): a dot is clicked. The lines are the medians of the dots shown, so the top-left quarter is "more money,
+     fewer brands" than the typical niche on the map. Risky niches (phones, books, food...) are grey. */
+  function nicheMap(el, o) {
+    const f = frame(el, o), H = o.height || 360, money = o.money || (v => compact(v));
+    const pts = (o.points || []).filter(p => finite(p.revenue) && p.revenue > 0 && finite(p.brands) && p.brands > 0);
+    legendItems(f.legend, [{label: 'Niche', color: 'var(--s-demand)'}, {label: 'Risky (phones, books, food…)', color: 'var(--s-other)'}]);
+    fillTable(f.table, ['Niche', 'Money a month', 'Brands', 'Amazon’s share', 'Top brand'],
+      pts.map(p => [p.name, money(p.revenue), num(p.brands), p.amazon_share != null ? pct(p.amazon_share) : null,
+                    p.top_brand ? p.top_brand + (p.top_brand_share != null ? ' ' + pct(p.top_brand_share) : '') : null]));
+    if (!pts.length) { htmlEl('div', 'chart-empty', f.body, o.empty || 'No niches to show.'); return; }
+    const tip = tooltip(f.body);
+    tip.hidden = true;
+    const med = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+    const mRev = med(pts.map(p => p.revenue)), mBr = med(pts.map(p => p.brands));
+    observe(f.body, W => {
+      f.body.querySelectorAll('svg').forEach(s => s.remove());
+      const m = {l: 56, r: 18, t: 18, b: 36}, w = W - m.l - m.r, h = H - m.t - m.b, L = Math.log10;
+      const pad = (lo, hi) => [Math.pow(10, Math.floor(L(lo))), Math.pow(10, Math.ceil(L(hi * 1.0001)))];
+      const [x0, x1] = pad(Math.min(...pts.map(p => p.brands)), Math.max(...pts.map(p => p.brands)));
+      const [y0, y1] = pad(Math.min(...pts.map(p => p.revenue)), Math.max(...pts.map(p => p.revenue)));
+      const X = v => m.l + (L(v) - L(x0)) / (L(x1) - L(x0) || 1) * w, Y = v => m.t + h - (L(v) - L(y0)) / (L(y1) - L(y0) || 1) * h;
+      const svg = svgEl('svg', {width: W, height: H, class: 'chart-svg', role: 'img', 'aria-label': o.title || 'Niche map'});
+      f.body.insertBefore(svg, f.body.firstChild);
+      const grid = svgEl('g', {class: 'grid'}, svg);
+      for (let v = y0; v <= y1 * 1.0001; v *= 10) {
+        svgEl('line', {x1: m.l, x2: m.l + w, y1: Y(v), y2: Y(v), class: v === y0 ? 'base' : ''}, grid);
+        svgEl('text', {x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', class: 'tick'}, grid).textContent = money(v);
+      }
+      for (let v = x0; v <= x1 * 1.0001; v *= 10) svgEl('text', {x: X(v), y: m.t + h + 16, 'text-anchor': 'middle', class: 'tick'}, grid).textContent = num(v);
+      svgEl('text', {x: m.l + w, y: H - 4, 'text-anchor': 'end', class: 'tick'}, grid).textContent = 'brands selling in it →';
+      svgEl('text', {x: m.l, y: m.t - 6, class: 'tick'}, grid).textContent = '↑ money a month';
+      const q = svgEl('g', {class: 'quad'}, svg);
+      svgEl('line', {x1: X(mBr), x2: X(mBr), y1: m.t, y2: m.t + h, class: 'quad-line'}, q);
+      svgEl('line', {x1: m.l, x2: m.l + w, y1: Y(mRev), y2: Y(mRev), class: 'quad-line'}, q);
+      const cap = (x, y, anchor, t, cls) => { const e = svgEl('text', {x, y, 'text-anchor': anchor, class: 'quad-cap ' + (cls || '')}, q); e.textContent = t; };
+      cap(m.l + 6, m.t + 14, 'start', 'More money, fewer brands than most: look here', 'good');
+      cap(m.l + w - 4, m.t + 14, 'end', 'Big but crowded');
+      cap(m.l + 6, m.t + h - 6, 'start', 'Small and quiet');
+      cap(m.l + w - 4, m.t + h - 6, 'end', 'Small and crowded');
+      // names for a few of the top-left dots, spread out (never two dots close together), drawn above every dot
+      const named = [];
+      for (const p of pts) {
+        if (named.length >= 5 || p.risk || p.revenue < mRev || p.brands > mBr) continue;
+        if (named.every(o => Math.hypot(X(o.brands) - X(p.brands), Y(o.revenue) - Y(p.revenue)) > 44)) named.push(p);
+      }
+      const dots = svgEl('g', {}, svg), names = svgEl('g', {'aria-hidden': 'true'}, svg), placed = [];
+      for (const p of named) {
+        const cx = X(p.brands), cy = Y(p.revenue), t = p.name.length > 28 ? p.name.slice(0, 27) + '…' : p.name;
+        const right = cx > m.l + w * 0.6, tw = t.length * 6.6, lx = right ? cx - 9 : cx + 9, c = right ? lx - tw / 2 : lx + tw / 2;
+        let ly = cy + 4;
+        while (placed.some(b => Math.abs(b.y - ly) < 16 && Math.abs(c - b.c) < (tw + b.w) / 2)) ly += 16;
+        placed.push({y: ly, c, w: tw});
+        svgEl('text', {x: lx, y: ly, 'text-anchor': right ? 'end' : 'start', class: 'vlabel halo'}, names).textContent = t;
+      }
+      for (const p of pts.slice().sort((a, b) => (a.risk ? 0 : 1) - (b.risk ? 0 : 1))) {   // the grey ones underneath
+        const cx = X(p.brands), cy = Y(p.revenue);
+        const g = svgEl('g', {class: 'dotgrp', tabindex: 0, role: 'link', 'aria-label': p.name}, dots);
+        svgEl('circle', {cx, cy, r: 11, fill: 'transparent'}, g);
+        svgEl('circle', {cx, cy, r: 4.5, class: 'dot', style: p.risk ? 'fill: var(--s-other)' : ''}, g);
+        const show = () => showTip(tip, f.body, cx, p.name, [
+          {color: 'var(--s-demand)', label: 'a month', value: money(p.revenue)},
+          {color: 'var(--s-demand)', label: 'brands sell in it', value: num(p.brands)}]
+          .concat(p.amazon_share != null ? [{color: 'var(--s-demand)', label: 'sold by Amazon itself', value: pct(p.amazon_share)}] : [])
+          .concat(p.top_brand ? [{color: 'var(--s-other)', label: 'the biggest brand' + (p.top_brand_share != null ? ' (' + pct(p.top_brand_share) + ')' : ''), value: p.top_brand}] : [])
+          .concat(p.risk ? [{color: 'var(--s-other)', label: 'risky', value: p.risk}] : []));
+        g.addEventListener('pointerenter', show); g.addEventListener('focus', show);
+        g.addEventListener('pointerleave', () => { tip.hidden = true; }); g.addEventListener('blur', () => { tip.hidden = true; });
+        const open = () => { if (o.onOpen) o.onOpen(p); };
+        g.addEventListener('click', open);
+        g.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+      }
+    });
+  }
+
+  return {timeseries, columns, shares, seasonStrip, histogram, spark, sellerBars, oppMap, bars, nicheMap, monthT, monthKey, monthLabel, MONTHS};
 })();

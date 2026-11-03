@@ -70,7 +70,9 @@ def test_the_email_lists_every_product_and_what_changed():
                                                   'message': 'Quotes by Friday, please.', 'now': NOW,
                                                   'since': {'ts': NOW - 86400, 'sent': True}})
     assert subject == 'Product update, Mon 12 Oct: <b>Lick</b> Mat is new'
-    assert text.startswith('Hi Sara and Ahmed,\n\nHere is where our 2 products stand.\n\nNote from Ali Afa:\n'
+    assert text.startswith('Hi Sara and Ahmed,\n\nHere is where our 2 products stand.\nBy stage: Sourcing & PO 2 · '
+                           'Approval none · Pre-check none · Idea none · Launching strategy none · '
+                           'Re-order none\n\nNote from Ali Afa:\n'
                            'Quotes by Friday, please.\n\nWhat changed since the last update (Sun 11 Oct):\n- New: <b>Lick</b> Mat')
     assert ('1. Calming Dog Bed\n   USA 300, Australia 200 (500 in all) · sourcing by Mon 19 Oct · at Amazon: USA '
             'about Fri 4 Dec · Sourcing & PO\n   Amazon search https://www.amazon.com/s?k=calming+dog+bed · '
@@ -81,7 +83,9 @@ def test_the_email_lists_every_product_and_what_changed():
     assert 'Quotes by Friday, please.' in page and '2 products on the board' in page and 'Reply to this email to reach Ali.' in page
     subject, text, page = inform.texts([item()], [], {'owner': 'Ali', 'now': NOW, 'auto': True})
     assert subject == 'Product update, Mon 12 Oct: 1 product'
-    assert text.startswith('Hi,\n\nThe product board changed, so here is where our product stands.\n\n== SOURCING & PO (1) ==\n\n'
+    assert text.startswith('Hi,\n\nThe product board changed, so here is where our product stands.\nBy stage: Sourcing & PO 1 '
+                           '· Approval none · Pre-check none · Idea none · Launching strategy none '
+                           '· Re-order none\n\n== SOURCING & PO (1) ==\n\n'
                            '1. Calming Dog Bed\n')
     assert 'You get it when products are added or changed.' in page
     many = [{'kind': k, 'title': 't', 'id': str(i), 'text': 'x'} for i, k in enumerate(['new', 'changed', 'changed', 'removed'])]
@@ -167,3 +171,46 @@ def test_the_deadlines_email_has_the_same_stage_sections():
     assert heads == ['== SOURCING & PO (2) ==', '== APPROVAL (1) ==', '== PRE-CHECK (1) ==', '== IDEA (1) ==']
     assert text.index('1. Pet Stairs') < text.index('2. Bird Bath') < text.index('3. Sauna Hat') < text.index('5. Lick Mat')
     assert 'Sourcing &amp; PO <span style="font-weight:600">\u00b7 2 deadlines</span>' in page
+
+
+def test_launching_and_re_order_products_say_live_launch_steps_stock_and_the_re_order_day():
+    today = remind.today(NOW)                                                       # Mon 12 Oct
+    p = item(stage='launch', live=[['US', '2026-10-01'], ['AU', None]],
+             launch={'done': 5, 'total': 8, 'missing': ['3 hints to check']},
+             stock=[['US', {'sent': 300, 'left': 90, 'rate': 22.4, 'days_left': 4, 'reorder_by': '2026-10-19'}],
+                    ['AU', {'sent': 200, 'left': None, 'rate': None, 'days_left': None, 'reorder_by': None}]])
+    rows = dict(inform.rows(p, today))
+    assert rows['Live on Amazon'] == 'USA since Thu 1 Oct, Australia not yet'
+    assert rows['Launch steps'] == '5 of 8 done' and rows['Still to do'] == '3 launch steps to check'
+    assert rows['Stock left'] == 'USA 90 of 300 left, about 22 sold a day (4 days of stock); Australia not counted yet'
+    assert rows['Re-order by'] == 'USA Mon 19 Oct (in 7 days)'
+    assert list(dict(inform.rows(p, today))).index('Stage') == len(rows) - 1          # the stage stays last
+    line = inform.facts_line(p, today)
+    assert 'live: USA since Thu 1 Oct' in line and 'USA 90 left, re-order by Mon 19 Oct' in line
+    assert 'to do: 3 launch steps to check' in line
+    late = item(stage='reorder', live=[['US', '2026-09-01']], launch={'done': 8, 'total': 8, 'missing': []},
+                stock=[['US', {'sent': 300, 'left': 20, 'rate': 2.5, 'days_left': 8, 'reorder_by': '2026-10-09'}]])
+    rows = dict(inform.rows(late, today))
+    assert rows['Re-order by'] == 'USA now: it was Fri 9 Oct (3 days ago)' and 'Launch steps' not in rows
+    assert 'about 2.5 sold a day' in rows['Stock left']
+    none = dict(inform.rows(item(stage='launch', live=[['US', None]], launch={'done': 0, 'total': 0, 'missing': []},
+                                 stock=[]), today))
+    assert none['Stock left'] == 'Not counted yet' and none['Re-order by'].startswith('Not known yet')
+    assert 'Live on Amazon' not in dict(inform.rows(item(), today))                  # only Launching strategy and Re-order
+
+
+def test_the_update_starts_with_every_stage_and_its_count():
+    items = [item(1), item(2, stage='idea'), item(3, stage='launch', live=[['US', None]], stock=[])]
+    _, text, page = inform.texts(items, [], {'owner': 'Ali', 'to_names': [], 'message': '', 'now': NOW})
+    assert ('By stage: Sourcing & PO 1 \u00b7 Approval none \u00b7 Pre-check none \u00b7 Idea 1 \u00b7 '
+            'Launching strategy 1 \u00b7 Re-order none') in text
+    assert 'Re-order \u00b7 none' in page and 'Launching strategy \u00b7 1' in page
+    assert text.index('== IDEA (1) ==') < text.index('== LAUNCHING STRATEGY (1) ==')
+
+
+def test_the_supplier_product_link_is_a_button_when_set():
+    sup = 'https://www.alibaba.com/product-detail/Dog-Bed_1601.html?spm=a2700.x'
+    _, text, page = inform.texts([item(supplier=sup), item(2, supplier=None)], [], {'owner': 'Ali', 'now': NOW})
+    assert page.count('>Supplier product link</a>') == 1 and 'href="https://www.alibaba.com/product-detail/Dog-Bed_1601.html"' in page
+    assert 'Supplier product link https://www.alibaba.com/product-detail/Dog-Bed_1601.html' in text
+    assert inform.SUPPLIER_STAGES == ('sourcing', 'launch', 'reorder')

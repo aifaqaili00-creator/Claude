@@ -342,15 +342,33 @@ class State:
         folders = [xray.downloads_dir()]
         if self.settings.get('import_folder'):
             folders.append(Path(self.settings['import_folder']))
+        scout = self.settings.get('mg_dir') or marketgaps.default_folder()     # where SmartScout exports are saved
+        if scout and Path(scout).is_dir() and Path(scout) not in folders:
+            folders.append(Path(scout))
         return folders
 
     def scan_imports(self, progress=None):
-        """Import new Helium 10 exports from Downloads (and the chosen folder). Safe to run any time."""
+        """Import new Helium 10 and SmartScout exports from Downloads, the chosen folder and the SmartScout folder. Safe
+        to run any time (from a worker thread)."""
         out = importer.scan(self.db, self.import_folders(), progress)
         n = sum(1 for r in out if r['status'] == 'imported')
         if n:
-            self.say('Imported %d Helium 10 export%s into your history.' % (n, '' if n == 1 else 's'))
+            self.say('Imported %d export%s into your history.' % (n, '' if n == 1 else 's'))
+            self.refit_after_import(out, progress)
         return out
+
+    def refit_after_import(self, results, progress=None):
+        """Fit the rank -> sales curve again for every market that just got calibration points (Helium 10 or SmartScout
+        product sales next to their sales rank). Called from a worker thread."""
+        markets = sorted({r.get('market') for r in results or () if r.get('status') == 'imported' and r.get('market')
+                          and (r.get('calibration') or r.get('kind') in ('xray', 'blackbox'))})
+        for mk in markets:
+            if progress:
+                progress('Fitting the sales model for %s with the new data...' % ac.MARKETS.get(mk, {}).get('name', mk))
+            try:
+                self.run(self.refit_curve(mk)).result(timeout=900)
+            except Exception:                                       # noqa: BLE001 - the old curve stays
+                log.exception('refit %s after import', mk)
 
     async def refresh_trends(self, kw, geo, progress=None, force=False, related=True):
         """Google Trends for one term and country. Google refusing pauses Trends; that is reported, not raised."""
@@ -1821,6 +1839,14 @@ def api_mgaps(h, q):
     return h._send(200, marketgaps.table(S.db, S.settings, _mg_market(q.get('market'))))
 
 
+@route('GET', '/api/smartscout')
+def api_smartscout(h, q):
+    """Market Gaps > SmartScout: one view of a market's SmartScout data (summary, niches, brands, sellers, products),
+    filtered, sorted and paged (ssview)."""
+    import ssview
+    return h._send(200, ssview.view(S.db, _mg_market(q.get('market')), q))
+
+
 @route('POST', '/api/mgaps/refresh')
 def api_mgaps_refresh(h, q):
     """Your own Refresh: the Best Sellers categories and the next open niches of Australia and / or the UAE, read now."""
@@ -1866,11 +1892,80 @@ def api_mgaps_import(h, q):
     def work(progress):
         import smartscout
         files = smartscout.import_folder(S.db, folder, progress)
+        S.refit_after_import(files, progress)
         return {'files': files}
 
     async def run(progress):
         return await asyncio.to_thread(work, progress)
     return h._send(200, {'job': S.new_job('mgaps_import', run)})
+
+
+@route('GET', '/api/contacts')
+def api_contacts(h, q):
+    """Market Gaps > Contacts: your saved brand contacts and the brands worth contacting in a market."""
+    import contacts
+    return h._send(200, contacts.table(S.db, S.settings, _mg_market(q.get('market'))))
+
+
+@route('POST', '/api/contacts/save')
+def api_contacts_save(h, q):
+    import contacts
+    d = h._json()
+    try:
+        row = contacts.save(S.db, d.get('brand'), d.get('fields') if isinstance(d.get('fields'), dict) else {})
+    except ValueError as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, {'ok': True, 'contact': row})
+
+
+@route('POST', '/api/contacts/delete')
+def api_contacts_delete(h, q):
+    import contacts
+    k = contacts.key(h._json().get('brand'))
+    if not k:
+        return h._send(400, {'error': 'Which brand?'})
+    S.db.write(storage.delete_contact, k)
+    return h._send(200, {'ok': True})
+
+
+@route('POST', '/api/contacts/read')
+def api_contacts_read(h, q):
+    """Read the brands' own sellers on Amazon (business name, address, and a phone or email when Amazon shows them)."""
+    import contacts
+    d = h._json()
+    mk = _mg_market(d.get('market'))
+    items = [{'brand': str(i.get('brand') or '')[:120], 'asin': str(i.get('asin') or '')[:10].upper() or None,
+              'seller_id': str(i.get('seller_id') or '')[:20] or None}
+             for i in (d.get('items') or []) if isinstance(i, dict) and i.get('brand')][:contacts.READ_MAX]
+    if not items:
+        return h._send(400, {'error': 'Which brands?'})
+
+    async def work(progress):
+        out = await contacts.read_details(S, mk, items, progress)
+        return {**await asyncio.to_thread(contacts.table, S.db, S.settings, mk), **out}
+    return h._send(200, {'job': S.new_job('contacts', work)})
+
+
+@route('POST', '/api/contacts/email')
+def api_contacts_email(h, q):
+    """Open a filled-in email to a brand in your Gmail or Outlook (you press Send there)."""
+    import contacts
+    d = h._json()
+    try:
+        out = contacts.email(S.db, S.settings, str(d.get('brand') or ''), _mg_market(d.get('market')))
+    except (ValueError, mailer.MailError) as e:
+        return h._send(400, {'error': str(e)})
+    return h._send(200, out)
+
+
+@route('POST', '/api/contacts/template')
+def api_contacts_template(h, q):
+    import contacts
+    d = h._json()
+    try:
+        return h._send(200, contacts.save_template(S.db, d.get('subject'), d.get('body')))
+    except ValueError as e:
+        return h._send(400, {'error': str(e)})
 
 
 @route('GET', '/api/stock')

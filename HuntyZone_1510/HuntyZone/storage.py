@@ -40,7 +40,7 @@ GAP_KEEP_DAYS = 180                            # older Gap Finder checks and off
 MG_KEEP_DAYS = 400                             # older Market Gaps readings go, except the newest per niche or category
 BACKUPS = {'daily': 2, 'weekly': 2}
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 MIGRATIONS = {
     1: """
 -- operations
@@ -227,6 +227,38 @@ CREATE TABLE stock_check(id INTEGER PRIMARY KEY, ts INT, market TEXT, asin TEXT,
   amazon INT, rank INT, badge INT, price REAL, source TEXT, data_json TEXT);
 CREATE INDEX stock_check_key ON stock_check(market, asin, ts);
 CREATE INDEX stock_check_ts ON stock_check(ts);
+""",
+    11: """
+-- the SmartScout harvest: product slices, subcategories, cross-border sellers' offers, US answers and brand contacts
+ALTER TABLE import_file ADD COLUMN preset TEXT;
+ALTER TABLE ss_brand ADD COLUMN country TEXT;
+ALTER TABLE ss_brand ADD COLUMN storefront_url TEXT;
+ALTER TABLE ss_brand ADD COLUMN isr_90 REAL;
+ALTER TABLE ss_brand ADD COLUMN bb_suppression REAL;
+ALTER TABLE ss_brand ADD COLUMN fba_fees REAL;
+ALTER TABLE ss_seller ADD COLUMN url TEXT;
+ALTER TABLE ss_seller ADD COLUMN state TEXT;
+ALTER TABLE ss_seller ADD COLUMN avg_price REAL;
+ALTER TABLE ss_seller ADD COLUMN growth_12m REAL;
+ALTER TABLE ss_seller ADD COLUMN suspended INT;
+CREATE TABLE ss_product(import_id INT, market TEXT, asin TEXT, title TEXT, brand TEXT, category TEXT, subcategory TEXT,
+  price REAL, revenue REAL, units REAL, sellers INT, fba_sellers INT, reviews INT, rating REAL, amazon_isr REAL, isr_90 REAL,
+  bb_suppression REAL, growth_1m REAL, growth_12m REAL, opportunity REAL, page_score REAL, launch TEXT, cat_rank INT,
+  sub_rank INT, bought INT, return_rate REAL, parent TEXT, image TEXT, seller TEXT, bb_pct REAL, fba INT);
+CREATE TABLE ss_subcat(import_id INT, market TEXT, node_id TEXT, name TEXT, category TEXT, revenue REAL, t12m REAL,
+  seller_share REAL, amazon_share REAL, chinese_share REAL, growth_1m REAL, growth_12m REAL, brands INT,
+  single_seller_brands INT, asins INT, asins_80 INT, avg_sellers REAL, units REAL, price REAL, reviews_avg REAL, rating REAL,
+  age_days REAL, top_brand TEXT, top_brand_share REAL, page_score REAL);
+CREATE TABLE ss_mcp(import_id INT, market TEXT, topic TEXT, key TEXT, data_json TEXT);
+CREATE TABLE brand_contact(brand_key TEXT PRIMARY KEY, brand TEXT, markets TEXT, company TEXT, email TEXT, phone TEXT,
+  website TEXT, storefront_url TEXT, address TEXT, country TEXT, seller_id TEXT, seller_market TEXT, source TEXT,
+  status TEXT DEFAULT 'to_contact', notes TEXT, contacted_at INT, created_at INT, updated_at INT);
+CREATE TABLE seller_detail(market TEXT, seller_id TEXT, business_name TEXT, address TEXT, country TEXT, phone TEXT, email TEXT,
+  detail TEXT, fetched_at INT, PRIMARY KEY(market, seller_id));
+CREATE INDEX ss_product_key ON ss_product(market, asin);
+CREATE INDEX ss_product_import ON ss_product(import_id);
+CREATE INDEX ss_subcat_key ON ss_subcat(import_id, market, name);
+CREATE INDEX ss_mcp_key ON ss_mcp(market, key);
 """,
 }
 
@@ -1223,22 +1255,33 @@ def kw_volume(conn, market, kw):
 # ---------- SmartScout exports (Market Gaps' baseline) ----------
 SS_BRAND_COLS = ('brand', 'score', 'category', 'subcategory', 'revenue', 't12m', 'avg_price', 'avg_sellers', 'avg_fba_sellers',
                  'dominant_seller', 'sales_pct', 'units', 'amazon_instock', 'rating', 'reviews', 'growth_1m', 'growth_12m',
-                 'products')
+                 'products', 'country', 'storefront_url', 'isr_90', 'bb_suppression', 'fba_fees')
 SS_SELLER_COLS = ('seller_id', 'name', 'category', 'subcategory', 'revenue', 'pct_fba', 'n_brands', 'n_asins', 'country',
-                  'business_name', 'started')
-SS_KINDS = {'ss_brands': ('ss_brand', SS_BRAND_COLS), 'ss_sellers': ('ss_seller', SS_SELLER_COLS)}
+                  'business_name', 'started', 'url', 'state', 'avg_price', 'growth_12m', 'suspended')
+SS_PRODUCT_COLS = ('asin', 'title', 'brand', 'category', 'subcategory', 'price', 'revenue', 'units', 'sellers', 'fba_sellers',
+                   'reviews', 'rating', 'amazon_isr', 'isr_90', 'bb_suppression', 'growth_1m', 'growth_12m', 'opportunity',
+                   'page_score', 'launch', 'cat_rank', 'sub_rank', 'bought', 'return_rate', 'parent', 'image', 'seller', 'bb_pct',
+                   'fba')
+SS_SUBCAT_COLS = ('node_id', 'name', 'category', 'revenue', 't12m', 'seller_share', 'amazon_share', 'chinese_share', 'growth_1m',
+                  'growth_12m', 'brands', 'single_seller_brands', 'asins', 'asins_80', 'avg_sellers', 'units', 'price',
+                  'reviews_avg', 'rating', 'age_days', 'top_brand', 'top_brand_share', 'page_score')
+SS_KINDS = {'ss_brands': ('ss_brand', SS_BRAND_COLS), 'ss_sellers': ('ss_seller', SS_SELLER_COLS),
+            'ss_products': ('ss_product', SS_PRODUCT_COLS), 'ss_subcats': ('ss_subcat', SS_SUBCAT_COLS)}
+# The slices that make up a market's baseline (brands, sellers and subcategories exported whole, maybe in parts): a
+# filtered export of the same table (another slice) never replaces it
+SS_BASE_PRESETS = ('brands', 'sellers', 'subcategories')
 
 
-def save_ss_import(conn, kind, market, file, sha1, rows, as_of, ts=None):
-    """One SmartScout export (kind 'ss_brands' or 'ss_sellers'). Returns the import id, or None if this exact file was
-    imported before."""
+def save_ss_import(conn, kind, market, file, sha1, rows, as_of, ts=None, preset=None):
+    """One SmartScout export (a kind of SS_KINDS). preset: the slice named in the file name ("products-few-sellers"),
+    None for an old-style name. Returns the import id, or None if this exact file was imported before."""
     if import_known(conn, sha1):
         return None
     table, cols = SS_KINDS[kind]
     as_of = _now(as_of)
-    cur = conn.execute('INSERT INTO import_file(kind, market, kw_norm, file, sha1, as_of, month, imported_at, n_rows) '
-                       'VALUES (?,?,?,?,?,?,?,?,?)', (kind, market, None, str(file)[:300], sha1, as_of,
-                                                      config.month_key(as_of, market), _now(ts), len(rows)))
+    cur = conn.execute('INSERT INTO import_file(kind, market, kw_norm, file, sha1, as_of, month, imported_at, n_rows, preset) '
+                       'VALUES (?,?,?,?,?,?,?,?,?,?)', (kind, market, None, str(file)[:300], sha1, as_of,
+                                                        config.month_key(as_of, market), _now(ts), len(rows), preset))
     iid = cur.lastrowid
     conn.executemany('INSERT INTO %s(import_id, market, %s) VALUES (?,?%s)' % (table, ', '.join(cols), ',?' * len(cols)),
                      [[iid, market] + [r.get(c) for c in cols] for r in rows])
@@ -1247,30 +1290,174 @@ def save_ss_import(conn, kind, market, file, sha1, rows, as_of, ts=None):
 
 def ss_imports(conn):
     """Every SmartScout import, newest first."""
-    return _rows(conn.execute("SELECT * FROM import_file WHERE kind IN ('ss_brands','ss_sellers') ORDER BY as_of DESC, id DESC"))
+    return _rows(conn.execute("SELECT * FROM import_file WHERE kind LIKE 'ss\\_%' ESCAPE '\\' ORDER BY as_of DESC, id DESC"))
+
+
+def ss_set(conn, kind, market):
+    """(import ids, as_of) of a market's newest whole export of a kind: every part of it (files with the same date), never
+    a filtered slice. ([], None) when there is none."""
+    base = 'kind=? AND market=? AND (preset IS NULL OR preset IN (%s))' % ','.join('?' * len(SS_BASE_PRESETS))
+    r = conn.execute('SELECT MAX(as_of) FROM import_file WHERE ' + base, (kind, market, *SS_BASE_PRESETS)).fetchone()
+    if not r or r[0] is None:
+        return [], None
+    ids = [x[0] for x in conn.execute('SELECT id FROM import_file WHERE %s AND as_of=? ORDER BY id' % base,
+                                      (kind, market, *SS_BASE_PRESETS, r[0]))]
+    return ids, r[0]
 
 
 def _ss_newest(conn, kind, market):
-    r = conn.execute('SELECT id, as_of FROM import_file WHERE kind=? AND market=? ORDER BY as_of DESC, id DESC LIMIT 1',
-                     (kind, market)).fetchone()
-    return (r[0], r[1]) if r else (None, None)
+    """(newest import id of the whole export, as_of): kept for callers that need one id to key a cache on."""
+    ids, as_of = ss_set(conn, kind, market)
+    return (ids[-1], as_of) if ids else (None, None)
+
+
+def _in(ids):
+    return ','.join('?' * len(ids))
 
 
 def ss_brands(conn, market):
-    """(rows, as_of) of the newest SmartScout brands export of a market; ([], None) when there is none."""
-    iid, as_of = _ss_newest(conn, 'ss_brands', market)
-    if not iid:
+    """(rows, as_of) of the newest SmartScout brands export of a market (all its parts); ([], None) when there is none."""
+    ids, as_of = ss_set(conn, 'ss_brands', market)
+    if not ids:
         return [], None
-    return _rows(conn.execute('SELECT %s FROM ss_brand WHERE import_id=?' % ', '.join(SS_BRAND_COLS), (iid,))), as_of
+    return _rows(conn.execute('SELECT %s FROM ss_brand WHERE import_id IN (%s)' % (', '.join(SS_BRAND_COLS), _in(ids)),
+                              ids)), as_of
 
 
 def ss_sellers(conn, market):
     """(rows, as_of) of the newest SmartScout sellers export of a market."""
-    iid, as_of = _ss_newest(conn, 'ss_sellers', market)
-    if not iid:
+    ids, as_of = ss_set(conn, 'ss_sellers', market)
+    if not ids:
         return [], None
-    return _rows(conn.execute('SELECT %s FROM ss_seller WHERE import_id=? ORDER BY revenue DESC' % ', '.join(SS_SELLER_COLS),
-                              (iid,))), as_of
+    return _rows(conn.execute('SELECT %s FROM ss_seller WHERE import_id IN (%s) ORDER BY revenue DESC'
+                              % (', '.join(SS_SELLER_COLS), _in(ids)), ids)), as_of
+
+
+def ss_subcats(conn, market):
+    """(rows, as_of) of the newest SmartScout subcategories export of a market."""
+    ids, as_of = ss_set(conn, 'ss_subcats', market)
+    if not ids:
+        return [], None
+    return _rows(conn.execute('SELECT %s FROM ss_subcat WHERE import_id IN (%s)' % (', '.join(SS_SUBCAT_COLS), _in(ids)),
+                              ids)), as_of
+
+
+def ss_products(conn, market, presets=None, like=None, unlike=None):
+    """SmartScout product rows of a market, one per ASIN from its newest import (with 'preset' and 'as_of'). presets: only
+    these slices; like / unlike: a LIKE pattern the slice must (not) match ("seller-products-%")."""
+    sql = ('SELECT p.*, f.preset, f.as_of FROM ss_product p JOIN import_file f ON f.id=p.import_id WHERE p.market=?')
+    params = [market]
+    if presets:
+        sql += ' AND f.preset IN (%s)' % _in(presets)
+        params += list(presets)
+    if like:
+        sql += ' AND f.preset LIKE ?'
+        params.append(like)
+    if unlike:
+        sql += ' AND COALESCE(f.preset, \'\') NOT LIKE ?'
+        params.append(unlike)
+    out = {}
+    for r in conn.execute(sql + ' ORDER BY f.as_of, f.id', params):
+        out[r['asin']] = dict(r)                       # newest import last: it wins
+    return list(out.values())
+
+
+def ss_watch_rows(conn, market, min_units, max_sellers, limit=200):
+    """SmartScout's best-selling products with few sellers on the listing in a market (the product slices, newest import
+    per ASIN), biggest first: the products the app keeps re-reading itself once SmartScout is gone."""
+    rows = conn.execute(
+        "SELECT p.asin, p.title, p.image, p.subcategory, p.category, p.price, p.units, p.sellers, p.isr_90, f.as_of "
+        "FROM ss_product p JOIN import_file f ON f.id=p.import_id WHERE p.market=? AND p.units>=? AND p.sellers<=? "
+        "AND p.title IS NOT NULL AND COALESCE(f.preset, '') NOT LIKE 'seller-products-%' ORDER BY p.units DESC LIMIT ?",
+        (market, min_units, max_sellers, limit * 3))
+    out = {}
+    for r in rows:
+        out.setdefault(r['asin'], dict(r))
+    return list(out.values())[:limit]
+
+
+def ss_product_presets(conn, market):
+    """{slice: (rows, as_of)} of a market's SmartScout product imports."""
+    return {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT preset, SUM(n_rows), MAX(as_of) FROM import_file WHERE kind='ss_products' AND market=? GROUP BY preset", (market,))}
+
+
+def save_ss_mcp(conn, market, topic, file, sha1, rows, as_of, ts=None):
+    """One saved answer of the SmartScout connector (rows with an 'ASIN' or another key). Returns the import id."""
+    if import_known(conn, sha1):
+        return None
+    as_of = _now(as_of)
+    iid = conn.execute('INSERT INTO import_file(kind, market, kw_norm, file, sha1, as_of, month, imported_at, n_rows, preset) '
+                       'VALUES (?,?,?,?,?,?,?,?,?,?)', ('ss_mcp', market, None, str(file)[:300], sha1, as_of,
+                                                        config.month_key(as_of, market), _now(ts), len(rows),
+                                                        str(topic or '')[:80] or None)).lastrowid
+    for r in rows:
+        key = r.get('ASIN') or r.get('asin') or r.get('Subcategory Name') or r.get('Brand') or r.get('Brand Name')
+        conn.execute('INSERT INTO ss_mcp(import_id, market, topic, key, data_json) VALUES (?,?,?,?,?)',
+                     (iid, market, topic, str(key)[:200] if key else None, json.dumps(r)))
+    return iid
+
+
+def ss_us_twins(conn, asins):
+    """{asin: the SmartScout connector's US profile of the same ASIN} (newest answer wins)."""
+    asins = [a for a in dict.fromkeys(asins) if a]
+    out = {}
+    for i in range(0, len(asins), 500):
+        part = asins[i:i + 500]
+        for r in conn.execute("SELECT key, data_json FROM ss_mcp WHERE market='US' AND key IN (%s) ORDER BY import_id"
+                              % _in(part), part):
+            out[r[0]] = json.loads(r[1])
+    return out
+
+
+# ---------- brand contacts (Market Gaps > Contacts) ----------
+CONTACT_FIELDS = ('brand', 'markets', 'company', 'email', 'phone', 'website', 'storefront_url', 'address', 'country',
+                  'seller_id', 'seller_market', 'source', 'status', 'notes', 'contacted_at')
+
+
+def contacts(conn):
+    """{brand_key: saved contact row}."""
+    return {r['brand_key']: dict(r) for r in conn.execute('SELECT * FROM brand_contact')}
+
+
+def save_contact(conn, brand_key, fields, ts=None, typed=True):
+    """Create or update one brand's contact. typed=False (found automatically) never overwrites what you typed."""
+    t = _now(ts)
+    old = conn.execute('SELECT * FROM brand_contact WHERE brand_key=?', (brand_key,)).fetchone()
+    old = dict(old) if old else {}
+    row = {k: old.get(k) for k in CONTACT_FIELDS}
+    for k, v in fields.items():
+        if k not in CONTACT_FIELDS:
+            continue
+        if typed or not old.get(k):
+            row[k] = v
+    row['status'] = row.get('status') or 'to_contact'
+    conn.execute('INSERT OR REPLACE INTO brand_contact(brand_key, %s, created_at, updated_at) VALUES (?%s,?,?)'
+                 % (', '.join(CONTACT_FIELDS), ',?' * len(CONTACT_FIELDS)),
+                 [brand_key] + [row.get(k) for k in CONTACT_FIELDS] + [old.get('created_at') or t, t])
+    return row
+
+
+def delete_contact(conn, brand_key):
+    conn.execute('DELETE FROM brand_contact WHERE brand_key=?', (brand_key,))
+
+
+def save_seller_detail(conn, market, seller_id, d, ts=None):
+    """The business details on a seller's profile page ({business_name, address, country, phone, email, detail})."""
+    conn.execute('INSERT OR REPLACE INTO seller_detail(market, seller_id, business_name, address, country, phone, email, detail, '
+                 'fetched_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                 (market, seller_id, d.get('business_name'), d.get('address'), d.get('country'), d.get('phone'),
+                  d.get('email'), (d.get('detail') or '')[:4000] or None, _now(ts)))
+
+
+def seller_details(conn, pairs):
+    """{(market, seller_id): row} for these (market, seller_id) pairs."""
+    out = {}
+    for mk, sid in dict.fromkeys(pairs):
+        r = conn.execute('SELECT * FROM seller_detail WHERE market=? AND seller_id=?', (mk, sid)).fetchone()
+        if r:
+            out[(mk, sid)] = dict(r)
+    return out
 
 
 # ---------- Market Gaps: live readings of niches and Best Sellers categories ----------

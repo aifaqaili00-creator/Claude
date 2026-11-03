@@ -668,8 +668,8 @@
   function sourcingTab() {
     const o = D.orders.find(x => x.n === orderN) || D.orders[0];
     if (!o) return '<div class="empty">No order yet.</div>';
-    if (!D.card.unlocked.includes('sourcing')) return lockNote('sourcing') + sourcingForm(o);
-    return sourcingForm(o);
+    if (!D.card.unlocked.includes('sourcing')) return lockNote('sourcing') + sourcingForm(o) + supplierField();
+    return sourcingForm(o) + supplierField();
   }
 
   function sourcingForm(o) {
@@ -727,7 +727,7 @@
     return `<section class="bsec bteam">
       <div class="bsec-h"><h3>${icon('mail')}In the team email</h3><button type="button" class="btn slim" data-inform>${icon('mail')}Inform attendees</button></div>
       <dl class="bfacts"><dt>Product name</dt><dd>${esc(c.title)}</dd>${t.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}
-        <dt>Links</dt><dd><a data-open="${esc(t.amazon)}" title="${esc(t.amazon)}">${esc(t.amazon_label)}${icon('external')}</a> · <a data-open="${esc(t.alibaba)}" title="${esc(t.alibaba)}">${esc(t.alibaba_label)}${icon('external')}</a></dd></dl>
+        <dt>Links</dt><dd><a data-open="${esc(t.amazon)}" title="${esc(t.amazon)}">${esc(t.amazon_label)}${icon('external')}</a> · <a data-open="${esc(t.alibaba)}" title="${esc(t.alibaba)}">${esc(t.alibaba_label)}${icon('external')}</a>${t.supplier ? ` · <a data-open="${esc(t.supplier)}" title="${esc(t.supplier)}">Supplier product link${icon('external')}</a>` : ''}</dd></dl>
       <div class="row wrap small muted">Sourcing ETA is the Sourcing & PO deadline above. The ASIN and the Alibaba link are set in the Idea tab; without them the email links to a search for “${esc(c.kw)}”.
         <button type="button" class="btn slim ghost" data-tab="idea">${icon('bulb')}Open Idea</button></div>
     </section>`;
@@ -768,11 +768,23 @@
     </section>`;
   }
 
+  /* The supplier's product page you order from: a "Supplier product link" button in the team email while the product is in
+     Sourcing & PO, Launching strategy or Re-order (the Idea tab's Alibaba link stays the research link). */
+  function supplierField() {
+    const u = (D.data.links || {}).supplier || '';
+    return `<section class="bsec"><div class="bsec-h"><h3>${icon('external')}Supplier product link</h3>
+        ${u ? `<button type="button" class="btn slim" data-open="${esc(u)}" title="${esc(u)}">${icon('external')}Open it</button>` : ''}</div>
+      <div class="field"><label for="bSup">The product page of the supplier you order from (Alibaba or another site)</label>
+        <input type="text" id="bSup" data-f="supplier" data-fk="supplier" maxlength="500" value="${esc(u)}" placeholder="https://www.alibaba.com/product-detail/…" spellcheck="false"></div>
+      <div class="small muted">The team email shows it as a <b>Supplier product link</b> button while this product is in Sourcing &amp; PO, Launching strategy or Re-order. Clear the box to remove it.</div></section>`;
+  }
+
   function launchTab() {
     const by = {}, ls = D.launch;
     D.hints.forEach(h => { (by[h.market] = by[h.market] || []).push(h); });
     const suggest = mk => { const h = D.hints.find(x => x.market === mk && x.key === 'target'); return h && h.data.v ? h.data.v : ''; };
     return `${D.card.unlocked.includes('launch') ? '' : lockNote('launch')}${deadline('launch')}
+      ${supplierField()}
       ${strategyBox()}
       <div class="row" style="justify-content:space-between"><span class="small">${ls.done} of ${ls.total} hints checked${ls.missing.length ? ' · still: ' + esc(ls.missing.join(', ')) : ''}</span>
         <button type="button" class="btn slim" data-refresh>${icon('refresh')}Refresh from research</button></div>
@@ -804,9 +816,9 @@
   }
 
   function reorderTab() {
-    if (!D.card.unlocked.includes('reorder')) return lockNote('reorder') + deadline('reorder');
+    if (!D.card.unlocked.includes('reorder')) return lockNote('reorder') + deadline('reorder') + supplierField();
     const low = (ST.settings || {}).board_low_pct || 30, live = (B && B.live) || [], anyLive = D.stock.some(s => live.includes(s.market));
-    return `${deadline('reorder')}
+    return `${deadline('reorder')}${supplierField()}
       ${D.stock.length ? `<div class="row wrap blive small">${icon('refresh')}${anyLive
         ? `<span>Units left and daily sales come from Amazon (SP-API) every 4 hours while the app runs${(ST.settings || {}).board_live === false ? ', but this is switched off in Settings' : ''}.</span><button type="button" class="btn slim" data-live>Update from Amazon now</button>`
         : '<span class="muted">Type the units left below. With SP-API keys saved (Settings, Gap Finder), Amazon fills them in by itself.</span>'}</div>` : ''}
@@ -853,6 +865,7 @@
       return;
     }
     if (f === 'title') return change('/api/board/card', {id, set: {title: v}});
+    if (f === 'supplier') return change('/api/board/card', {id, set: {supplier: v.trim()}});
     if (f === 'tags') return change('/api/board/card', {id, set: {tags: v}});
     if (f === 'asin' || f === 'alibaba') {
       const r = await change('/api/board/card', {id, set: {[f]: v.trim()}});

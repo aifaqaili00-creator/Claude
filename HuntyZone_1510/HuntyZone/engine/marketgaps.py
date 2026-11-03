@@ -117,6 +117,20 @@ def brand_key(name):
     return re.sub(r'[^a-z0-9]+', '', str(name or '').lower())
 
 
+# Amazon's own retail accounts by seller id: SmartScout's sellers export can leave them unnamed (in Australia the biggest
+# seller of all, A$100M+ a month, comes without a name)
+AMAZON_RETAIL = {'AU': {'ANEGB3WVEVKZB': 'Amazon.com.au'}, 'AE': {'A2KKU8J8O8784X': 'Amazon.ae'},
+                 'US': {'ATVPDKIKX0DER': 'Amazon.com'}}
+
+
+def named(row, market):
+    """A sellers-export row, with the name of Amazon's own retail account filled in when SmartScout left it out."""
+    if row.get('name'):
+        return row
+    n = AMAZON_RETAIL.get(market, {}).get(str(row.get('seller_id') or '').strip().upper())
+    return {**row, 'name': n} if n else row
+
+
 def seller_role(name, market):
     """'amazon' (the local Amazon), 'global_store' (Amazon US... selling here), 'reseller', 'seller' or 'unknown'."""
     n = ' '.join(str(name or '').split())
@@ -156,9 +170,26 @@ def _wavg(pairs):
 
 
 # ---------- the baseline: niches from SmartScout brands ----------
-def niches(rows, market, famous=()):
+SUBCAT_KEYS = ('amazon_share', 'chinese_share', 'seller_share', 'avg_sellers', 'growth_1m', 'growth_12m', 'reviews_avg',
+               'age_days', 'asins', 'asins_80', 'brands', 'single_seller_brands', 'node_id', 'revenue', 'units', 'top_brand',
+               'top_brand_share', 'price')
+
+
+def subcat_index(rows):
+    """{niche_key: the SmartScout subcategory row} (the biggest one when two names fold to the same key)."""
+    out = {}
+    for r in rows or ():
+        k = niche_key(r.get('name'))
+        if k and (k not in out or (_f(r.get('revenue')) or 0) > (_f(out[k].get('revenue')) or 0)):
+            out[k] = r
+    return out
+
+
+def niches(rows, market, famous=(), subcats=None):
     """SmartScout brand rows (storage.SS_BRAND_COLS) of one market -> [niche], biggest revenue first. famous: brand keys
-    shoppers ask for by name (famous_brands())."""
+    shoppers ask for by name (famous_brands()). subcats: subcat_index() of the market's SmartScout subcategories: a niche
+    with a match gets its figures as 'ss' (Amazon's and Chinese sellers' share, growth, listings...). They are shown next
+    to the brand-based numbers, never mixed into them: SmartScout counts sellers differently per table."""
     groups = {}
     for r in rows or ():
         name = ' '.join(str(r.get('subcategory') or '').split())
@@ -212,6 +243,7 @@ def niches(rows, market, famous=()):
                      'seller': r.get('dominant_seller') or None, 'role': r['role'], 'price': _f(r.get('avg_price')),
                      'reviews': _f(r.get('reviews')), 'sellers': _f(r.get('avg_sellers'))} for r in rs[:6]],
             'risky': bool(risk), 'risk_why': risk, 'flags': [label for label, rx in fr.CHECKS if rx.search(name)],
+            'ss': {k: subcats[key].get(k) for k in SUBCAT_KEYS} if subcats and key in subcats else None,
         })
     out.sort(key=lambda n: -n['revenue'])
     return out
@@ -308,11 +340,11 @@ def score(n, gap, ratio=None):
     return int(round(total)), {k: round(v, 3) for k, v in parts.items()}
 
 
-def rank_niches(rows, market, us_rows=None, min_revenue=None):
+def rank_niches(rows, market, us_rows=None, min_revenue=None, subcats=None):
     """The scored niches of a market: [{niche..., 'gap', 'score', 'parts', 'us_ratio', 'us_revenue'}], best first. Niches
-    under the market's minimum revenue a month are left out."""
+    under the market's minimum revenue a month are left out. subcats: subcat_index() (see niches())."""
     floor = THRESH['min_revenue'].get(market, 20000) if min_revenue is None else min_revenue
-    ns = niches(rows, market, famous_brands(us_rows, rows))
+    ns = niches(rows, market, famous_brands(us_rows, rows), subcats)
     total = sum(n['revenue'] for n in ns)
     idx, us_total = us_index(niches(us_rows, 'US')) if us_rows else ({}, 0)
     out = []
@@ -382,6 +414,129 @@ def global_store_ids(rows, market):
         if c and r.get('seller_id'):
             out[str(r['seller_id']).upper()] = (r['name'], c)
     return out
+
+
+# ---------- SmartScout products: what to sell, and who ships in from abroad ----------
+SS = {
+    'limit': 200,               # SmartScout products of each tier shown on Products to sell
+    'new_days': 180,            # launched this recently: "new"
+    'low_stock': 0.8,           # in stock less than this share of the last 90 days: worth saying
+    'top_brands': 25,           # brands kept per cross-border seller (the page hides famous ones, so keep enough)
+    'top_products': 60,         # ... and products
+}
+
+
+def us_twin(d):
+    """The SmartScout connector's US profile of an ASIN -> {'units', 'revenue', 'price', 'sellers', 'fba_sellers',
+    'rating', 'reviews'} (None for nothing usable)."""
+    if not d:
+        return None
+    out = {'units': _f(d.get('Monthly Unit Sales Estimate')), 'revenue': _f(d.get('Monthly Revenue Estimate')),
+           'price': _f(d.get('Buy Box Price')), 'sellers': _f(d.get('Number of Sellers')),
+           'fba_sellers': _f(d.get('Number of FBA Sellers')), 'rating': _f(d.get('Review Rating')),
+           'reviews': _f(d.get('Review Count'))}
+    return out if any(v is not None for v in out.values()) else None
+
+
+def ss_finds(rows, market, famous=(), twins=None, max_sellers=None, today=None, limit=None):
+    """SmartScout product rows (storage.ss_products) -> products to sell, in Products to sell's item shape: 'strong'
+    (proven demand, at most max_sellers sellers on the listing) and 'look' (rejudge()'s worth-a-look rules), each tier
+    biggest first. Famous brands (shoppers ask for them by name) are left out. SmartScout counts the sellers offering
+    that one listing, so these say "on the listing", unlike the live hunt's count of listings."""
+    import datetime as _dt
+    cap = int(max_sellers or HUNT['max_sellers'])
+    floor = HUNT['min_demand'].get(market, HUNT['min_demand']['AU'])
+    look = HUNT['look_demand'].get(market, HUNT['look_demand']['AU'])
+    today = today or _dt.date.today()
+    recent = (today - _dt.timedelta(days=SS['new_days'])).isoformat()
+    tiers = {'strong': [], 'look': []}
+    for r in rows or ():
+        u, s, title = _f(r.get('units')) or 0, r.get('sellers'), (r.get('title') or '').strip()
+        if not title or s is None or u <= 0 or brand_key(r.get('brand')) in famous:
+            continue
+        if u >= floor and s <= cap:
+            tier = 'strong'
+        elif (u >= floor and s <= HUNT['look_sellers']) or (s <= cap and u >= look):
+            tier = 'look'
+        else:
+            continue
+        why = ['SmartScout: about %s sold a month, %d seller%s on the listing' % (f'{round(u):,}', s, '' if s == 1 else 's')]
+        isr = _f(r.get('isr_90'))
+        if isr is not None and isr < SS['low_stock']:
+            why.append('in stock only %d%% of the last 90 days' % round(isr * 100))
+        launch = r.get('launch')
+        if launch and launch >= recent:
+            why.append('new: launched %s' % launch)
+        us = us_twin((twins or {}).get(r['asin']))
+        if us and us.get('units'):
+            why.append('USA: about %s a month' % f"{round(us['units']):,}")
+        tiers[tier].append({
+            'asin': r['asin'], 'title': title, 'image': r.get('image'), 'price': _f(r.get('price')), 'source': 'smartscout',
+            'tier': tier, 'score': None, 'why': why, 'niche': r.get('subcategory'), 'phrase': None, 'verdict': None,
+            'seller': None, 'days': None, 'origin': None, 'sellers': s, 'units': round(u), 'brand': r.get('brand'),
+            'launch': launch, 'isr_90': isr, 'us': us, 'as_of': r.get('as_of'), 'preset': r.get('preset'),
+            'risk_why': risk_of(title, '%s %s' % (r.get('category') or '', r.get('subcategory') or ''))})
+    n = limit or SS['limit']                         # products a new seller can start with first, then the risky ones
+    return [x for t in ('strong', 'look') for x in sorted(tiers[t], key=lambda x: (bool(x['risk_why']), -x['units']))[:n]]
+
+
+def shipped_in(sellers, brands, offers, market, titles=None, twins=None, famous=()):
+    """Who ships into the market from abroad (Amazon's Global Store and import resellers): {'total' (all sellers' revenue
+    a month), 'share' (theirs), 'sources': [{'seller', 'seller_id', 'role', 'country', 'revenue', 'share', 'asins',
+    'dominates' (brands where it is the dominant seller), 'dominated_revenue', 'brands': [...], 'products': [...]}]}
+    biggest first. sellers / brands: SmartScout rows; offers: the product rows of cross-border sellers' Offers exports
+    ('seller' set); titles: {asin: product row} to name an offer; twins: {asin: US profile}; famous: brand keys shoppers
+    ask for by name (marked 'famous': only their owner can sell them as new)."""
+    titles, twins = titles or {}, twins or {}
+    total = sum(_f(r.get('revenue')) or 0 for r in sellers or ())
+    src = {}
+
+    def entry(name, role):
+        return src.setdefault(name, {'seller': name, 'seller_id': None, 'role': role,
+                                     'country': offmod.store_country(name, market), 'revenue': 0, 'share': None,
+                                     'asins': None, 'dominates': 0, 'dominated_revenue': 0, 'brands': [], 'products': []})
+    for r in sellers or ():
+        name = r.get('name')
+        role = seller_role(name, market) if name else 'unknown'
+        if role in ('global_store', 'reseller'):
+            e = entry(name, role)
+            e['seller_id'], e['asins'] = r.get('seller_id'), r.get('n_asins')
+            e['revenue'] = round(_f(r.get('revenue')) or 0)
+            e['share'] = round(e['revenue'] / total, 4) if total else None
+    for b in brands or ():
+        ds = b.get('dominant_seller')
+        role = seller_role(ds, market) if ds else 'unknown'
+        if role in ('global_store', 'reseller'):
+            e = entry(ds, role)
+            rev = _f(b.get('revenue')) or 0
+            e['dominates'] += 1
+            e['dominated_revenue'] += rev
+            e['brands'].append({'brand': b.get('brand'), 'revenue': round(rev), 'subcategory': b.get('subcategory'),
+                                'category': b.get('category'), 'sales_pct': _f(b.get('sales_pct')),
+                                'storefront_url': b.get('storefront_url'), 'famous': brand_key(b.get('brand')) in famous})
+    for o in offers or ():
+        name = o.get('seller')
+        if not name:
+            continue
+        e = entry(name, seller_role(name, market))
+        t = titles.get(o['asin']) or {}
+        title = t.get('title') or o.get('title') or (twins.get(o['asin']) or {}).get('Product Title')   # else the US listing's
+        e['products'].append({'asin': o['asin'], 'title': title, 'image': o.get('image') or t.get('image'),
+                              'brand': o.get('brand') or t.get('brand'), 'category': o.get('category'),
+                              'subcategory': o.get('subcategory') or t.get('subcategory'), 'rank': o.get('cat_rank'),
+                              'price': _f(o.get('price')), 'revenue': round(_f(o.get('revenue')) or 0),
+                              'units': t.get('units'), 'sellers': t.get('sellers'), 'bb_pct': _f(o.get('bb_pct')),
+                              'fba': o.get('fba'), 'us': us_twin(twins.get(o['asin'])),
+                              'famous': brand_key(o.get('brand') or t.get('brand')) in famous,
+                              'risk_why': risk_of(title or '', '%s %s' % (o.get('category') or '',
+                                                                                  o.get('subcategory') or ''))})
+    for e in src.values():
+        e['dominated_revenue'] = round(e['dominated_revenue'])
+        e['brands'] = sorted(e['brands'], key=lambda b: -b['revenue'])[:SS['top_brands']]
+        e['products'] = sorted(e['products'], key=lambda p: -p['revenue'])[:SS['top_products']]
+    out = sorted(src.values(), key=lambda e: -(e['revenue'] or e['dominated_revenue']))
+    share = sum(e['share'] or 0 for e in out)
+    return {'total': round(total), 'share': round(share, 4) if total else None, 'sources': out}
 
 
 # ---------- live: is a niche still open? ----------

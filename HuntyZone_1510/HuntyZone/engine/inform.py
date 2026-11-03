@@ -29,6 +29,8 @@ LABEL = '#475467'               # fact labels: dark enough on every tint
 # both board emails list the products under their stage, in this order: Sourcing & PO, Approval, Pre-check, Idea (then
 # Launching strategy and Re-order)
 EMAIL_ORDER = ('sourcing', 'approval', 'precheck', 'idea', 'launch', 'reorder')
+# the supplier's product link (board: links.supplier) is a button only for these stages
+SUPPLIER_STAGES = ('sourcing', 'launch', 'reorder')
 MARK = {'new': ('NEW', '#ecfdf3', '#067647'), 'changed': ('CHANGED', '#fffaeb', '#b54708')}
 
 
@@ -194,8 +196,87 @@ def rows(p, today=None):
     at = ['%s %s' % (_name(mk), amazon_text(v)) for mk, v in p['at_amazon'] if amazon_text(v)]
     if at:
         out.append(('At Amazon', ', '.join(at)))
+    out += launch_rows(p, today)
     out.append(('Stage', '%s \u00b7 %s' % (rules.STAGE_NAMES.get(p['stage'], p['stage']), p['order'])))
     return out
+
+
+# ---------- Launching strategy and Re-order: live days, launch steps, stock and the re-order day ----------
+def _n(v):
+    return '{:,}'.format(int(round(v))) if v is not None else '?'
+
+
+def stock_text(s):
+    """'32 of 50 left, about 2 sold a day (16 days of stock)', or 'not counted yet'. s: a board stock reading."""
+    s = s or {}
+    if s.get('left') is None:
+        return 'not counted yet'
+    out = ('%s of %s left' % (_n(s['left']), _n(s['sent']))) if s.get('sent') else '%s left' % _n(s['left'])
+    r = s.get('rate')
+    if r:
+        out += ', about %s sold a day' % ('{:,.1f}'.format(r).rstrip('0').rstrip('.') if r < 10 else _n(r))
+        if s.get('days_left') is not None:
+            out += ' (%d day%s of stock)' % (s['days_left'], '' if s['days_left'] == 1 else 's')
+    return out
+
+
+def reorder_text(day, today):
+    """'Mon 9 Nov (in 7 days)', 'today, Mon 2 Nov' or 'now: it was Fri 30 Oct (3 days ago)'."""
+    n = (rules.day(day) - rules.day(today)).days if today is not None else 1
+    if n < 0:
+        return 'now: it was %s (%d day%s ago)' % (remind.nice_day(day), -n, '' if n == -1 else 's')
+    if n == 0:
+        return 'today, %s' % remind.nice_day(day)
+    return '%s (in %d day%s)' % (remind.nice_day(day), n, '' if n == 1 else 's')
+
+
+def _todo(missing):
+    return '; '.join(m.replace('hints to check', 'launch steps to check').replace('hint to check', 'launch step to check')
+                     for m in missing or ())
+
+
+def launch_rows(p, today=None):
+    """The facts of a product in Launching strategy or Re-order (board._launch_facts): live on Amazon, the launch steps
+    done and still to do, the stock left at its daily sales and the re-order day. [] for any other product."""
+    if p.get('live') is None:
+        return []
+    live = ', '.join('%s %s' % (_name(mk), 'since %s' % remind.nice_day(d) if rules.day(d) else 'not yet') for mk, d in p['live'])
+    out = [('Live on Amazon', live or 'Not yet')]
+    la = p.get('launch') or {}
+    if p['stage'] == 'launch' and la.get('total'):
+        out.append(('Launch steps', '%d of %d done' % (la['done'], la['total'])))
+    if p['stage'] == 'launch' and la.get('missing'):
+        out.append(('Still to do', _todo(la['missing'])))
+    stock = p.get('stock') or []
+    out.append(('Stock left', '; '.join('%s %s' % (_name(mk), stock_text(s)) for mk, s in stock) or 'Not counted yet'))
+    due = [(mk, s['reorder_by']) for mk, s in stock if s.get('reorder_by')]
+    out.append(('Re-order by', ', '.join('%s %s' % (_name(mk), reorder_text(d, today)) for mk, d in due) if due else
+                'Not known yet: it needs a stock count or Amazon\'s daily sales'))
+    return out
+
+
+def launch_line(p, today=None):
+    """The same in a few words for the plain-text email: 'live: Australia since Wed 28 Oct \u00b7 Australia 32 left, re-order
+    by Mon 9 Nov'. '' for any other product."""
+    if p.get('live') is None:
+        return ''
+    on = ['%s since %s' % (_name(mk), remind.nice_day(d)) for mk, d in p['live'] if rules.day(d)]
+    bits = ['live: ' + ', '.join(on) if on else 'not live yet']
+    counted = [(mk, s) for mk, s in p.get('stock') or [] if s.get('left') is not None or s.get('reorder_by')]
+    for mk, s in counted:
+        parts = (['%s left' % _n(s['left'])] if s.get('left') is not None else []) + \
+            (['re-order by %s' % remind.nice_day(s['reorder_by'])] if s.get('reorder_by') else [])
+        bits.append('%s %s' % (_name(mk), ', '.join(parts)))
+    if not counted:
+        bits.append('stock not counted yet')
+    if p['stage'] == 'launch' and (p.get('launch') or {}).get('missing'):
+        bits.append('to do: ' + _todo(p['launch']['missing']))
+    return ' \u00b7 '.join(bits)
+
+
+def stage_counts(items):
+    """[(stage, products)] for every stage in EMAIL_ORDER, the empty ones too: the summary at the top of the email."""
+    return [(st, sum(1 for p in items if p['stage'] == st)) for st in EMAIL_ORDER]
 
 
 def facts_line(p, today=None):
@@ -218,6 +299,8 @@ def facts_line(p, today=None):
     at = ['%s %s' % (_name(mk), amazon_text(v)) for mk, v in p['at_amazon'] if amazon_text(v)]
     if at:
         bits.append('at Amazon: ' + ', '.join(at))
+    if launch_line(p, today):
+        bits.append(launch_line(p, today))
     stage = rules.STAGE_NAMES.get(p['stage'], p['stage'])
     bits.append(stage if p['order'] == 'First order' else '%s (%s)' % (stage, p['order']))
     return ' \u00b7 '.join(bits)
@@ -227,7 +310,10 @@ def links_line(p):
     """'Amazon https://... · Alibaba https://...': short links Gmail and Outlook turn into links by themselves."""
     a = 'Amazon search' if p['amazon_search'] else 'Amazon'
     b = 'Alibaba search' if p['alibaba_search'] else supplier_name(p['alibaba'])
-    return '%s %s \u00b7 %s %s' % (a, short_link(p['amazon']), b, short_link(p['alibaba']))
+    out = '%s %s \u00b7 %s %s' % (a, short_link(p['amazon']), b, short_link(p['alibaba']))
+    if p.get('supplier'):
+        out += ' \u00b7 Supplier product link %s' % short_link(p['supplier'])
+    return out
 
 
 def link_labels(p):
@@ -267,7 +353,8 @@ def texts(items, changed, ctx):
         head = ('What changed since the last update (%s):' if since.get('sent') else 'What changed since %s:') % \
             remind.nice_day(remind.today(since['ts'])) if since.get('ts') else 'What changed:'
 
-    lines = [hello, '', intro]
+    counts = stage_counts(items)
+    lines = [hello, '', intro, 'By stage: ' + ' · '.join('%s %s' % (stage_name(st), k or 'none') for st, k in counts)]
     if note:
         lines += ['', 'Note from %s:' % owner, note]
     if changed:
@@ -286,6 +373,11 @@ def texts(items, changed, ctx):
     e = html.escape
     para = 'margin:0 0 12px'
     body = ['<p style="%s">%s</p><p style="%s">%s</p>' % (para, e(hello), para, e(intro))]
+    def chip(st, k):                                     # a stage with products: its own colour; an empty one: pale
+        bg, fg = (STAGE_BAND.get(st, '#475467'), '#ffffff') if k else (STAGE_TINT.get(st, '#f2f4f7'), LABEL)
+        return ('<span style="display:inline-block;margin:0 6px 6px 0;padding:3px 10px;border-radius:99px;font-size:12px;'
+                'font-weight:700;background:%s;color:%s">%s · %s</span>' % (bg, fg, e(stage_name(st)), k or 'none'))
+    body.append('<div style="margin:0 0 14px">%s</div>' % ''.join(chip(st, k) for st, k in counts))
     if note:
         body.append(_note(owner, note))
     if changed:
@@ -333,12 +425,13 @@ def _card_html(p, marks, today):
             '<table role="presentation" cellpadding="0" cellspacing="0"><tr>%s<td valign="top">'
             '<div style="font-size:16px;font-weight:700;color:#101828;line-height:1.3">%s%s</div>%s</td></tr></table>'
             '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:10px;font-size:14px">%s</table>'
-            '<div style="margin-top:12px">%s%s</div></td></tr></table></td></tr>'
+            '<div style="margin-top:12px">%s%s%s</div></td></tr></table></td></tr>'
             % (STAGE_TINT.get(p['stage'], '#ffffff'), STAGE_TINT.get(p['stage'], '#ffffff'),
                STAGE_BAND.get(p['stage'], '#98a2b3'), pic, e(p['title']), badge,
                '<div>%s</div>' % tags if tags else '', facts,
                btn % (e(short_link(p['amazon']), quote=True), '#232f3e', e(a)),
-               btn % (e(short_link(p['alibaba']), quote=True), '#c2410c', e(b))))
+               btn % (e(short_link(p['alibaba']), quote=True), '#c2410c', e(b)),
+               btn % (e(short_link(p['supplier']), quote=True), '#0f766e', 'Supplier product link') if p.get('supplier') else ''))
 
 
 def _note(owner, note):

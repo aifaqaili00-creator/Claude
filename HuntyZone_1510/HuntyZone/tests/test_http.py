@@ -728,6 +728,40 @@ def test_market_gaps_page_import_and_export(server, tmp_path):
     assert st == 200 and 'spreadsheet' in ct and body[:2] == b'PK'
 
 
+def test_brand_contacts(server, monkeypatch):
+    import contacts
+    st, _, body = call(server, 'GET', '/api/contacts?market=AE')
+    d = json.loads(body)
+    assert st == 200 and d['market'] == 'AE' and {s['status'] for s in d['statuses']} == set(contacts.STATUSES)
+    assert '{brand}' in d['template']['subject']
+    st, _, body = call(server, 'POST', '/api/contacts/save', {'brand': 'Comfy', 'fields': {'email': 'nope'}})
+    assert st == 400 and 'email' in json.loads(body)['error']
+    st, _, body = call(server, 'POST', '/api/contacts/save', {'brand': 'Comfy', 'fields': {'email': 'sales@comfy.com',
+                                                                                              'status': 'replied'}})
+    assert st == 200 and json.loads(body)['contact']['email'] == 'sales@comfy.com'
+    rows = json.loads(call(server, 'GET', '/api/contacts?market=AU')[2])['rows']
+    assert rows[0]['brand'] == 'Comfy' and rows[0]['saved']['status'] == 'replied'
+    assert call(server, 'POST', '/api/contacts/template', {'subject': '', 'body': 'x'})[0] == 400
+    assert call(server, 'POST', '/api/contacts/read', {'market': 'AU', 'items': []})[0] == 400
+    opened = []
+    monkeypatch.setattr(contacts.mailer.cp, 'open_url', lambda url, profile='': opened.append(str(url)))
+    st, _, body = call(server, 'POST', '/api/contacts/email', {'brand': 'Comfy', 'market': 'AU'})
+    assert st == 200 and json.loads(body)['opened'] and 'sales%40comfy.com' in opened[0]
+    assert call(server, 'POST', '/api/contacts/email', {'brand': 'Nobody', 'market': 'AU'})[0] == 400
+    assert call(server, 'POST', '/api/contacts/delete', {'brand': 'Comfy'})[0] == 200
+    shipped = json.loads(call(server, 'GET', '/api/mgaps?market=AU')[2])['shipped']      # the brands file of the test above
+    assert [s['seller'] for s in shipped['sources']] == ['Amazon US'] and shipped['sources'][0]['dominates'] == 1
+
+
+def test_smartscout_tab(server):
+    for view in ('summary', 'niches', 'brands', 'sellers', 'products', 'anything'):
+        st, _, body = call(server, 'GET', '/api/smartscout?market=AU&view=' + view)
+        d = json.loads(body)
+        assert st == 200 and d['market'] == 'AU' and d['view'] == (view if view != 'anything' else 'summary')
+    d = json.loads(call(server, 'GET', '/api/smartscout?market=XX&view=brands&sort=nonsense&limit=5000')[2])
+    assert d['market'] == 'AU' and d['sort'] == 'revenue' and isinstance(d['rows'], list) and len(d['rows']) <= 200
+
+
 def test_out_of_stock_tab(server):
     st, _, body = call(server, 'GET', '/api/stock')
     d = json.loads(body)

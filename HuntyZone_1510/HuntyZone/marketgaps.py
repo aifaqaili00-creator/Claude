@@ -55,28 +55,45 @@ def _first_line(e):
 
 # ---------- the baseline ----------
 def baseline_ids(conn, market):
-    """The newest SmartScout imports a market's ranking rests on: (brands id, US brands id, sellers id)."""
-    def newest(kind, mk):
-        r = conn.execute('SELECT id FROM import_file WHERE kind=? AND market=? ORDER BY as_of DESC, id DESC LIMIT 1',
-                         (kind, mk)).fetchone()
-        return r[0] if r else None
-    return newest('ss_brands', market), newest('ss_brands', 'US'), newest('ss_sellers', market)
+    """The SmartScout imports a market's ranking rests on: (brands id, US brands id, sellers id, newest SmartScout import
+    of any kind). The brands and sellers ids are the newest part of their whole export (storage.ss_set)."""
+    newest_any = conn.execute("SELECT MAX(id) FROM import_file WHERE kind LIKE 'ss\\_%' ESCAPE '\\'").fetchone()[0]
+    return (storage._ss_newest(conn, 'ss_brands', market)[0], storage._ss_newest(conn, 'ss_brands', 'US')[0],
+            storage._ss_newest(conn, 'ss_sellers', market)[0], newest_any)
 
 
 def baseline(db, market):
     """A market's baseline, worked out once per import: {'niches' (engine.marketgaps.rank_niches), 'missing' (big US
-    brands absent here), 'sellers' (sellers_summary), 'sellers_as_of'}."""
+    brands absent here), 'sellers' (sellers_summary), 'sellers_as_of', 'ss_finds' (SmartScout products to sell),
+    'shipped' (who ships in from abroad, engine.marketgaps.shipped_in), 'subcats_as_of', 'products_as_of'}."""
     ids = db.read(baseline_ids, market)
     key = (str(db.path), market, ids)
     if key not in CACHE:
         rows, _ = db.read(storage.ss_brands, market)
         us, _ = db.read(storage.ss_brands, 'US') if market != 'US' else ([], None)
         srows, s_as_of = db.read(storage.ss_sellers, market)
+        srows = [mg.named(r, market) for r in srows]   # Amazon's own account, when SmartScout left it unnamed
+        subs, sub_as_of = db.read(storage.ss_subcats, market)
+        offers = db.read(storage.ss_products, market, None, 'seller-products-%')     # what cross-border sellers offer
+        sell = db.read(storage.ss_products, market, None, None, 'seller-products-%')  # the product slices
+        prods = sell + offers
+        titles = {p['asin']: p for p in sell if p.get('title')}
+        twins = db.read(storage.ss_us_twins, [p['asin'] for p in prods]) if prods else {}
+        famous = mg.famous_brands(us, rows)
+        niches = mg.rank_niches(rows, market, us, subcats=mg.subcat_index(subs))
         if len(CACHE) > 8:
             CACHE.clear()
-        CACHE[key] = {'niches': mg.rank_niches(rows, market, us), 'brand_words': mg.brand_words_of(rows),
+        CACHE[key] = {'niches': niches, 'brand_words': mg.brand_words_of(rows),
                       'missing': mg.missing_brands(us, rows, limit=150) if us and rows else [],
-                      'sellers': mg.sellers_summary(srows, market), 'sellers_as_of': s_as_of}
+                      'sellers': mg.sellers_summary(srows, market), 'sellers_as_of': s_as_of,
+                      'ss_finds': mg.ss_finds(sell, market, famous, twins),
+                      'shipped': mg.shipped_in(srows, rows, offers, market, titles, twins, famous),
+                      'subcats_as_of': sub_as_of,
+                      'products_as_of': max((p.get('as_of') or 0 for p in prods), default=None) or None,
+                      'counts': {'brands': len(rows), 'sellers': len(srows), 'subcats': len(subs), 'products': len(sell),
+                                 'offers': len(offers), 'us_twins': len(twins)},
+                      'seller_ids': {str(r.get('name') or '').strip().lower(): r.get('seller_id') for r in srows
+                                     if r.get('name') and r.get('seller_id')}}
     return CACHE[key]
 
 
@@ -92,8 +109,9 @@ def table(db, settings, market):
     checks = db.read(storage.mg_checks, market)
 
     def build(conn):
-        brands_n = conn.execute('SELECT n_rows, as_of, file FROM import_file WHERE id=?',
-                                (baseline_ids(conn, market)[0],)).fetchone()
+        ids, _ = storage.ss_set(conn, 'ss_brands', market)
+        brands_n = conn.execute('SELECT SUM(n_rows) AS n_rows, MAX(as_of) AS as_of, MAX(file) AS file FROM import_file '
+                                'WHERE id IN (%s)' % ','.join('?' * len(ids)), ids).fetchone() if ids else None
         imports = storage.ss_imports(conn)
         return (dict(brands_n) if brands_n else None, imports, storage.mg_categories(conn, market),
                 conn.execute("SELECT MAX(last_run_at) FROM task WHERE kind='mgaps' AND market=?", (market,)).fetchone()[0])
@@ -117,7 +135,7 @@ def table(db, settings, market):
                         max_sellers=int(settings.get('mg_max_sellers') or mg.HUNT['max_sellers']))
     hunted = [p for p in prods if p['source'] == 'hunt']
     rest = [p for p in prods if p['source'] != 'hunt']
-    prods = hunted + found_elsewhere(db, settings, market, {p['asin'] for p in hunted}) + rest
+    prods = hunted + found_elsewhere(db, settings, market, {p['asin'] for p in hunted}, B.get('ss_finds')) + rest
     for it in prods:
         it['max_cogs_20'] = max_cost(it, market, settings)
     return {
@@ -135,7 +153,9 @@ def table(db, settings, market):
                               if mg.rejudge(h, market, int(settings.get('mg_max_sellers') or mg.HUNT['max_sellers']))),
                  'checked': len(live), 'unread': sum(1 for x in live if x['verdict'] == 'unread')},
         'niches': rows, 'categories': cats, 'products': prods,
-        'missing': B['missing'], 'sellers': B['sellers'],
+        'missing': B['missing'], 'sellers': B['sellers'], 'shipped': B.get('shipped'),
+        'ss': {'subcats_as_of': B.get('subcats_as_of'), 'products_as_of': B.get('products_as_of'),
+               'until': settings.get('ss_until') or None, 'counts': B.get('counts') or {}, 'curve': _curve(db, market)},
         'last_check': db.read(storage.mg_last_ts, market), 'auto_last': auto_last,
         'auto': bool(settings.get('mg_auto', True) and settings.get('auto_refresh', True)),
         'folder': settings.get('mg_dir') or default_folder(),
@@ -144,9 +164,10 @@ def table(db, settings, market):
     }
 
 
-def found_elsewhere(db, settings, market, skip=()):
+def found_elsewhere(db, settings, market, skip=(), ss_items=None):
     """Products the rest of the app found for this market, for Products to sell: the booming or brand-new products out of
-    stock with few sellers (stockwatch) and the Gap Finder's open gaps (proven in the USA, UK or Germany)."""
+    stock with few sellers (stockwatch), the Gap Finder's open gaps (proven in the USA, UK or Germany), then SmartScout's
+    products with proven demand and few sellers on the listing (ss_items: baseline()['ss_finds'], strong then worth a look)."""
     import reports
     import stockwatch
     from engine import marketgaps as eng
@@ -156,7 +177,7 @@ def found_elsewhere(db, settings, market, skip=()):
         if it['asin'] and it['asin'] not in seen and it.get('title'):
             seen.add(it['asin'])
             it['flags'] = [label for label, rx in eng.fr.CHECKS if rx.search(it['title'])]
-            it['risk_why'] = eng.risk_of(it['title'])
+            it['risk_why'] = it.get('risk_why') or eng.risk_of(it['title'])
             out.append(it)
     try:
         for r in stockwatch.table(db, settings)['rows']:
@@ -176,6 +197,8 @@ def found_elsewhere(db, settings, market, skip=()):
                      'days': r.get('delivery_days'), 'origin': None, 'sellers': r.get('sellers'), 'tier': 'gapfinder'})
     except Exception:                                               # noqa: BLE001
         log.exception('products: gap finder')
+    for it in ss_items or ():
+        add(dict(it))
     return out
 
 
@@ -191,6 +214,15 @@ def max_cost(it, market, settings):
                                 'date': config.market_today(market).isoformat()}, 0.20)
     except Exception:                                # noqa: BLE001 - no price math is better than a broken page
         return None
+
+
+def _curve(db, market):
+    """How the market's sales-rank -> sales curve stands, for the Overview: status, readings and SmartScout's share."""
+    cv, ss = db.read(lambda conn: (storage.get_curve(conn, market), conn.execute(
+        "SELECT COUNT(*) FROM calib_point WHERE market=? AND kind='ss'", (market,)).fetchone()[0]))
+    if not cv:
+        return None
+    return {'status': cv.get('status'), 'n_obs': cv.get('n_obs'), 'fitted_at': cv.get('fitted_at'), 'ss': ss}
 
 
 def _live(c):
