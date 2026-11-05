@@ -55,6 +55,7 @@ button[aria-pressed="true"], .sel { background: var(--accent); color: var(--bg);
 .replay { font-size: .85rem; padding: 5px 10px; }
 .ftimer.low .big { color: var(--bad); }
 .wrap { padding-bottom: 90px; }
+.used { text-decoration: line-through; opacity: .45; }
 .cut { text-decoration: line-through; opacity: .4; }
 .cuttable { cursor: pointer; }
 #cutbtn { position: fixed; left: max(12px, env(safe-area-inset-left, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); z-index: 10; box-shadow: 0 4px 14px rgb(0 0 0 / .18); }
@@ -114,11 +115,19 @@ function choices(id, opts, labelFn) {
 }
 // Strike-out: in cut mode a tap crosses an option out instead of choosing it; headlines, ads and option texts can always be tapped to cross out.
 let cutMode = false;
+// A headline, ad or word that is already chosen for another gap is crossed out automatically (x never is).
+function markUsed(root) {
+  const used = new Set([...root.querySelectorAll("[data-q]")].map(r => r.dataset.ans).filter(v => v && v !== "x" && v.length === 1));
+  if (!["l1", "l3", "s2"].includes(tab)) return;
+  root.querySelectorAll(".hl b").forEach(b => { const sp = b.nextElementSibling; b.classList.toggle("used", used.has(b.textContent.trim())); if (sp) sp.classList.toggle("used", used.has(b.textContent.trim())); });
+  root.querySelectorAll(".ad").forEach(a => a.classList.toggle("used", used.has((a.querySelector("b") || {}).textContent?.trim())));
+  root.querySelectorAll("[data-q]").forEach(r => r.querySelectorAll(".choice").forEach(c => c.classList.toggle("used", c.getAttribute("aria-pressed") !== "true" && used.has(c.dataset.v))));
+}
 function wireChoices(root) {
   root.querySelectorAll("[data-q]").forEach(r => r.querySelectorAll(".choice").forEach(b => b.onclick = () => {
     if (cutMode) { b.classList.toggle("cut"); root.querySelectorAll(`.opttxt[data-q="${r.dataset.q}"][data-v="${b.dataset.v}"]`).forEach(t => t.classList.toggle("cut", b.classList.contains("cut"))); return; }
     b.classList.remove("cut");
-    r.querySelectorAll(".choice").forEach(x => x.setAttribute("aria-pressed", x === b)); r.dataset.ans = b.dataset.v; }));
+    r.querySelectorAll(".choice").forEach(x => x.setAttribute("aria-pressed", x === b)); r.dataset.ans = b.dataset.v; markUsed(root); }));
   root.querySelectorAll(".hl span, .ad, .opttxt").forEach(t => { t.classList.add("cuttable"); t.onclick = () => t.classList.toggle("cut"); });
   const tg = document.getElementById("cutbtn");
   if (tg) { tg.setAttribute("aria-pressed", cutMode); tg.textContent = cutMode ? "✂ Streichen: AN" : "✂ Streichen"; }
