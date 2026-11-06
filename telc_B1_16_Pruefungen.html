@@ -55,6 +55,13 @@ button[aria-pressed="true"], .sel { background: var(--accent); color: var(--bg);
 .replay { font-size: .85rem; padding: 5px 10px; }
 .ftimer.low .big { color: var(--bad); }
 .wrap { padding-bottom: 90px; }
+.bins { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.bin { min-height: 54px; border: 1.5px dashed var(--line); border-radius: 8px; padding: 6px; display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; }
+.bin[data-bin="pool"] { border-style: solid; background: var(--accent-soft); }
+.bin.over { border-color: var(--accent); background: var(--accent-soft); }
+.binname { width: 100%; font-size: .78rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+.wchip { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: .92rem; cursor: grab; user-select: none; }
+.wchip.picked { outline: 3px solid var(--accent); }
 .used { text-decoration: line-through; opacity: .45; }
 .cut { text-decoration: line-through; opacity: .4; }
 .cuttable { cursor: pointer; }
@@ -195,10 +202,37 @@ const R = {
  s2(e) { const d = e.sprach2, L = Object.keys(d.words);
   return { html: `<h2>Sprachbausteine Teil 2</h2><div class="rules">Fill gaps 31–40 with words a–o. Each word fits only once; 5 words are left over. Time: about 10 min.</div>${timerHTML(10)}
    <div class="card"><div class="hl">${L.map(k => `<b>${k}</b><span>${esc(d.words[k])}</span>`).join("")}</div></div>
+   <div class="card sortboard"><div class="row" style="justify-content:space-between"><b>Sortieren</b><span class="muted small">Drag a word into a box – or tap a word, then tap a box.</span></div>
+    <div class="bin" data-bin="pool">${L.map(k => `<span class="wchip" draggable="true" data-w="${k}"><b>${k}</b> ${esc(d.words[k])}</span>`).join("")}</div>
+    <div class="bins">${SORT_BINS.map(([id, name]) => `<div class="bin" data-bin="${id}"><span class="binname">${name}</span></div>`).join("")}</div>
+    <button id="sortreset" class="small">↺ Alle zurück</button></div>
    <div class="card"><div class="text">${fill(d.text, n => `<span class="gap">${n}</span>`)}</div></div>
    ${d.key.map((k,i) => `<div class="card" id="c_s2${i}"><div><span class="num">${31+i}</span></div>${choices("s2"+i, L, x => `${x} ${esc(d.words[x])}`)}</div>`).join("")}`,
-   items: d.key.map((k,i) => ({ id:"s2"+i, key:k, why:d.why && d.why[i], keyLabel: k + ") " + d.words[k] })), min:10 }; },
+   items: d.key.map((k,i) => ({ id:"s2"+i, key:k, why:d.why && d.why[i], keyLabel: k + ") " + d.words[k] })), min:10, after: wireSort }; },
 };
+
+/* ---------- word sorting board (Sprachbausteine 2) ---------- */
+const SORT_BINS = [["verb","Verben"],["nomen","Nomen"],["prae","Präpositionen"],["konj","Konjunktionen"],["adv","Adverbien / Andere"]];
+function wireSort() {
+  const key = "b1sort" + cur, board = $(".sortboard"); if (!board) return;
+  let picked = null;
+  const saveSort = () => { const m = {}; board.querySelectorAll(".bin").forEach(b => b.querySelectorAll(".wchip").forEach(c => m[c.dataset.w] = b.dataset.bin)); store.set(key, m); };
+  const put = (chip, bin) => { bin.appendChild(chip); chip.classList.remove("picked"); picked = null; saveSort(); };
+  const m = store.get(key) || {};
+  board.querySelectorAll(".wchip").forEach(c => { const b = m[c.dataset.w] && board.querySelector(`.bin[data-bin="${m[c.dataset.w]}"]`); if (b) b.appendChild(c); });
+  board.querySelectorAll(".wchip").forEach(c => {
+    c.addEventListener("dragstart", ev => { ev.dataTransfer.setData("text/plain", c.dataset.w); c.classList.add("picked"); });
+    c.addEventListener("dragend", () => c.classList.remove("picked"));
+    c.addEventListener("click", ev => { ev.stopPropagation(); if (picked === c) { c.classList.remove("picked"); picked = null; return; } if (picked) picked.classList.remove("picked"); picked = c; c.classList.add("picked"); });
+  });
+  board.querySelectorAll(".bin").forEach(bin => {
+    bin.addEventListener("dragover", ev => { ev.preventDefault(); bin.classList.add("over"); });
+    bin.addEventListener("dragleave", () => bin.classList.remove("over"));
+    bin.addEventListener("drop", ev => { ev.preventDefault(); bin.classList.remove("over"); const c = board.querySelector(`.wchip[data-w="${ev.dataTransfer.getData("text/plain")}"]`); if (c) put(c, bin); });
+    bin.addEventListener("click", () => { if (picked) put(picked, bin); });
+  });
+  $("#sortreset").onclick = () => { const pool = board.querySelector('.bin[data-bin="pool"]'); board.querySelectorAll(".wchip").forEach(c => pool.appendChild(c)); saveSort(); };
+}
 
 /* ---------- audio ---------- */
 // Each run gets its own token, so a run that was stopped can never resume after a new one starts.
