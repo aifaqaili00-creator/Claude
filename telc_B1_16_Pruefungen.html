@@ -62,6 +62,12 @@ button[aria-pressed="true"], .sel { background: var(--accent); color: var(--bg);
 .binname { width: 100%; font-size: .78rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
 .wchip { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: .92rem; cursor: grab; user-select: none; }
 .wchip.picked { outline: 3px solid var(--accent); }
+.s2text { line-height: 2.2; }
+.dgap { display: inline-block; min-width: 5em; padding: 0 6px; border: 1.5px dashed var(--accent); border-radius: 6px; color: var(--accent); font-weight: 600; cursor: pointer; }
+.dgap.filled { border-style: solid; background: var(--accent-soft); }
+.dgap.over { background: var(--accent-soft); }
+.dgap.ok { border-color: var(--ok); color: var(--ok); } .dgap.bad { border-color: var(--bad); color: var(--bad); }
+.fbcard:not(.ok):not(.bad) { display: none; }
 .used { text-decoration: line-through; opacity: .45; }
 .cut { text-decoration: line-through; opacity: .4; }
 .cuttable { cursor: pointer; }
@@ -206,8 +212,8 @@ const R = {
     <div class="bin" data-bin="pool">${L.map(k => `<span class="wchip" draggable="true" data-w="${k}"><b>${k}</b> ${esc(d.words[k])}</span>`).join("")}</div>
     <div class="bins">${SORT_BINS.map(([id, name]) => `<div class="bin" data-bin="${id}"><span class="binname">${name}</span></div>`).join("")}</div>
     <button id="sortreset" class="small">↺ Alle zurück</button></div>
-   <div class="card"><div class="text">${fill(d.text, n => `<span class="gap">${n}</span>`)}</div></div>
-   ${d.key.map((k,i) => `<div class="card" id="c_s2${i}"><div><span class="num">${31+i}</span></div>${choices("s2"+i, L, x => `${x} ${esc(d.words[x])}`)}</div>`).join("")}`,
+   <div class="card"><div class="muted small">Tap a word, then tap a gap (or drag it onto the gap). Tap a filled gap to empty it.</div><div class="text s2text">${fill(d.text, n => `<span class="dgap" data-q="s2${n - 31}" data-n="${n}">(${n}) ……</span>`)}</div></div>
+   ${d.key.map((k,i) => `<div class="card fbcard" id="c_s2${i}"><div><span class="num">${31+i}</span></div></div>`).join("")}`,
    items: d.key.map((k,i) => ({ id:"s2"+i, key:k, why:d.why && d.why[i], keyLabel: k + ") " + d.words[k] })), min:10, after: wireSort }; },
 };
 
@@ -230,6 +236,17 @@ function wireSort() {
     bin.addEventListener("dragleave", () => bin.classList.remove("over"));
     bin.addEventListener("drop", ev => { ev.preventDefault(); bin.classList.remove("over"); const c = board.querySelector(`.wchip[data-w="${ev.dataTransfer.getData("text/plain")}"]`); if (c) put(c, bin); });
     bin.addEventListener("click", () => { if (picked) put(picked, bin); });
+  });
+  const words = EXAMS[cur].sprach2.words;
+  const refresh = () => { const used = new Set([...document.querySelectorAll(".dgap")].map(g => g.dataset.ans).filter(Boolean));
+    board.querySelectorAll(".wchip").forEach(c => c.classList.toggle("used", used.has(c.dataset.w))); };
+  const setGap = (g, w) => { if (w) { g.dataset.ans = w; g.textContent = `(${g.dataset.n}) ${w}) ${words[w]}`; g.classList.add("filled"); }
+    else { delete g.dataset.ans; g.textContent = `(${g.dataset.n}) ……`; g.classList.remove("filled"); } refresh(); };
+  document.querySelectorAll(".dgap").forEach(g => {
+    g.addEventListener("dragover", ev => { ev.preventDefault(); g.classList.add("over"); });
+    g.addEventListener("dragleave", () => g.classList.remove("over"));
+    g.addEventListener("drop", ev => { ev.preventDefault(); ev.stopPropagation(); g.classList.remove("over"); setGap(g, ev.dataTransfer.getData("text/plain")); });
+    g.addEventListener("click", () => { if (picked) { setGap(g, picked.dataset.w); picked.classList.remove("picked"); picked = null; } else if (g.dataset.ans) setGap(g, null); });
   });
   $("#sortreset").onclick = () => { const pool = board.querySelector('.bin[data-bin="pool"]'); board.querySelectorAll(".wchip").forEach(c => pool.appendChild(c)); saveSort(); };
 }
