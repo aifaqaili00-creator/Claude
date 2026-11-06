@@ -125,7 +125,7 @@ function markUsed(root) {
 }
 function wireChoices(root) {
   root.querySelectorAll("[data-q]").forEach(r => r.querySelectorAll(".choice").forEach(b => b.onclick = () => {
-    if (cutMode) { b.classList.toggle("cut"); root.querySelectorAll(`.opttxt[data-q="${r.dataset.q}"][data-v="${b.dataset.v}"]`).forEach(t => t.classList.toggle("cut", b.classList.contains("cut"))); return; }
+    if (cutMode) { b.classList.toggle("cut"); root.querySelectorAll(`.opttxt[data-oq="${r.dataset.q}"][data-ov="${b.dataset.v}"]`).forEach(t => t.classList.toggle("cut", b.classList.contains("cut"))); return; }
     b.classList.remove("cut");
     r.querySelectorAll(".choice").forEach(x => x.setAttribute("aria-pressed", x === b)); r.dataset.ans = b.dataset.v; markUsed(root); }));
   root.querySelectorAll(".hl span, .ad, .opttxt").forEach(t => { t.classList.add("cuttable"); t.onclick = () => t.classList.toggle("cut"); });
@@ -179,7 +179,7 @@ const R = {
  l2(e) { const d = e.lesen2;
   return { html: `<h2>Leseverstehen Teil 2</h2><div class="rules">Read the text and answer 6–10 (a, b or c). Time: about 20 min.</div>${timerHTML(20)}
    <div class="card"><h3>${esc(d.title)}</h3><div class="text">${esc(d.text)}</div></div>
-   ${d.q.map(q => `<div class="card" id="c_l2${q.n}"><div><span class="num">${q.n}</span>${esc(q.stem)}</div>${["a","b","c"].map(k => `<div class="muted opttxt" data-q="l2${q.n}" data-v="${k}">${k}) ${esc(q.opts[k])}</div>`).join("")}${choices("l2"+q.n, ["a","b","c"])}</div>`).join("")}`,
+   ${d.q.map(q => `<div class="card" id="c_l2${q.n}"><div><span class="num">${q.n}</span>${esc(q.stem)}</div>${["a","b","c"].map(k => `<div class="muted opttxt" data-oq="l2${q.n}" data-ov="${k}">${k}) ${esc(q.opts[k])}</div>`).join("")}${choices("l2"+q.n, ["a","b","c"])}</div>`).join("")}`,
    items: d.q.map(q => ({ id:"l2"+q.n, key:q.key, why:q.why, keyLabel: q.key + ") " + q.opts[q.key] })), min:20 }; },
  l3(e) { const d = e.lesen3, L = Object.keys(d.ads).concat("x");
   return { html: `<h2>Leseverstehen Teil 3</h2><div class="rules">Find the right ad (a–l) for each situation 11–20. If no ad fits, choose <b>x</b>. Underline the 2–3 key conditions in each situation (who? when? where? price?). Time: about 15 min.</div>${timerHTML(15)}
