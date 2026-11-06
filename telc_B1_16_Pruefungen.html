@@ -154,10 +154,19 @@ function grade(root, items, sec, scoreEl) {
 function timerHTML(min) { return `<div class="row ftimer"><button id="tstart">⏱ Start ${min}-min timer</button><span class="big" id="tclock">${min}:00</span></div>`; }
 let tInt = null;
 function wireTimer(min) {
+  // One button: start → pause → resume; "↺" resets to the full time.
   const b = $("#tstart"); if (!b) return;
-  b.onclick = () => { clearInterval(tInt); let left = min * 60; b.disabled = true;
-    tInt = setInterval(() => { left--; const c = $("#tclock"); if (!c) return clearInterval(tInt);
-      c.textContent = `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`; if (left <= 60) c.parentElement.classList.add("low"); if (left <= 0) { clearInterval(tInt); c.textContent = "Time is up!"; } }, 1000); };
+  let left = min * 60, running = false;
+  const show = () => { const c = $("#tclock"); if (!c) return; c.textContent = left > 0 ? `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}` : "Time is up!"; c.parentElement.classList.toggle("low", left <= 60); };
+  const stop = () => { clearInterval(tInt); running = false; };
+  b.insertAdjacentHTML("afterend", '<button id="treset" title="Reset timer">↺</button>');
+  b.onclick = () => {
+    if (running) { stop(); b.textContent = "▶ Weiter"; return; }
+    if (left <= 0) return;
+    clearInterval(tInt); running = true; b.textContent = "⏸ Pause";
+    tInt = setInterval(() => { if (!$("#tclock")) return stop(); left--; show(); if (left <= 0) { stop(); b.textContent = "⏱ Start"; } }, 1000);
+  };
+  $("#treset").onclick = () => { stop(); left = min * 60; show(); b.textContent = `⏱ Start ${min}-min timer`; };
 }
 const fill = (t, f) => esc(t).replace(/\[(\d\d)\]/g, (_, n) => f(+n));
 
