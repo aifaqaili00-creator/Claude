@@ -510,6 +510,41 @@ const LESSONS = [
   ] },
 
 /* ---------------- LEVEL 6 ---------------- */
+{ lv: 5, title: "Die 5 Checks", sub: "How to choose a word for any gap in Teil 2 – step by step.",
+  rule: `<p>For every gap ask: <b>what is before it? what is after it?</b> Then use the check that fits.</p>
+  <div class="tbl"><table><tr><th>#</th><th>What you see</th><th>What fits</th><th>Example</th></tr>
+  <tr><td>1</td><td><b>nicht</b> … ___</td><td><b>sondern</b></td><td>nicht für etwas, <b>sondern</b> gegen etwas</td></tr>
+  <tr><td>2</td><td>position-1 word + ___ + subject</td><td>a <b>verb</b></td><td>So <b>sagt</b> man …</td></tr>
+  <tr><td>3</td><td>___ + <b>Noun</b> (capital letter), no verb</td><td>a <b>preposition</b></td><td><b>Beim</b> Durchsehen · <b>wegen</b> der Nährstoffe</td></tr>
+  <tr><td>4</td><td>___ + subject … <b>verb at the end</b></td><td><b>weil / dass / ob / wenn</b></td><td>…, <b>weil</b> ich viel Sport <b>treibe</b></td></tr>
+  <tr><td>5</td><td><b>infinitive</b> at the end</td><td>a <b>helping verb</b>: sollte, würde, möchte, kann</td><td>Das <b>würde</b> mich interessieren.</td></tr></table></div>
+  <p class="ex">Tip: nouns always start with a capital letter – that is the fastest clue for check 3.</p>`,
+  items: [
+    mc("Which check? „Das ist nicht mein Buch, ___ dein Buch.“", ["Check 1 → sondern", "Check 4 → weil", "Check 3 → wegen"], "<b>nicht</b> before the gap → Check 1 → <b>sondern</b>."),
+    mc("Das ist nicht mein Buch, ___ dein Buch.", ["sondern", "aber", "weil"], "nicht A, <b>sondern</b> B."),
+    mc("Die Empfehlungen sind nicht für etwas, ___ gegen etwas.", ["sondern", "deswegen", "was"], "Check 1: <b>nicht</b> … <b>sondern</b>. (Exam 14)"),
+    mc("Which check? „So ___ man: Wer kein Fleisch isst, lebt gesünder.“", ["Check 2 → a verb", "Check 3 → a preposition", "Check 1 → sondern"], "<i>So</i> is position 1, then the gap, then the subject <i>man</i> → the gap is position 2 → a <b>verb</b>."),
+    mc("So ___ man: Wer kein Fleisch isst, lebt gesünder.", ["sagt", "weil", "von"], "Check 2 → a verb in position 2 → <b>sagt</b> (people say)."),
+    mc("Heute ___ ich keine Zeit.", ["habe", "wegen", "dass"], "Check 2: Heute (position 1) + gap + ich → verb → <b>habe</b>."),
+    mc("Which check? „___ Durchsehen einer Zeitschrift ist mir Ihre Anzeige aufgefallen.“", ["Check 3 → a preposition", "Check 4 → weil", "Check 2 → a verb"], "<b>Durchsehen</b> has a capital letter → a noun, and no subject + verb follows → Check 3 → a <b>preposition</b>."),
+    mc("___ Durchsehen einer Zeitschrift ist mir Ihre Anzeige aufgefallen.", ["Beim", "Weil", "Wegen"], "<b>beim</b> + noun from a verb = while doing it: beim Lesen, beim Essen, <b>beim Durchsehen</b>."),
+    mc("Milch ist sehr gesund ___ der vielen Nährstoffe.", ["wegen", "weil", "deswegen"], "After the gap: <i>der vielen Nährstoffe</i> – no verb → Check 3 → preposition <b>wegen</b> (+ Genitiv). weil would need a verb."),
+    mc("Milch ist sehr gesund, ___ sie viele Nährstoffe hat.", ["weil", "wegen", "deswegen"], "Now there IS a verb at the end (<i>hat</i>) → Check 4 → <b>weil</b>. Compare with the question before!"),
+    mc("Anstelle ___ Milch kann man auch Wasser trinken.", ["von", "beim", "weil"], "Check 3: noun after the gap → preposition. Fixed: <b>anstelle von</b> = instead of."),
+    mc("Ich danke Ihnen für eine Antwort ___ meine Fragen.", ["auf", "zum", "von"], "Check 3 + fixed partner: <b>eine Antwort auf</b> + Akk."),
+    mc("Which check? „Ich treibe viel Sport, ___ ich gesund bleiben möchte.“", ["Check 4 → weil/dass", "Check 2 → a verb", "Check 1 → sondern"], "After the gap: <i>ich</i> … and the verb <b>möchte</b> at the end → Check 4."),
+    mc("Das Thema interessiert mich, ___ ich selber viel Sport treibe.", ["weil", "wegen", "deswegen"], "Verb <b>treibe</b> at the end → Check 4 → <b>weil</b>."),
+    mc("Ich hoffe, ___ Sie mir helfen können.", ["dass", "wegen", "sondern"], "Verb at the end (können) → Check 4; a fact/hope → <b>dass</b>."),
+    mc("Which check? „Was ___ man jeden Tag essen?“", ["Check 5 → helping verb", "Check 3 → preposition", "Check 4 → weil"], "<b>essen</b> (infinitive) at the end → Check 5 → a helping verb."),
+    mc("Was ___ man jeden Tag essen?", ["sollte", "wegen", "sagt"], "Infinitive <i>essen</i> at the end → helping verb → <b>sollte</b>."),
+    mc("Das Thema ___ mich besonders interessieren.", ["würde", "nennt", "weil"], "Infinitive <i>interessieren</i> at the end → helping verb → <b>würde</b>."),
+    mc("Ich ___ gern mehr über gesunde Ernährung erfahren.", ["möchte", "sagt", "von"], "Infinitive <i>erfahren</i> at the end → <b>möchte</b>."),
+    mc("Von ___ Nahrungsmitteln darf man so viel essen, wie man will?", ["welchen", "was", "weil"], "A question (?) + a noun after the gap → a question word with an ending: <b>welchen</b> (von + Dativ plural)."),
+    inp("Ich komme nicht heute, ___ morgen.", "sondern", "Check 1: <b>nicht</b> … <b>sondern</b>."),
+    inp("Ich lerne viel, ___ ich die Prüfung bestehen will.", "weil", "Verb <i>will</i> at the end → Check 4 → <b>weil</b>."),
+    inp("___ Essen spreche ich nicht. (bei + dem)", "beim", "Check 3: noun after the gap → <b>beim</b> Essen.")
+  ] },
+
 { lv: 5, title: "Wortkasten-Training", sub: "Sprachbausteine Teil 2 – practise the speed method.",
   rule: `<ol><li><b>First 30 seconds:</b> sort the words – verbs · conjunctions · prepositions · adverbs · others.</li>
   <li><b>For each gap, look right after it:</b> a verb → position-1 word · verb at the end → conjunction · no verb → a verb · a prefix at the end → its verb.</li>
