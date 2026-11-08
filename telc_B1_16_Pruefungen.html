@@ -256,14 +256,33 @@ function wireSort() {
 let voices = [], run = { stop: true };
 function loadVoices() { voices = speechSynthesis.getVoices().filter(v => v.lang && v.lang.toLowerCase().startsWith("de")); }
 if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+// Speaker voices: "f" = woman, "m" = man, "f2"/"m2" = a second woman/man, "I" = exam narrator.
+const FEMALE = /anna|katja|hedda|petra|marlene|vicki|helena|sabine|ingrid|lena|amala|elke|katharina|seraphina|gisela|louisa|maja|tanja|female|frau|google deutsch/i;
+const MALE = /conrad|stefan|markus|yannick|hans|killian|florian|jonas|ralf|bernd|christoph|kasper|male|mann|herr/i;
+function voiceFor(g) {
+  const f = voices.filter(v => FEMALE.test(v.name) && !/male/i.test(v.name.replace(/female/i, ""))), m = voices.filter(v => MALE.test(v.name) && !/female/i.test(v.name));
+  const female = g[0] === "f", second = g.endsWith("2");
+  const pool = female ? f : m;
+  if (pool.length) return { voice: pool[second && pool.length > 1 ? 1 : 0], pitch: second && pool.length < 2 ? (female ? 1.15 : 0.85) : 1 };
+  // No voice of that gender: change the pitch of the default voice instead.
+  const base = voices[0], baseFemale = base ? FEMALE.test(base.name) || !MALE.test(base.name) : true;
+  let pitch = female === baseFemale ? 1 : (female ? 1.35 : 0.7);
+  if (second) pitch *= female ? 1.1 : 0.9;
+  return { voice: base, pitch };
+}
+function lineVoice(h2, w) {
+  const names = h2.speakers || [], i = "ABC".indexOf(w), g = genderOf(names[i]);
+  const sameBefore = names.slice(0, i).filter(n => genderOf(n) === g).length;
+  return sameBefore ? g + "2" : g;
+}
+function monoVoice(x) { const t = x.s; return /sprecherin/i.test(t) ? "f" : /\bsprecher\b/i.test(t) ? "m" : /\bherr\b/i.test(t) ? "m" : "f"; }
+function genderOf(name) { return /^(frau|moderatorin|reporterin|sprecherin)/i.test(name || "") ? "f" : "m"; }
 function sayOne(T, text, who) {
   return new Promise(res => {
     if (T.stop || !("speechSynthesis" in window)) return res();
     const u = new SpeechSynthesisUtterance(text); u.lang = "de-DE";
-    if (voices.length) u.voice = voices[(who === "B" && voices.length > 1) ? 1 : 0];
-    if (who === "B" && voices.length < 2) u.pitch = 1.35;
-    if (who === "I") u.pitch = 0.9;
-    if (who === "C") u.pitch = 0.75;
+    if (who && who !== "I") { const v = voiceFor(who); if (v.voice) u.voice = v.voice; u.pitch = v.pitch; }
+    else if (voices.length) { u.voice = voices[0]; u.pitch = 0.95; }
     u.rate = parseFloat(($("#speed") || {}).value || 0.95);
     let done = false; const fin = () => { if (!done) { done = true; clearTimeout(guard); res(); } };
     // Some browsers never fire onend; continue after a generous estimate instead of hanging.
@@ -289,7 +308,7 @@ async function runPart(T, e, p) {
     status("Teil 1"); await say(T, "Hörverstehen, Teil 1. Sie hören nun fünf kurze Texte. Sie hören diese Texte nur einmal. Lesen Sie jetzt die Aufgaben 41 bis 45. Sie haben dazu 30 Sekunden Zeit.", "I");
     mark(h1.map(x => x.n)); await wait(T, 30, "Reading time");
     if (e.hoeren1_intro) { status("Einleitung"); await say(T, e.hoeren1_intro, "I"); }
-    for (const x of h1) { mark([x.n]); status(`Text ${x.n} (once)`); await say(T, `Nummer ${x.n}.`, "I"); await say(T, x.t); await wait(T, 8, "Decide"); }
+    for (const x of h1) { mark([x.n]); status(`Text ${x.n} (once)`); await say(T, `Nummer ${x.n}.`, "I"); await say(T, x.t, monoVoice(x)); await wait(T, 8, "Decide"); }
   }
   if (p === 2) {
     status("Teil 2"); await say(T, "Hörverstehen, Teil 2. Sie hören nun ein Gespräch. Sie hören das Gespräch zweimal. Lesen Sie jetzt die Aufgaben 46 bis 55. Sie haben dazu eine Minute Zeit.", "I");
@@ -297,14 +316,14 @@ async function runPart(T, e, p) {
     for (let r = 1; r <= 2 && !T.stop; r++) {
       status(`Interview, ${r === 1 ? "first" : "second"} time`); if (r === 2) await say(T, "Sie hören das Gespräch noch einmal.", "I");
       if (h2.intro) await say(T, h2.intro, "I");
-      for (const [w, t] of h2.lines) { if (T.stop) break; await say(T, t, w); }
+      for (const [w, t] of h2.lines) { if (T.stop) break; await say(T, t, lineVoice(h2, w)); }
       await wait(T, r === 1 ? 10 : 15, "Check your answers");
     }
   }
   if (p === 3) {
     status("Teil 3"); await say(T, "Hörverstehen, Teil 3. Sie hören nun fünf kurze Texte. Sie hören jeden Text zweimal. Lesen Sie jetzt die Aufgabe.", "I");
     if (e.hoeren3_intro) { status("Einleitung"); await say(T, e.hoeren3_intro, "I"); }
-    for (const x of h3) { if (T.stop) break; mark([x.n]); await wait(T, 10, `Read ${x.n}`); status(`Text ${x.n}`); await say(T, `Nummer ${x.n}.`, "I"); await say(T, x.t); await say(T, "Sie hören den Text noch einmal.", "I"); await say(T, x.t); await wait(T, 8, "Decide"); }
+    for (const x of h3) { if (T.stop) break; mark([x.n]); await wait(T, 10, `Read ${x.n}`); status(`Text ${x.n}`); await say(T, `Nummer ${x.n}.`, "I"); await say(T, x.t); await say(T, "Sie hören den Text noch einmal.", "I"); await say(T, x.t, monoVoice(x)); await wait(T, 8, "Decide"); }
   }
 }
 async function runListen(parts) {
@@ -335,8 +354,8 @@ async function replayItem(e, n) {
   await new Promise(r => setTimeout(r, 150)); mark([n]);
   const x = [...e.hoeren1, ...e.hoeren3].find(y => y.n === n);
   status(`Replay ${n}`);
-  if (x) await say(T, x.t);
-  else for (const [w, t] of interviewPart(e, n)) { if (T.stop) break; await say(T, t, w); }
+  if (x) await say(T, x.t, monoVoice(x));
+  else for (const [w, t] of interviewPart(e, n)) { if (T.stop) break; await say(T, t, lineVoice(e.hoeren2, w)); }
   if (!T.stop) { status("Replay finished"); stopClock(); }
 }
 let clockInt = null, clockStart = 0;
