@@ -132,7 +132,7 @@ const mc = (q, o, w) => ({ t: "mc", q, o, w });
 const inp = (q, a, w, hint) => ({ t: "in", q, a: Array.isArray(a) ? a : [a], w, hint });
 const box = (title, text, words, a) => ({ t: "box", title, text, words, a });
 
-const LEVELS = ["Sätze bauen · building a sentence", "Fälle · cases", "Endungen · endings", "Verben · verbs", "Kleine Wörter · small words", "Prüfungstraining · exam training"];
+const LEVELS = ["Sätze bauen · building a sentence", "Fälle · cases", "Endungen · endings", "Verben · verbs", "Kleine Wörter · small words", "Prüfungstraining · exam training", "Schreiben · meine Fehler"];
 
 const LESSONS = [
 /* ---------------- LEVEL 1 ---------------- */
@@ -578,6 +578,43 @@ const LESSONS = [
     mc("Ich bin ___ müde, aber ich lerne noch eine Stunde.", ["zwar", "schon", "sondern"], "<b>aber</b> follows → <b>zwar … aber</b>."),
     mc("Kann ich ___ helfen, Frau Meier?", ["Ihnen", "Sie", "Ihr"], "helfen + Dativ, polite → <b>Ihnen</b>."),
     mc("Das Wetter war schlecht. ___ sind wir zu Hause geblieben.", ["Deshalb", "Weil", "Denn"], "The verb comes right after the gap → <b>Deshalb</b>.")
+  ] },
+
+{ lv: 6, title: "Meine Brief-Fehler", sub: "The 6 mistakes from your letters – 27 quick questions.",
+  rule: `<ol><li><b>Capital or small?</b> Nouns → capital (<i>die Stelle, die Familie</i>). Adjectives, verbs, numbers → small (<i>toll, ruhig, müde, fünf</i>).</li>
+  <li><b>Gender first:</b> <i>der</i> Traum → <b>mein</b> · <i>das</i> Angebot → <b>ein</b> · <i>die</i> Pizza → <b>eine</b>.</li>
+  <li><b>Adjective endings:</b> Dativ → <b>-en</b> · ein + masc./neuter with no ending → <b>-er / -es</b> · otherwise mostly <b>-e</b>.</li>
+  <li><b>Perfekt with sein:</b> fahren, gehen, fliegen, reisen, wandern, kommen → <b>bin</b> gefahren …</li>
+  <li><b>Verb position:</b> main clause → verb 2nd · dass/weil → verb last · question → verb right after the question word.</li>
+  <li><b>in (wo?) / mit / nach / bei / zu → Dativ:</b> in deine<b>m</b> Brief, nach meine<b>m</b> Urlaub.</li></ol>`,
+  items: [
+    mc("Das ist sehr ___!", ["toll", "Toll"], "<i>toll</i> is an adjective → <b>small</b>."),
+    mc("Herzlichen Glückwunsch zu deiner neuen ___!", ["Stelle", "stelle"], "<i>die Stelle</i> is a noun → <b>capital</b>."),
+    mc("Das Restaurant ist ruhig und ___.", ["günstig", "Günstig", "Günstiger"], "Adjective → <b>small</b>, no ending after <i>ist</i>."),
+    mc("Grüß bitte deine ___ von mir.", ["Familie", "familie"], "Noun → <b>capital</b>."),
+    mc("Das war schon immer ___ Traum.", ["mein", "meine", "meinen"], "<b>der</b> Traum, Nominativ → <b>mein</b> (no ending)."),
+    mc("Es gibt ___ Angebot von der Deutschen Bahn.", ["ein", "eine", "einen"], "<b>das</b> Angebot → <b>ein</b>."),
+    mc("Ich möchte ___ Garten besuchen.", ["den", "das", "der"], "<b>der</b> Garten, Akkusativ → <b>den</b>."),
+    mc("Wir essen ___ Pizza.", ["eine", "ein", "einen"], "<b>die</b> Pizza → <b>eine</b>."),
+    mc("Das ist eine ___ Idee!", ["tolle", "toll", "tollen"], "eine + feminine Nominativ → <b>-e</b>."),
+    mc("Wir feiern in einem ___ Restaurant.", ["italienischen", "italienisch", "italienisches"], "Dativ (in einem) → always <b>-en</b>."),
+    mc("Lesen ist mein ___ Hobby.", ["neues", "neue", "neu"], "mein + <b>das</b> Hobby (no ending on mein) → the adjective shows it: <b>-es</b>."),
+    mc("Infineon ist eine ___ Firma.", ["internationale", "international", "internationalen"], "eine + feminine Nominativ → <b>-e</b>."),
+    mc("Am Wochenende ___ ich in den Bergen gewandert.", ["bin", "habe"], "<i>wandern</i> = movement → <b>sein</b>."),
+    mc("Ich ___ auf Dienstreise in die Schweiz gefahren.", ["bin", "habe"], "<i>fahren</i> → <b>bin</b> gefahren."),
+    mc("Vielleicht ___ er viel gereist.", ["ist", "hat"], "<i>reisen</i> → <b>ist</b> gereist."),
+    mc("Ich ___ viel Sport getrieben.", ["habe", "bin"], "<i>Sport treiben</i> is no movement from A to B → <b>habe</b>."),
+    mc("In meiner Freizeit ___ Tischtennis.", ["spiele ich", "ich spiele"], "Something is in position 1 → <b>verb 2nd</b>, then the subject."),
+    mc("Ich glaube, dass Würzburg sehr schön ___.", ["ist", "ist sehr schön"], "dass → <b>verb at the end</b>."),
+    mc("Wie viel ___ der Garten pro Monat?", ["kostet", "es kostet"], "Direct question → <b>verb right after the question word</b>."),
+    mc("Ich möchte wissen, wie viel der Garten ___.", ["kostet", "kostet es"], "Indirect question (after a comma) → <b>verb at the end</b>."),
+    mc("In ___ Brief hast du geschrieben, dass …", ["deinem", "deinen", "deine"], "in + wo? → Dativ, <b>der</b> Brief → <b>deinem</b>."),
+    mc("Nach ___ Urlaub habe ich viel gearbeitet.", ["meinem", "meinen", "meine"], "<b>nach</b> + Dativ → <b>meinem</b>."),
+    mc("Wir haben viele Mitarbeiter in ___ Firma.", ["unserer", "unsere", "unseren"], "in + wo? → Dativ feminine → <b>unserer</b>."),
+    mc("Im Sommer fahre ich ___ Schweiz.", ["in die", "nach", "in der"], "<b>die</b> Schweiz has an article → wohin? <b>in die</b> Schweiz."),
+    inp("Ich arbeite als ___ bei Infineon. (engineer)", "Ingenieur", "Spelling: <b>Ingenieur</b>.", "Ing…"),
+    inp("Ich freue mich auf deine ___. (closing line)", "Antwort", "<b>Ich freue mich auf deine Antwort.</b>", "A…"),
+    inp("___ Glückwunsch zur Prüfung!", "Herzlichen", "<b>Herzlichen Glückwunsch</b> zu + Dativ.", "H…")
   ] }
 ];
 
