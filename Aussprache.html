@@ -1,0 +1,18 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aussprache</title>
+<style>:root{--bg:#f7f8fb;--card:#fff;--ink:#1a1a1a;--blue:#1f4e9c;--mut:#666}
+@media (prefers-color-scheme:dark){:root{--bg:#14161b;--card:#1f232b;--ink:#eee;--blue:#8fb3ff;--mut:#aaa}}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.5 system-ui,sans-serif}main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;color:var(--blue);margin:.2em 0}.card{background:var(--card);border-radius:12px;padding:12px 14px;margin:10px 0;box-shadow:0 1px 3px #0002}
+.w{font-size:1.5rem;font-weight:700}.ipa{color:var(--mut)}button{font:inherit;border:0;border-radius:9px;padding:8px 14px;margin:6px 6px 0 0;background:var(--blue);color:#fff;cursor:pointer}
+button.s{background:transparent;color:var(--blue);border:1.5px solid var(--blue)}.tip{font-size:.92rem;color:var(--mut)}</style></head><body><main>
+<h1>🔊 Aussprache</h1><p class="tip">Tap a button to hear it. Works best in Chrome or Safari, with the sound on.</p>
+<div id="list"></div>
+<div class="card tip"><b>Tips:</b><br>• <b>sp</b> at the start of a word = <b>schp</b> (spreche → "schpreche")<br>• <b>ch</b> after a/o/u = throat sound, like clearing your throat softly (Spra<b>ch</b>en)<br>• <b>ch</b> after e/i = soft hissing sound, like a cat (spre<b>ch</b>e, i<b>ch</b>)<br>• <b>-en</b> at the end is short and weak: "Schprachn"</div>
+</main><script>
+const W=[["Sprachen","[ˈʃpʁaːxən] – „SCHPRAA-chen“ · long a, throat ch","Ich spreche drei Sprachen."],
+["spreche","[ˈʃpʁɛçə] – „SCHPRE-che“ · short e, soft ch","Ich spreche Urdu, Englisch und ein bisschen Deutsch."],
+["sprechen","[ˈʃpʁɛçn̩] – „SCHPRE-chn“","Wir können Deutsch sprechen."],
+["Welche Sprachen sprichst du?","„sprichst“ = SCHPRICHST, soft ch","Welche Sprachen sprichst du?"]];
+function say(t,r){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="de-DE";u.rate=r;const v=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.startsWith("de"));if(v)u.voice=v;speechSynthesis.speak(u)}catch(e){alert("Sorry, speech is not supported in this browser.")}}
+document.getElementById("list").innerHTML=W.map((w,i)=>`<div class="card"><div class="w">${w[0]}</div><div class="ipa">${w[1]}</div><button onclick="say(W[${i}][0],.6)">🐢 langsam</button><button onclick="say(W[${i}][0],1)">▶ normal</button><button class="s" onclick="say(W[${i}][2],.85)">💬 im Satz</button></div>`).join("");
+speechSynthesis&&speechSynthesis.getVoices();</script></body></html>
