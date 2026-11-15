@@ -42,6 +42,7 @@ h3 { margin: 4px 0; font-size: 1.05rem; }
 .restab { width: 100%; border-collapse: collapse; } .restab td, .restab th { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: left; }
 .restab .subt td { background: var(--accent-soft); }
 .bigtot { font-size: 1.35rem; margin-top: 6px; } .pass { color: #2e7d32; font-weight: 700; } .fail { color: #c62828; font-weight: 700; }
+.ailist { margin: 0; padding-left: 18px; } .ailist li { margin-bottom: 3px; } .aierr td { vertical-align: top; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card.ok { border-color: var(--ok); } .card.bad { border-color: var(--bad); }
 .picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
@@ -477,17 +478,70 @@ R.h = e => {
    } };
 };
 
+/* ---------- AI letter check (asks Claude via the artifact "sample" capability) ---------- */
+let SAMPLE = null; (async () => { try { SAMPLE = window.claude ? await window.claude.use("sample") : null; } catch (err) { SAMPLE = null; } document.querySelectorAll(".aibox").forEach(b => b.hidden = !SAMPLE); document.querySelectorAll(".ainote").forEach(b => b.hidden = !!SAMPLE); })();
+const aiBoxHTML = id => `<div class="card aibox" ${SAMPLE ? "" : "hidden"}><div class="row"><button class="primary" id="${id}btn">🤖 Brief bewerten lassen (telc)</button><span class="muted small">Claude checks your letter like a telc examiner.</span></div><div id="${id}out" aria-live="polite"></div></div><div class="muted small ainote" ${SAMPLE ? "hidden" : ""}>🤖 The automatic letter check works when this page is opened on claude.ai.</div>`;
+function aiPrompt(d, letter) {
+  return `You are a strict but kind telc Deutsch B1 examiner. Grade this letter (Schriftlicher Ausdruck) with the official telc B1 criteria, each scored 15, 10, 5 or 0:
+I Inhalt / Aufgabenbewältigung: are all 4 points covered, clearly and with some detail? (4 points well = 15, 3 = 10, 2 = 5, fewer = 0; reduce if a point is only hinted at)
+II Kommunikative Gestaltung: date, salutation (Liebe/Lieber + comma for a woman/man, Sehr geehrte… if formal), introduction, logical order, connectors, closing sentence, greeting, register (du/Sie) consistent.
+III Formale Richtigkeit: grammar, word order, spelling, capital letters on nouns. Errors that hinder understanding count more.
+The student is a learner from Pakistan who lives in Dresden. Write all explanations in simple English. Keep German examples German.
+
+TASK LETTER:
+${d.letter}
+
+TASK: ${d.task}
+POINTS:
+${d.points.map((x, i) => (i + 1) + ". " + x).join("\n")}
+
+STUDENT'S LETTER:
+${letter}
+
+Reply with only one JSON object, no other text, in exactly this shape:
+{"inhalt":15,"kommunikation":10,"korrektheit":5,"words":123,"punkte":[{"punkt":"point 1 text","ok":true,"kommentar":"short comment"}],"fehler":[{"falsch":"wrong phrase","richtig":"correct phrase","regel":"short rule"}],"tipps":["tip 1","tip 2","tip 3"],"korrigiert":"the full corrected letter, keeping the student's ideas, with line breaks as \\n"}
+List up to 15 of the most important mistakes in "fehler", in the order they appear.`;
+}
+function aiRender(out, r) {
+  const n = v => [0, 5, 10, 15].includes(+v) ? +v : Math.max(0, Math.min(15, Math.round(+v / 5) * 5) || 0);
+  const a = n(r.inhalt), b = n(r.kommunikation), c = n(r.korrektheit), tot = a + b + c;
+  const pts = Array.isArray(r.punkte) ? r.punkte : [], err = Array.isArray(r.fehler) ? r.fehler : [], tips = Array.isArray(r.tipps) ? r.tipps : [];
+  out.innerHTML = `<div class="bigtot">Schreiben: <b>${tot} / 45</b> <span class="${tot >= 27 ? "pass" : "fail"}" style="font-size:1rem">${tot >= 27 ? "✓ gut genug (60 %)" : "unter 60 % (27)"}</span></div>
+   <table class="restab"><tr><td>I Inhalt (4 Punkte)</td><td><b>${a}</b> / 15</td></tr><tr><td>II Kommunikation (Form, Aufbau)</td><td><b>${b}</b> / 15</td></tr><tr><td>III Korrektheit (Grammatik)</td><td><b>${c}</b> / 15</td></tr>${r.words ? `<tr><td>Wörter</td><td>${esc(r.words)}</td></tr>` : ""}</table>
+   ${pts.length ? `<h3>Die 4 Punkte</h3><ul class="ailist">${pts.map(x => `<li>${x.ok ? "✅" : "❌"} <b>${esc(x.punkt)}</b> – ${esc(x.kommentar || "")}</li>`).join("")}</ul>` : ""}
+   ${err.length ? `<h3>Fehler (${err.length})</h3><table class="restab aierr"><tr><th>❌ du</th><th>✅ richtig</th><th>Regel</th></tr>${err.map(x => `<tr><td class="badtxt">${esc(x.falsch)}</td><td class="oktxt">${esc(x.richtig)}</td><td class="small">${esc(x.regel || "")}</td></tr>`).join("")}</table>` : ""}
+   ${tips.length ? `<h3>Tipps</h3><ul class="ailist">${tips.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+   ${r.korrigiert ? `<details><summary>Korrigierter Brief</summary><div class="text">${esc(String(r.korrigiert).replace(/\\n/g, "\n"))}</div></details>` : ""}
+   <div class="muted small">This is Claude's estimate based on the telc criteria; a real examiner may differ by a few points.</div>`;
+  return tot;
+}
+function wireAi(id, d, getLetter, onScore) {
+  const btn = document.getElementById(id + "btn"), out = document.getElementById(id + "out"); if (!btn) return;
+  btn.onclick = async () => {
+    const letter = (getLetter() || "").trim();
+    if (letter.split(/\s+/).length < 30) { out.innerHTML = `<p class="fail">Write at least 30 words first.</p>`; return; }
+    if (!SAMPLE) { out.textContent = "Not available here."; return; }
+    btn.disabled = true; out.innerHTML = `<p class="muted">⏳ Claude is reading your letter… (about 20–60 seconds)</p>`;
+    try { const r = await SAMPLE.json(aiPrompt(d, letter)); const tot = aiRender(out, r || {}); onScore && onScore(tot); }
+    catch (err) { const c = err && err.code;
+      out.innerHTML = `<p class="fail">${c === "not_granted" || c === "sampling_disabled" ? "Claude is not allowed for this page." : c === "rate_limited" ? "Too many checks right now – try again in a few minutes." : c === "invalid_json" ? "The answer could not be read – please press the button again." : "Something went wrong – please try again."}</p>`;
+      if (c === "not_granted" || c === "sampling_disabled") btn.hidden = true; }
+    finally { btn.disabled = false; }
+  };
+}
+
 R.w = e => { const d = e.schreiben, key = "b1letter" + cur;
   return { html: `${hero("schreiben", "Schriftlicher Ausdruck", "30 Minuten · ein Brief")}<div class="rules">30 minutes. Write a letter (at least 100–150 words) covering all 4 points. Don't forget: Ort/Datum, Anrede, Einleitung, Schluss, Gruß.</div>${timerHTML(30)}
    <div class="card"><div class="text">${esc(d.letter)}</div></div>
    <div class="card"><b>${esc(d.task)}</b><ul>${d.points.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>
    <textarea id="letter" aria-label="Ihr Brief" placeholder="Berlin, den ...&#10;&#10;Liebe ...,"></textarea>
-   <div class="row"><span id="wc" class="muted">0 words</span><button id="model">Show model letter</button></div>
+   <div class="row"><span id="wc" class="muted">0 words</span><button id="model">Show model letter</button></div>${aiBoxHTML("aiw")}
    <div class="card" id="modelBox" hidden><h3>Musterbrief</h3><div class="text">${esc(d.model)}</div><h3>Useful phrases</h3><ul>${(d.phrases||[]).map(p => `<li>${esc(p)}</li>`).join("")}</ul>
    <h3>Checklist</h3><ul><li>All 4 points? (each point = 2–3 sentences)</li><li>Verb in position 2; after weil/dass/wenn the verb goes to the end</li><li>Du/Sie consistent (Dich/Dir/Dein)</li><li>Connectors: außerdem, deshalb, trotzdem, leider, zum Schluss</li></ul></div>`,
    noCheck: true,
    after() { const ta = $("#letter"); ta.value = store.get(key) || ""; const wc = () => $("#wc").textContent = (ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0) + " words"; wc();
-     ta.oninput = () => { wc(); store.set(key, ta.value); }; $("#model").onclick = () => { $("#modelBox").hidden = !$("#modelBox").hidden; }; } };
+     ta.oninput = () => { wc(); store.set(key, ta.value); }; $("#model").onclick = () => { $("#modelBox").hidden = !$("#modelBox").hidden; };
+     wireAi("aiw", d, () => ta.value, tot => store.set("b1wscore" + cur, tot)); } };
 };
 R.v = e => ({ noCheck: true, html: `${hero("worter", "Wörter & Grammatik", `Prüfung ${e.n}`)}
    <div class="card"><table>${(e.vocab||[]).map(([de,en]) => `<tr><td><b>${esc(de)}</b></td><td>${esc(en)}</td></tr>`).join("")}</table></div>
@@ -726,7 +780,7 @@ function scoreExam(e) {
   const sum = (...k) => k.reduce((a, x) => a + by[x].got, 0);
   const w = EX.wself, cN = w.c.filter(Boolean).length, fN = w.f.filter(Boolean).length;
   const content = cN === 4 ? 15 : cN === 3 ? 10 : cN === 2 ? 5 : 0, form = [0, 5, 10, 15][fN];
-  const schreiben = words(EX.letter || "") < 30 ? 0 : content + form + (+w.lang);
+  const schreiben = words(EX.letter || "") < 30 ? 0 : EX.wai != null ? EX.wai : content + form + (+w.lang);
   const lesen = sum("L1", "L2", "L3"), sprach = sum("S1", "S2"), hoeren = sum("H1", "H2", "H3");
   return { by, items, lesen, sprach, hoeren, schreiben, total: lesen + sprach + hoeren + schreiben };
 }
@@ -758,13 +812,14 @@ function examResult(e, v) {
     <b>Inhalt – which points did you answer?</b>${d.points.map((p, i) => `<label class="ck"><input type="checkbox" data-c="${i}" ${w.c[i] ? "checked" : ""}> ${esc(p)}</label>`).join("")}
     <b>Form</b>${["Ort/Datum, Anrede und Gruß", "Einleitung und Schluss", "Sätze verbunden (weil, deshalb, außerdem …)"].map((p, i) => `<label class="ck"><input type="checkbox" data-f="${i}" ${w.f[i] ? "checked" : ""}> ${p}</label>`).join("")}
     <b>Sprache – how many mistakes?</b><div class="row">${[[15, "wenige"], [10, "einige"], [5, "viele"], [0, "sehr viele"]].map(([pv, lab]) => `<label class="ck"><input type="radio" name="lang" value="${pv}" ${+w.lang === pv ? "checked" : ""}> ${lab}</label>`).join("")}</div>
-    <details><summary>Musterbrief zum Vergleich</summary><div class="text">${esc(d.model)}</div></details></div>
+    <details><summary>Musterbrief zum Vergleich</summary><div class="text">${esc(d.model)}</div></details>${EX.wai != null ? `<div class="tot">🤖 Claude's score is used for Schreiben: <b>${EX.wai} / 45</b></div>` : ""}</div>${aiBoxHTML("aix")}
    ${wrong.length ? `<div class="card"><h3>Deine Fehler (${wrong.length})</h3>${wrong.map(it => `<div class="wrongrow"><div><span class="num">${it.num}</span><span class="muted small">${SECN[it.sec]}</span></div><div>deine Antwort: <b class="badtxt">${esc(it.lab(EX.ans[it.id]))}</b> → richtig: <b class="oktxt">${esc(it.lab(it.key))}</b></div><div class="muted small">${esc(it.why || "")}</div></div>`).join("")}</div>` : `<div class="card"><h3>Keine Fehler – perfekt! 🎉</h3></div>`}
    <div class="row"><button class="primary" id="exnew">Neue Prüfung</button><button id="exreview">Antworten im Übungsmodus öffnen</button></div>`;
   const upd = () => { saveEX(); recordResult(); const y = window.scrollY; render(); window.scrollTo(0, y); };
   v.querySelectorAll("[data-c]").forEach(c => c.onchange = () => { w.c[+c.dataset.c] = c.checked; upd(); });
   v.querySelectorAll("[data-f]").forEach(c => c.onchange = () => { w.f[+c.dataset.f] = c.checked; upd(); });
   v.querySelectorAll('[name="lang"]').forEach(c => c.onchange = () => { w.lang = +c.value; upd(); });
+  wireAi("aix", d, () => EX.letter, tot => { EX.wai = tot; saveEX(); recordResult(); const y = window.scrollY; render(); window.scrollTo(0, y); });
   $("#exnew").onclick = () => { EX = null; saveEX(); render(); window.scrollTo(0, 0); };
   $("#exreview").onclick = () => { PRACTICE[cur] = { ...EX.ans }; MODE = "practice"; tab = "l1"; render(); window.scrollTo(0, 0); };
 }
