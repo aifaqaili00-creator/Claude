@@ -43,6 +43,8 @@ h3 { margin: 4px 0; font-size: 1.05rem; }
 .restab .subt td { background: var(--accent-soft); }
 .bigtot { font-size: 1.35rem; margin-top: 6px; } .pass { color: #2e7d32; font-weight: 700; } .fail { color: #c62828; font-weight: 700; }
 .ailist { margin: 0; padding-left: 18px; } .ailist li { margin-bottom: 3px; } .aierr td { vertical-align: top; }
+.gchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.gchip { font-weight: 500; font-size: .92rem; padding: 6px 10px; } .gchip.picked { outline: 3px solid var(--accent); background: var(--accent-soft); } .gchip.used { opacity: .4; text-decoration: line-through; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card.ok { border-color: var(--ok); } .card.bad { border-color: var(--bad); }
 .picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
@@ -295,7 +297,7 @@ const R = {
     <div class="bin" data-bin="pool">${L.map(k => `<span class="wchip" draggable="true" data-w="${k}"><b>${k}</b> ${esc(d.words[k])}</span>`).join("")}</div>
     <div class="bins">${SORT_BINS.map(([id, name]) => `<div class="bin" data-bin="${id}"><span class="binname">${name}</span></div>`).join("")}</div>
     <button id="sortreset" class="small">↺ Alle zurück</button></div>
-   <div class="card"><div class="muted small">Tap a word, then tap a gap (or drag it onto the gap). Tap a filled gap to empty it.</div><div class="text s2text">${fill(d.text, n => `<span class="dgap" data-q="s2${n - 31}" data-n="${n}">(${n}) ……</span>`)}</div></div>
+   <div class="card"><div class="muted small">1) Tap a word here · 2) tap the gap in the text. Tap a filled gap to empty it.</div><div class="gchips">${L.map(k => `<button type="button" class="gchip" data-pick="${k}"><b>${k}</b> ${esc(d.words[k])}</button>`).join("")}</div><div class="text s2text">${fill(d.text, n => `<span class="dgap" data-q="s2${n - 31}" data-n="${n}">(${n}) ……</span>`)}</div></div>
    ${d.key.map((k,i) => `<div class="card fbcard" id="c_s2${i}"><div><span class="num">${31+i}</span></div></div>`).join("")}`,
    items: d.key.map((k,i) => ({ id:"s2"+i, key:k, why:d.why && d.why[i], keyLabel: k + ") " + d.words[k] })), min:10, after: wireSort }; },
 };
@@ -321,15 +323,19 @@ function wireSort() {
     bin.addEventListener("click", () => { if (picked) put(picked, bin); });
   });
   const words = EXAMS[cur].sprach2.words;
+  let pickedW = null;
+  const clearPick = () => { pickedW = null; document.querySelectorAll(".gchip.picked").forEach(x => x.classList.remove("picked")); if (picked) { picked.classList.remove("picked"); picked = null; } };
+  document.querySelectorAll(".gchip").forEach(b => b.addEventListener("click", ev => { ev.stopPropagation(); const w = b.dataset.pick, again = pickedW === w; clearPick(); if (!again) { pickedW = w; b.classList.add("picked"); } }));
   const refresh = () => { const used = new Set([...document.querySelectorAll(".dgap")].map(g => g.dataset.ans).filter(Boolean));
-    board.querySelectorAll(".wchip").forEach(c => c.classList.toggle("used", used.has(c.dataset.w))); };
+    board.querySelectorAll(".wchip").forEach(c => c.classList.toggle("used", used.has(c.dataset.w)));
+    document.querySelectorAll(".gchip").forEach(c => c.classList.toggle("used", used.has(c.dataset.pick))); };
   const setGap = (g, w) => { if (w) { g.dataset.ans = w; g.textContent = `(${g.dataset.n}) ${w}) ${words[w]}`; g.classList.add("filled"); }
     else { delete g.dataset.ans; g.textContent = `(${g.dataset.n}) ……`; g.classList.remove("filled"); } saveAns(g.dataset.q, w || null); refresh(); };
   document.querySelectorAll(".dgap").forEach(g => {
     g.addEventListener("dragover", ev => { ev.preventDefault(); g.classList.add("over"); });
     g.addEventListener("dragleave", () => g.classList.remove("over"));
     g.addEventListener("drop", ev => { ev.preventDefault(); ev.stopPropagation(); g.classList.remove("over"); setGap(g, ev.dataTransfer.getData("text/plain")); });
-    g.addEventListener("click", () => { if (picked) { setGap(g, picked.dataset.w); picked.classList.remove("picked"); picked = null; } else if (g.dataset.ans) setGap(g, null); });
+    g.addEventListener("click", () => { const w = pickedW || (picked && picked.dataset.w); if (w) { setGap(g, w); clearPick(); } else if (g.dataset.ans) setGap(g, null); });
   });
   document.querySelectorAll(".dgap").forEach(g => { const v0 = ansStore()[g.dataset.q]; if (v0) setGap(g, v0); });
   $("#sortreset").onclick = () => { const pool = board.querySelector('.bin[data-bin="pool"]'); board.querySelectorAll(".wchip").forEach(c => pool.appendChild(c)); saveSort(); };
