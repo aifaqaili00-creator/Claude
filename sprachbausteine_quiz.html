@@ -615,6 +615,23 @@ const LESSONS = [
     inp("Ich arbeite als ___ bei Infineon. (engineer)", "Ingenieur", "Spelling: <b>Ingenieur</b>.", "Ing…"),
     inp("Ich freue mich auf deine ___. (closing line)", "Antwort", "<b>Ich freue mich auf deine Antwort.</b>", "A…"),
     inp("___ Glückwunsch zur Prüfung!", "Herzlichen", "<b>Herzlichen Glückwunsch</b> zu + Dativ.", "H…")
+  ] },
+
+{ lv: 6, title: "Mini-Quiz: meine Fallen", sub: "12 typical traps from your letters and exams.",
+  rule: `<p>Quick check of the traps you fell into most often. For each gap ask: <b>gender?</b> (der/die/das) · <b>case?</b> (Akk/Dat) · <b>wo or wohin?</b> · <b>who is the subject?</b></p>`,
+  items: [
+    mc("Das ist ___ tolle Idee!", ["eine", "ein", "einen"], "<b>die</b> Idee → <b>eine</b> tolle Idee."),
+    mc("Ich habe ___ neue Stelle angefangen.", ["eine", "ein", "einer"], "<b>die</b> Stelle, Akkusativ → <b>eine</b>."),
+    mc("Kann ich ___ Bruder mitbringen?", ["meinen", "mein", "meinem"], "<i>mitbringen</i> has no Dativ trigger → Akkusativ, <b>der</b> Bruder → <b>meinen</b>."),
+    mc("Ich treffe mich ___ meinem Bruder.", ["mit", "—", "zu"], "<b>sich treffen mit</b> + Dativ."),
+    mc("Wir fahren ___ Schweiz.", ["in die", "nach", "in der"], "<b>die</b> Schweiz has an article. Wohin? → <b>in die</b> Schweiz."),
+    mc("Wir treffen uns ___ Schweiz.", ["in der", "in die", "nach"], "Wo? → Dativ → <b>in der</b> Schweiz."),
+    mc("Gestern ___ ich nach Berlin gefahren.", ["bin", "habe", "war"], "<i>fahren</i> = movement → Perfekt with <b>sein</b>: ich <b>bin</b> gefahren."),
+    mc("Ich möchte wissen, ___ du am Samstag Zeit hast.", ["ob", "wenn", "dass"], "Yes/no question inside a sentence → <b>ob</b>."),
+    mc("Der Garten ist groß. Wie viel kostet ___?", ["er", "es", "sie"], "<b>der</b> Garten → <b>er</b>. The pronoun follows the gender."),
+    mc("Viele Produkte ___ Ihnen der Katalog.", ["zeigt", "zeigen", "gezeigt"], "Who shows? <b>der Katalog</b> (subject, singular) → <b>zeigt</b>. The first words are the object."),
+    mc("Die Schüler ___ vom Lehrer beobachtet.", ["wurden", "würden", "werden haben"], "<b>wurden</b> + Partizip II = passive past: they <i>were</i> observed."),
+    mc("Kinder sind verpflichtet, ___ Schule zu besuchen.", ["die", "der", "den"], "<i>besuchen</i> + Akkusativ, <b>die</b> Schule → <b>die</b>.")
   ] }
 ];
 
