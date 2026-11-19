@@ -45,6 +45,9 @@ h3 { margin: 4px 0; font-size: 1.05rem; }
 .ailist { margin: 0; padding-left: 18px; } .ailist li { margin-bottom: 3px; } .aierr td { vertical-align: top; }
 .gchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .gchip { font-weight: 500; font-size: .92rem; padding: 6px 10px; } .gchip.picked { outline: 3px solid var(--accent); background: var(--accent-soft); } .gchip.used { opacity: .4; text-decoration: line-through; }
+.gchip, .wchip { touch-action: none; }
+.dragghost { position: fixed; z-index: 1000; pointer-events: none; transform: translate(-50%, -130%); background: var(--surface); border: 2px solid var(--accent); border-radius: 8px; padding: 6px 10px; box-shadow: 0 6px 18px rgb(0 0 0 / .25); font-weight: 600; }
+.dgap.over { outline: 3px dashed var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card.ok { border-color: var(--ok); } .card.bad { border-color: var(--bad); }
 .picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
@@ -338,6 +341,27 @@ function wireSort() {
     g.addEventListener("click", () => { const w = pickedW || (picked && picked.dataset.w); if (w) { setGap(g, w); clearPick(); } else if (g.dataset.ans) setGap(g, null); });
   });
   document.querySelectorAll(".dgap").forEach(g => { const v0 = ansStore()[g.dataset.q]; if (v0) setGap(g, v0); });
+  // Finger / pen dragging (phones do not support HTML drag and drop): drag a word chip onto a gap or a sorting box.
+  const touchDrag = (el, w, mouseToo) => {
+    let st = null, ghost = null, dragged = false;
+    el.addEventListener("pointerdown", ev => { if (ev.pointerType === "mouse" && !mouseToo) return; if (ev.button > 0) return; st = { x: ev.clientX, y: ev.clientY, id: ev.pointerId }; dragged = false; });
+    el.addEventListener("pointermove", ev => { if (!st || ev.pointerId !== st.id) return;
+      if (!ghost) { if (Math.hypot(ev.clientX - st.x, ev.clientY - st.y) < 8) return;
+        try { el.setPointerCapture(st.id); } catch (err) {}
+        ghost = el.cloneNode(true); ghost.className = "dragghost"; document.body.appendChild(ghost); dragged = true; }
+      ev.preventDefault(); ghost.style.left = ev.clientX + "px"; ghost.style.top = ev.clientY + "px";
+      document.querySelectorAll(".dgap.over,.bin.over").forEach(x => x.classList.remove("over"));
+      const t = document.elementFromPoint(ev.clientX, ev.clientY); const tg = t && (t.closest(".dgap") || (el.classList.contains("wchip") && t.closest(".bin"))); if (tg) tg.classList.add("over"); });
+    const end = ev => { if (!st) return; if (ghost) { ghost.remove(); ghost = null;
+        document.querySelectorAll(".dgap.over,.bin.over").forEach(x => x.classList.remove("over"));
+        const t = document.elementFromPoint(ev.clientX, ev.clientY), g = t && t.closest(".dgap"), b = t && t.closest(".bin");
+        if (g) { setGap(g, w); clearPick(); } else if (b && el.classList.contains("wchip")) put(el, b); }
+      st = null; };
+    el.addEventListener("pointerup", end); el.addEventListener("pointercancel", () => { if (ghost) { ghost.remove(); ghost = null; } st = null; });
+    el.addEventListener("click", ev => { if (dragged) { ev.stopImmediatePropagation(); ev.preventDefault(); dragged = false; } }, true);
+  };
+  document.querySelectorAll(".gchip").forEach(b => touchDrag(b, b.dataset.pick, true));
+  board.querySelectorAll(".wchip").forEach(c => touchDrag(c, c.dataset.w, false));
   $("#sortreset").onclick = () => { const pool = board.querySelector('.bin[data-bin="pool"]'); board.querySelectorAll(".wchip").forEach(c => pool.appendChild(c)); saveSort(); };
 }
 
