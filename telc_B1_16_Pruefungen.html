@@ -50,6 +50,7 @@ h3 { margin: 4px 0; font-size: 1.05rem; }
 .dgap.over { outline: 3px dashed var(--accent); }
 .mctx { font-size: 1.05rem; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
 .mopts { display: flex; flex-direction: column; gap: 6px; } .mopt { text-align: left; font-weight: 500; } .mopt.okc { border-color: #2e7d32; background: rgb(46 125 50 / .14); } .mopt.badc2 { border-color: #c62828; background: rgb(198 40 40 / .12); }
+.wbad { margin-bottom: 4px; } .wfound { color: var(--muted); font-size: .85rem; } .wok { color: #2e7d32; font-weight: 600; } .wlive { border-color: var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card.ok { border-color: var(--ok); } .card.bad { border-color: var(--bad); }
 .picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
@@ -509,6 +510,35 @@ R.h = e => {
    } };
 };
 
+/* ---------- live check for Ali's typical letter mistakes ---------- */
+const WRULES = [
+  [/\b(Lieber)\s+(Petra|Eva|Sophie|Nadja|Nicole|Annika|Iris|Caroline|Vera|Jennifer|Tamara|Sofia|Maria)\b|\bLiebe\s+(Andreas|Thomas|Jan|Viktor)\b/, "Anrede: Frau → <b>Liebe</b> …, Mann → <b>Lieber</b> …"],
+  [/[.!?]\s+[a-zäöü]/, "Nach einem Punkt groß weiterschreiben: <i>. <b>I</b>ch …</i>"],
+  [/\bsehr\s+(Toll|Schön|Gut|Ruhig|Günstig|Müde|Froh|Wichtig|Interessant)\b|\b(I)nternationale?\s+[a-zäöü]/, "Adjektive klein, Nomen groß: <i>sehr <b>t</b>oll · <b>i</b>nternationale <b>M</b>itarbeiter</i>"],
+  [/\b(ein|kein|mein|dein)\s+(\w+e\s+)?(Idee|Stelle|Wohnung|Firma|Stadt|Arbeit|Reise|Einladung|Nachricht|Frage)\b/, "<b>die</b> Idee / Stelle / Wohnung → <b>eine</b> (tolle Idee, neue Stelle)"],
+  [/\b(meine|deine|unsere|seine)\s+Traum\b/, "<b>der</b> Traum → <b>mein</b> Traum"],
+  [/\bIng(?!enieur)\w*eu?r\b|\bEngineur\b/, "Schreibweise: <b>Ingenieur</b>"],
+  [/\b(nach|in)\s+Schweiz\b|\bnach\s+Türkei\b/, "<b>in die</b> Schweiz (wohin) · <b>in der</b> Schweiz (wo)"],
+  [/\bhabe\b[^.!?]{0,60}\b(gefahren|gegangen|gereist|geflogen|gewandert|gezogen|gekommen|umgezogen)\b/, "Bewegung → <b>bin</b> gefahren / gegangen / gereist / gezogen"],
+  [/\b(Herzlich Gl|Gl[uü]ckw[uü]nsch\b|Glückwunsch\s+(für|zur deine))/, "<b>Herzlichen Glückwunsch zu deiner</b> neuen Stelle!"],
+  [/\bzu\s+(deine|meine|ihre)\s/, "<b>zu</b> + Dativ: zu dein<b>er</b> / mein<b>er</b>"],
+  [/treffe mich (meinen|meinem|deinen|deinem|mein)\b/, "<b>sich treffen mit</b>: Ich treffe mich <b>mit meinem</b> Bruder."],
+  [/\b(meinem|deinem)\s+\w+\s+mitbringen/, "<b>mitbringen</b> + Akkusativ: <b>meinen</b> Bruder mitbringen"],
+  [/(freue mich auf deinen Brief|habe mich (über|auf) gefreut|Ich habe mich auf)/, "Schluss: <b>Ich freue mich auf deine Antwort.</b> · Anfang: Ich habe mich <b>darüber</b> gefreut."],
+  [/(^|[.!?]\s+)Ob\b[^.?!]*\?/m, "Direkte Frage ohne <b>ob</b>: <i>Gibt es …?</i> (ob nur nach: Ich möchte wissen, ob …)"],
+  [/\b(Manchmal|manchmal|In meiner Freizeit|Am Wochenende|Zuerst|Dann|Deshalb|deshalb|Jetzt|Außerdem|In Pakistan)\s*,?\s+(ich|wir|es|er|sie)\s+[a-zäöü]+/, "Verb auf Position 2: <i>Manchmal <b>spiele ich</b> … · In meiner Freizeit <b>treibe ich</b> …</i>"],
+  [/\b(Herzliche|Viele|Liebe)\s+Grüße\s*,/, "Kein Komma nach dem Gruß: <b>Herzliche Grüße</b>"],
+  [/\bam\s+Weihnachten\b|\bam Weihnachtsfest\b/, "<b>an Weihnachten</b>"],
+  [/\bin\s+(Dresden|Berlin|München)\b.*\bnach Deutschland\b|\bnach Deutschland\b.*^Dresden/s, "Logik: Du reist nach Deutschland → schreib nicht aus Dresden"]
+];
+function wcheck(t) {
+  const body = t.trim(); const out = [];
+  WRULES.forEach(([re, msg]) => { const m = body.match(re); if (m) out.push(`<li class="wbad">⚠️ ${msg} <span class="wfound">„${esc(m[0].trim().slice(0, 40))}“</span></li>`); });
+  const n = words(body);
+  if (n && n < 110) out.push(`<li class="wbad">⚠️ Nur <b>${n}</b> Wörter – Ziel 120–150 (3 Sätze pro Punkt).</li>`);
+  return out;
+}
+
 /* ---------- AI letter check (asks Claude via the artifact "sample" capability) ---------- */
 let SAMPLE = null; (async () => { try { SAMPLE = window.claude ? await window.claude.use("sample") : null; } catch (err) { SAMPLE = null; } document.querySelectorAll(".aibox").forEach(b => b.hidden = !SAMPLE); document.querySelectorAll(".ainote").forEach(b => b.hidden = !!SAMPLE); })();
 const aiBoxHTML = id => `<div class="card aibox" ${SAMPLE ? "" : "hidden"}><div class="row"><button class="primary" id="${id}btn">🤖 Brief bewerten lassen (telc)</button><span class="muted small">Claude checks your letter like a telc examiner.</span></div><div id="${id}out" aria-live="polite"></div></div><div class="muted small ainote" ${SAMPLE ? "hidden" : ""}>🤖 The automatic letter check works when this page is opened on claude.ai.</div>`;
@@ -566,11 +596,14 @@ R.w = e => { const d = e.schreiben, key = "b1letter" + cur;
    <div class="card"><div class="text">${esc(d.letter)}</div></div>
    <div class="card"><b>${esc(d.task)}</b><ul>${d.points.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>
    <textarea id="letter" aria-label="Ihr Brief" placeholder="Berlin, den ...&#10;&#10;Liebe ...,"></textarea>
-   <div class="row"><span id="wc" class="muted">0 words</span><button id="model">Show model letter</button></div>${aiBoxHTML("aiw")}
+   <div class="card wlive"><div class="row" style="justify-content:space-between"><b>🔎 Meine typischen Fehler – Live-Check</b><span class="muted small">updates while you type</span></div><ul id="wlist" class="ailist"></ul>
+   <details><summary>Alle meine Regeln (${WRULES.length})</summary><ul class="ailist small">${WRULES.map(r => `<li>${r[1]}</li>`).join("")}</ul></details>
+   <div class="muted small">Checks only the mistakes you made in your past letters – not everything. Also check: all 4 points answered?</div></div><div class="row"><span id="wc" class="muted">0 words</span><button id="model">Show model letter</button></div>${aiBoxHTML("aiw")}
    <div class="card" id="modelBox" hidden><h3>Musterbrief</h3><div class="text">${esc(d.model)}</div><h3>Useful phrases</h3><ul>${(d.phrases||[]).map(p => `<li>${esc(p)}</li>`).join("")}</ul>
    <h3>Checklist</h3><ul><li>All 4 points? (each point = 2–3 sentences)</li><li>Verb in position 2; after weil/dass/wenn the verb goes to the end</li><li>Du/Sie consistent (Dich/Dir/Dein)</li><li>Connectors: außerdem, deshalb, trotzdem, leider, zum Schluss</li></ul></div>`,
    noCheck: true,
-   after() { const ta = $("#letter"); ta.value = store.get(key) || ""; const wc = () => $("#wc").textContent = (ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0) + " words"; wc();
+   after() { const ta = $("#letter"); ta.value = store.get(key) || ""; let wt = null; const wl = () => { const r = wcheck(ta.value); $("#wlist").innerHTML = ta.value.trim() ? (r.length ? r.join("") : `<li class="wok">✅ Keiner deiner typischen Fehler gefunden!</li>`) : `<li class="muted">Start writing – your typical mistakes are checked here.</li>`; };
+     const wc = () => { $("#wc").textContent = (ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0) + " words"; clearTimeout(wt); wt = setTimeout(wl, 400); }; wc(); wl();
      ta.oninput = () => { wc(); store.set(key, ta.value); }; $("#model").onclick = () => { $("#modelBox").hidden = !$("#modelBox").hidden; };
      wireAi("aiw", d, () => ta.value, tot => store.set("b1wscore" + cur, tot)); } };
 };
