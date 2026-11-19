@@ -534,6 +534,9 @@ const WRULES = [
 function wcheck(t) {
   const body = t.trim(); const out = [];
   WRULES.forEach(([re, msg]) => { const m = body.match(re); if (m) out.push(`<li class="wbad">⚠️ ${msg} <span class="wfound">„${esc(m[0].trim().slice(0, 40))}“</span></li>`); });
+  const sents = body.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 3 && !/^(Liebe|Lieber|Sehr|Viele|Herzliche|Liebe Grüße|Ali|Dresden|Betreff)/.test(x));
+  const ich = sents.filter(x => /^(Ich|Wir)\b/.test(x)).length;
+  if (sents.length >= 6 && ich / sents.length > 0.5) out.push(`<li class="wbad">⚠️ <b>${ich} von ${sents.length}</b> Sätzen beginnen mit <i>Ich/Wir</i> – telc gibt dann kein A. Beginne öfter mit <i>Am Wochenende … / Deshalb … / Leider … / Außerdem …</i> (Verb danach!).</li>`);
   const n = words(body);
   if (n && n < 110) out.push(`<li class="wbad">⚠️ Nur <b>${n}</b> Wörter – Ziel 120–150 (3 Sätze pro Punkt).</li>`);
   return out;
@@ -541,12 +544,12 @@ function wcheck(t) {
 
 /* ---------- AI letter check (asks Claude via the artifact "sample" capability) ---------- */
 let SAMPLE = null; (async () => { try { SAMPLE = window.claude ? await window.claude.use("sample") : null; } catch (err) { SAMPLE = null; } document.querySelectorAll(".aibox").forEach(b => b.hidden = !SAMPLE); document.querySelectorAll(".ainote").forEach(b => b.hidden = !!SAMPLE); })();
-const aiBoxHTML = id => `<div class="card aibox" ${SAMPLE ? "" : "hidden"}><div class="row"><button class="primary" id="${id}btn">🤖 Brief bewerten lassen (telc)</button><span class="muted small">Claude checks your letter like a telc examiner.</span></div><div id="${id}out" aria-live="polite"></div></div><div class="muted small ainote" ${SAMPLE ? "hidden" : ""}>🤖 The automatic letter check works when this page is opened on claude.ai.</div>`;
+const aiBoxHTML = id => `<div class="card aibox" ${SAMPLE ? "" : "hidden"}><div class="row"><button class="primary" id="${id}btn">🤖 Brief bewerten lassen (telc)</button><span class="muted small">Claude checks your e-mail like a telc examiner (A/B/C/D = 15/9/3/0 per criterion).</span></div><div id="${id}out" aria-live="polite"></div></div><div class="muted small ainote" ${SAMPLE ? "hidden" : ""}>🤖 The automatic letter check works when this page is opened on claude.ai.</div>`;
 function aiPrompt(d, letter) {
-  return `You are a strict but kind telc Deutsch B1 examiner. Grade this letter (Schriftlicher Ausdruck) with the official telc B1 criteria, each scored 15, 10, 5 or 0:
-I Inhalt / Aufgabenbewältigung: are all 4 points covered, clearly and with some detail? (4 points well = 15, 3 = 10, 2 = 5, fewer = 0; reduce if a point is only hinted at)
-II Kommunikative Gestaltung: date, salutation (Liebe/Lieber + comma for a woman/man, Sehr geehrte… if formal), introduction, logical order, connectors, closing sentence, greeting, register (du/Sie) consistent.
-III Formale Richtigkeit: grammar, word order, spelling, capital letters on nouns. Errors that hinder understanding count more.
+  return `You are a strict but kind telc Deutsch B1 examiner. Grade this e-mail/letter (Schriftlicher Ausdruck) with the official telc B1 criteria. Each criterion gets A, B, C or D, worth 15, 9, 3 or 0 points (A=5, B=3, C=1, D=0, times 3):
+I Aufgabenbewältigung: how many of the 4 Leitpunkte are handled in a sensible, understandable way that fits the task? 4 = 15, 3 = 9, 2 = 3, 0–1 = 0. One short sentence is enough for a point; two points may share one sentence; a suggestion may be accepted, declined or answered with a counter-proposal.
+II Kommunikative Gestaltung: e-mail features (salutation Liebe/Lieber + comma, introduction, closing, greeting; date/subject not required), consistent register (du/Sie), logical order, connectors, range of vocabulary. Do NOT give 15 if: e-mail features are missing, the register is wrong or mixed, the points stand unconnected next to each other, or most sentences start with "Ich" or "Wir".
+III Formale Richtigkeit: understandability comes first. Ending and gender errors weigh less than agreement (subject-verb) errors and errors that make the text hard to understand; spelling and punctuation must be good enough that the text is mostly understandable.
 The student is a learner from Pakistan who lives in Dresden. Write all explanations in simple English. Keep German examples German.
 
 TASK LETTER:
@@ -560,11 +563,11 @@ STUDENT'S LETTER:
 ${letter}
 
 Reply with only one JSON object, no other text, in exactly this shape:
-{"inhalt":15,"kommunikation":10,"korrektheit":5,"words":123,"punkte":[{"punkt":"point 1 text","ok":true,"kommentar":"short comment"}],"fehler":[{"falsch":"wrong phrase","richtig":"correct phrase","regel":"short rule"}],"tipps":["tip 1","tip 2","tip 3"],"korrigiert":"the full corrected letter, keeping the student's ideas, with line breaks as \\n"}
+{"inhalt":15,"kommunikation":9,"korrektheit":3,"words":123,"punkte":[{"punkt":"point 1 text","ok":true,"kommentar":"short comment"}],"fehler":[{"falsch":"wrong phrase","richtig":"correct phrase","regel":"short rule"}],"tipps":["tip 1","tip 2","tip 3"],"korrigiert":"the full corrected letter, keeping the student's ideas, with line breaks as \\n"}
 List up to 15 of the most important mistakes in "fehler", in the order they appear.`;
 }
 function aiRender(out, r) {
-  const n = v => [0, 5, 10, 15].includes(+v) ? +v : Math.max(0, Math.min(15, Math.round(+v / 5) * 5) || 0);
+  const n = v => { v = +v || 0; return [0, 3, 9, 15].reduce((a, b) => Math.abs(b - v) < Math.abs(a - v) ? b : a, 0); };
   const a = n(r.inhalt), b = n(r.kommunikation), c = n(r.korrektheit), tot = a + b + c;
   const pts = Array.isArray(r.punkte) ? r.punkte : [], err = Array.isArray(r.fehler) ? r.fehler : [], tips = Array.isArray(r.tipps) ? r.tipps : [];
   out.innerHTML = `<div class="bigtot">Schreiben: <b>${tot} / 45</b> <span class="${tot >= 27 ? "pass" : "fail"}" style="font-size:1rem">${tot >= 27 ? "✓ gut genug (60 %)" : "unter 60 % (27)"}</span></div>
