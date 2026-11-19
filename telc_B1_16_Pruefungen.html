@@ -45,7 +45,7 @@ h3 { margin: 4px 0; font-size: 1.05rem; }
 .ailist { margin: 0; padding-left: 18px; } .ailist li { margin-bottom: 3px; } .aierr td { vertical-align: top; }
 .gchips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .gchip { font-weight: 500; font-size: .92rem; padding: 6px 10px; } .gchip.picked { outline: 3px solid var(--accent); background: var(--accent-soft); } .gchip.used { opacity: .4; text-decoration: line-through; }
-.gchip, .wchip { touch-action: none; }
+.gchip, .wchip { touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
 .dragghost { position: fixed; z-index: 1000; pointer-events: none; transform: translate(-50%, -130%); background: var(--surface); border: 2px solid var(--accent); border-radius: 8px; padding: 6px 10px; box-shadow: 0 6px 18px rgb(0 0 0 / .25); font-weight: 600; }
 .dgap.over { outline: 3px dashed var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -296,8 +296,8 @@ const R = {
  s2(e) { const d = e.sprach2, L = Object.keys(d.words);
   return { html: `${hero("sprach", "Sprachbausteine Teil 2", "Aufgaben 31–40 · Wortkasten")}<div class="rules">Fill gaps 31–40 with words a–o. Each word fits only once; 5 words are left over. Time: about 10 min.</div>${timerHTML(10)}
    <div class="card"><div class="hl">${L.map(k => `<b>${k}</b><span>${esc(d.words[k])}</span>`).join("")}</div></div>
-   <div class="card sortboard"><div class="row" style="justify-content:space-between"><b>Sortieren</b><span class="muted small">Drag a word into a box – or tap a word, then tap a box.</span></div>
-    <div class="bin" data-bin="pool">${L.map(k => `<span class="wchip" draggable="true" data-w="${k}"><b>${k}</b> ${esc(d.words[k])}</span>`).join("")}</div>
+   <div class="card sortboard"><div class="row" style="justify-content:space-between"><b>Sortieren</b><span class="muted small">Drag a word into a box (mouse or finger) – or tap a word, then tap a box.</span></div>
+    <div class="bin" data-bin="pool">${L.map(k => `<span class="wchip" data-w="${k}"><b>${k}</b> ${esc(d.words[k])}</span>`).join("")}</div>
     <div class="bins">${SORT_BINS.map(([id, name]) => `<div class="bin" data-bin="${id}"><span class="binname">${name}</span></div>`).join("")}</div>
     <button id="sortreset" class="small">↺ Alle zurück</button></div>
    <div class="card"><div class="muted small">1) Tap a word here · 2) tap the gap in the text. Tap a filled gap to empty it.</div><div class="gchips">${L.map(k => `<button type="button" class="gchip" data-pick="${k}"><b>${k}</b> ${esc(d.words[k])}</button>`).join("")}</div><div class="text s2text">${fill(d.text, n => `<span class="dgap" data-q="s2${n - 31}" data-n="${n}">(${n}) ……</span>`)}</div></div>
@@ -315,8 +315,6 @@ function wireSort() {
   const m = store.get(key) || {};
   board.querySelectorAll(".wchip").forEach(c => { const b = m[c.dataset.w] && board.querySelector(`.bin[data-bin="${m[c.dataset.w]}"]`); if (b) b.appendChild(c); });
   board.querySelectorAll(".wchip").forEach(c => {
-    c.addEventListener("dragstart", ev => { ev.dataTransfer.setData("text/plain", c.dataset.w); c.classList.add("picked"); });
-    c.addEventListener("dragend", () => c.classList.remove("picked"));
     c.addEventListener("click", ev => { ev.stopPropagation(); if (picked === c) { c.classList.remove("picked"); picked = null; return; } if (picked) picked.classList.remove("picked"); picked = c; c.classList.add("picked"); });
   });
   board.querySelectorAll(".bin").forEach(bin => {
@@ -361,7 +359,7 @@ function wireSort() {
     el.addEventListener("click", ev => { if (dragged) { ev.stopImmediatePropagation(); ev.preventDefault(); dragged = false; } }, true);
   };
   document.querySelectorAll(".gchip").forEach(b => touchDrag(b, b.dataset.pick, true));
-  board.querySelectorAll(".wchip").forEach(c => touchDrag(c, c.dataset.w, false));
+  board.querySelectorAll(".wchip").forEach(c => touchDrag(c, c.dataset.w, true));
   $("#sortreset").onclick = () => { const pool = board.querySelector('.bin[data-bin="pool"]'); board.querySelectorAll(".wchip").forEach(c => pool.appendChild(c)); saveSort(); };
 }
 
