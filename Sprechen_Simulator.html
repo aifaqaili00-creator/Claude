@@ -1,0 +1,254 @@
+<title>Sprechen-Simulator B1</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: one column like an exam-room transcript; a fixed answer bar with the microphone at the bottom */
+:root{--bg:#f2f4f8;--surface:#ffffff;--fg:#17202e;--muted:#5d6878;--accent:#1f4f8f;--accent-soft:#e2eaf6;--line:#d6dce6;--you:#e7f3ea;--you-line:#9ccaa7;--exam:#fff4dc;--exam-line:#e9c77a;--good:#2e7d32;--bad:#c62828;
+--display:"Space Grotesk",system-ui,sans-serif;--body:"Inter",system-ui,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10151d;--surface:#18202b;--fg:#e8edf5;--muted:#9aa6b6;--accent:#86b2ee;--accent-soft:#1f2d42;--line:#2a3646;--you:#16301e;--you-line:#3f7a4e;--exam:#33290f;--exam-line:#8a6d2b;--good:#7cc47f;--bad:#ef8a8a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10151d;--surface:#18202b;--fg:#e8edf5;--muted:#9aa6b6;--accent:#86b2ee;--accent-soft:#1f2d42;--line:#2a3646;--you:#16301e;--you-line:#3f7a4e;--exam:#33290f;--exam-line:#8a6d2b;--good:#7cc47f;--bad:#ef8a8a;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 var(--body)}
+.wrap{max-width:720px;margin:0 auto;padding-block:18px 190px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+h1{font:700 1.55rem/1.2 var(--display);margin:0}
+h2{font:700 1.15rem/1.3 var(--display);margin:0}
+.sub{color:var(--muted);margin:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,textarea,input{font:inherit;color:var(--fg)}
+button{font-weight:600;border-radius:10px;padding:9px 14px;border:1px solid var(--line);background:var(--surface);cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.part{font-size:.78rem;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-top:6px}
+.msg{border-radius:12px;padding:10px 12px;max-width:88%;border:1px solid var(--line);background:var(--surface)}
+.msg .who{font-size:.78rem;font-weight:700;color:var(--muted);margin-bottom:2px}
+.msg.you{align-self:flex-end;background:var(--you);border-color:var(--you-line)}
+.msg.examiner{background:var(--exam);border-color:var(--exam-line);max-width:100%}
+.taskcard{background:var(--accent-soft);border:1.5px solid var(--accent);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.taskcard q{font-style:italic;quotes:"„" "“"}
+.taskcard .by{color:var(--muted);font-size:.9rem}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding-top:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));z-index:5}
+.bar .in{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+textarea{width:100%;box-sizing:border-box;min-height:64px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--bg);resize:vertical}
+.mic{min-width:150px}
+.mic.on{background:var(--bad);border-color:var(--bad);color:#fff}
+.status{color:var(--muted);font-size:.9rem;min-height:1.3em}
+.score{font:700 2.2rem/1 var(--display);font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+.bad{color:var(--bad)}.good{color:var(--good)}
+.small{font-size:.88rem}.muted{color:var(--muted)}
+ul{margin:0;padding-left:18px}
+.tablewrap{overflow-x:auto}
+</style>
+<div class="wrap" id="app">
+  <div><h1>Sprechen-Simulator</h1><p class="sub">telc B1 · Teil 1, 2 und 3 mit Prüfer und Partner · am Ende Bewertung</p></div>
+  <div class="card" id="start">
+    <h2>So funktioniert's</h2>
+    <ul class="small">
+      <li>The examiner and your partner <b>speak to you</b>. Then it's your turn.</li>
+      <li>Tap <b>🎤 Sprechen</b>, say your answer in German, tap again to stop. Check the text, then tap <b>Senden</b>. You can also type.</li>
+      <li>Like the real exam: <b>Teil 1</b> (get to know each other) → <b>Teil 2</b> (opinions on a topic) → <b>Teil 3</b> (plan something together).</li>
+      <li>At the end you get a <b>score out of 75</b> and your corrected sentences.</li>
+    </ul>
+    <div class="row">
+      <label class="small" for="voiceSel">Stimmen:</label>
+      <select id="voiceSel"><option value="on">vorlesen (an)</option><option value="off">nur Text</option></select>
+      <button class="primary" id="go">▶ Prüfung starten</button>
+    </div>
+    <p class="status" id="caps"></p>
+  </div>
+  <div id="log" class="row" style="flex-direction:column;align-items:stretch;gap:10px"></div>
+  <div id="result"></div>
+</div>
+<div class="bar" id="bar" hidden>
+  <div class="in">
+    <div class="status" id="status">…</div>
+    <textarea id="ans" placeholder="Deine Antwort auf Deutsch …"></textarea>
+    <div class="row">
+      <button class="mic" id="mic">🎤 Sprechen</button>
+      <button class="primary" id="send">Senden</button>
+      <button id="repeat">🔁 Nochmal hören</button>
+      <button id="finish">Prüfung beenden & bewerten</button>
+    </div>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+let SAMPLE = null, TTS = null, DICT = null;
+
+const PARTNERS = [{ name: "Tom", from: "Österreich, aus Graz", job: "Krankenpfleger", voice: "rounded" }, { name: "Lena", from: "Polen, aus Krakau", job: "Studentin (Pädagogik)", voice: "airy" }, { name: "Sara", from: "Spanien, aus Valencia", job: "Köchin", voice: "airy" }];
+const TOPICS2 = [
+  { t: "Gruppenreisen", you: ["Sabine Klostermann, 33 Jahre, Bürokauffrau", "Ich verreise gern in einer Gruppe. Allein reisen macht mir keinen Spaß. Bei Gruppenreisen kann man neue Leute kennenlernen und hat immer Gesellschaft. Außerdem ist ein Reiseführer dabei, der einem die Sehenswürdigkeiten zeigt."], partner: ["Jens Mühle, 39 Jahre, Physiker", "Wenn man mit einer Gruppe unterwegs ist, gibt es meist ein festes Programm. Daher reise ich immer allein. Manchmal möchte ich ausschlafen, manchmal etwas besichtigen. In einer Gruppe wäre das nicht möglich."] },
+  { t: "Homeoffice", you: ["Markus Weber, 41 Jahre, Programmierer", "Seit zwei Jahren arbeite ich fast nur noch von zu Hause. Ich spare jeden Tag eine Stunde Fahrzeit und kann mir meine Zeit selbst einteilen. Außerdem ist es zu Hause viel ruhiger als im Großraumbüro."], partner: ["Julia Hartmann, 29 Jahre, Verkäuferin", "Homeoffice ist nichts für mich. Zu Hause fühle ich mich allein, und ich kann Arbeit und Freizeit nicht gut trennen. Im Büro kann ich mit meinen Kollegen sprechen und zusammen Mittag essen."] },
+  { t: "Handy für Kinder", you: ["Petra Lang, 44 Jahre, Lehrerin", "Meine Tochter hat mit zehn Jahren ein Handy bekommen. So kann sie mich immer anrufen, wenn etwas passiert. Ich fühle mich sicherer, und sie lernt früh, mit Technik umzugehen."], partner: ["Ahmed Yilmaz, 38 Jahre, Busfahrer", "Kinder brauchen kein eigenes Handy. Sie sitzen dann nur noch vor dem Bildschirm und spielen draußen nicht mehr mit Freunden. Mein Sohn bekommt erst mit vierzehn ein Handy."] },
+  { t: "Online einkaufen", you: ["Lisa Brandt, 27 Jahre, Studentin", "Ich kaufe fast alles im Internet. Das ist bequem, oft billiger, und ich spare Zeit. Ich kann die Preise vergleichen und alles nach Hause liefern lassen."], partner: ["Klaus Becker, 56 Jahre, Elektriker", "Ich kaufe lieber im Geschäft. Dort kann ich die Sachen anfassen und anprobieren, und die Verkäufer beraten mich. Außerdem müssen sonst die kleinen Geschäfte in unserer Stadt schließen."] },
+  { t: "Leben auf dem Land", you: ["Maria Schulz, 35 Jahre, Krankenschwester", "Wir sind mit unseren Kindern aufs Land gezogen. Hier ist es ruhig, die Luft ist sauber, und die Kinder können draußen spielen. Die Mieten sind auch viel günstiger als in der Stadt."], partner: ["David Krüger, 31 Jahre, Grafiker", "Ich könnte nie auf dem Land wohnen. In der Stadt gibt es Kinos, Restaurants und Konzerte, und ich brauche kein Auto. Auf dem Land fährt der Bus nur zweimal am Tag."] }
+];
+const TASKS3 = [
+  { t: "Abschiedsparty", s: "Sie haben zwei Wochen Urlaub gemacht und nette Deutsche kennengelernt. Vor dem Ende des Urlaubs möchten Sie zusammen eine Abschiedsparty feiern.", p: ["Wann?", "Wo?", "Essen", "Getränke", "Wer bezahlt wofür?", "…"] },
+  { t: "Geburtstagsausflug", s: "Ein Freund aus Ihrem Deutschkurs hat bald Geburtstag. Sie möchten zusammen einen Ausflug für ihn organisieren.", p: ["Wann?", "Wohin?", "Wie fahren Sie dorthin?", "Geschenk", "Wer macht was?", "…"] },
+  { t: "Kursabschluss", s: "Ihr Deutschkurs ist bald zu Ende. Sie möchten zusammen ein Fest für den Kurs und die Lehrerin organisieren.", p: ["Wann?", "Wo?", "Essen und Getränke", "Geschenk für die Lehrerin", "Wer macht was?", "…"] },
+  { t: "Besuch einer Freundin", s: "Eine gemeinsame Freundin aus dem Ausland besucht Sie für ein Wochenende in Ihrer Stadt. Planen Sie zusammen das Programm.", p: ["Abholen (wann? wo?)", "Übernachtung", "Programm am Samstag", "Essen", "Wer macht was?", "…"] }
+];
+const LIMIT = { 1: 5, 2: 4, 3: 6 };
+let S = null;
+
+/* ---------- speaking ---------- */
+let lastSpoken = "";
+function deviceSay(text, male) { return new Promise(res => { try { const ss = speechSynthesis; ss.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "de-DE"; u.rate = .95;
+  const vs = ss.getVoices().filter(v => (v.lang || "").startsWith("de")); const v = vs.find(v => male ? /male|conrad|stefan|markus|yannick|hans|florian/i.test(v.name) : /female|anna|katja|petra|helena|vicki|marlene/i.test(v.name)) || vs[0]; if (v) u.voice = v;
+  const t = setTimeout(res, 20000); u.onend = u.onerror = () => { clearTimeout(t); res(); }; ss.speak(u); } catch (e) { res(); } }); }
+async function say(text, who) {
+  lastSpoken = text; if ($("#voiceSel").value === "off") return;
+  setStatus(who === "examiner" ? "🔊 Der Prüfer spricht …" : `🔊 ${S.partner.name} spricht …`);
+  if (TTS) { try { await TTS.speak(text, { language: "de-DE", voice: who === "examiner" ? "glassy" : S.partner.voice }); return; } catch (e) { if (e && e.code === "viewer_stopped") return; } }
+  await deviceSay(text, who === "examiner" ? true : S.partner.voice === "rounded");
+}
+/* ---------- transcript ---------- */
+function add(who, text, html) {
+  S.log.push({ who, text, part: S.part });
+  const d = document.createElement("div");
+  d.className = "msg " + who;
+  const name = who === "you" ? "Du (Ali)" : who === "examiner" ? "Prüfer" : S.partner.name;
+  d.innerHTML = `<div class="who">${name}</div>${html || esc(text)}`;
+  $("#log").appendChild(d); d.scrollIntoView({ block: "end", behavior: "smooth" });
+}
+function addPart(title) { const d = document.createElement("div"); d.className = "part"; d.textContent = title; $("#log").appendChild(d); }
+function addCard(html) { const d = document.createElement("div"); d.className = "taskcard"; d.innerHTML = html; $("#log").appendChild(d); }
+const setStatus = t => { $("#status").textContent = t; };
+function yourTurn(hint) { S.busy = false; $("#send").disabled = false; $("#mic").disabled = !DICT; setStatus("🟢 Du bist dran" + (hint ? ": " + hint : "")); $("#ans").focus({ preventScroll: true }); }
+
+/* ---------- partner via Claude ---------- */
+function partnerPrompt() {
+  const p = S.partner, part = S.part;
+  const ctx = part === 1 ? `TEIL 1 (Einander kennenlernen). Topics: Name, Herkunft, Wohnen (Wohnung/Haus), Familie, wo Deutsch gelernt, Beruf/Studium, Sprachen, Wochenende/Hobbys. Answer Ali's question about yourself briefly, then ask Ali about ONE topic you have not discussed yet.`
+    : part === 2 ? `TEIL 2 (Über ein Thema sprechen), topic "${S.t2.t}". Ali's card: ${S.t2.you[0]}: "${S.t2.you[1]}". YOUR card: ${S.t2.partner[0]}: "${S.t2.partner[1]}". If you have not yet presented your card, do it now in 2-3 sentences ("Auf meinem Blatt geht es auch um … X sagt, dass …"), then give your own opinion in one sentence and ask Ali a question. Otherwise react to Ali, share a short personal experience, and ask a follow-up question.`
+    : `TEIL 3 (Gemeinsam etwas planen): ${S.t3.s} Points: ${S.t3.p.join(", ")}. Go through the points one by one. React to Ali's suggestion (agree, or politely make a counter-suggestion with a reason), then raise the next open point or ask who does what. Keep track of what was agreed. If Ali contradicts an earlier agreement, point it out kindly.`;
+  const hist = S.log.filter(m => m.part === part || m.who === "examiner").slice(-14).map(m => (m.who === "you" ? "Ali" : m.who === "examiner" ? "Prüfer" : p.name) + ": " + m.text).join("\n");
+  return `You are ${p.name}, a candidate in the oral telc Deutsch B1 exam, talking with your exam partner Ali (from Lahore, Pakistan; lives in Dresden; engineer at Infineon). You are from ${p.from} and work as ${p.job}. You and Ali say "du".
+${ctx}
+Rules: Reply ONLY with what ${p.name} says, in simple, natural spoken German at B1 level, 1 to 3 short sentences, no emojis, no stage directions. Never correct Ali's German. Always end with a question or a clear handover to Ali.
+
+Conversation so far:
+${hist}
+
+${p.name}:`;
+}
+async function partnerTurn() {
+  S.busy = true; $("#send").disabled = true; $("#mic").disabled = true; setStatus(`💭 ${S.partner.name} denkt nach …`);
+  let text = "";
+  try { const r = await SAMPLE(partnerPrompt(), { modelTier: "quick", cache: false }); text = r.text.trim().replace(/^\w+:\s*/, ""); }
+  catch (e) { setStatus("⚠️ " + (e && e.code === "rate_limited" ? "Too many requests – wait a minute, then tap Senden again." : e && (e.code === "not_granted" || e.code === "sampling_disabled") ? "Claude is not allowed for this page, so the partner cannot answer." : "The partner could not answer. Tap Senden again.")); S.busy = false; $("#send").disabled = false; $("#mic").disabled = !DICT; S.retry = true; return; }
+  add("partner", text); await say(text, "partner"); yourTurn();
+}
+
+/* ---------- exam flow ---------- */
+async function examiner(text) { add("examiner", text); await say(text, "examiner"); }
+async function startPart(n) {
+  S.part = n; S.turns = 0;
+  if (n === 1) { addPart("Teil 1 · Einander kennenlernen");
+    await examiner(`Guten Tag und willkommen zur Mündlichen Prüfung telc Deutsch B1. Die Prüfung hat drei Teile. Beginnen wir mit Teil 1. Bitte stellen Sie sich gegenseitig vor. Sie können sich duzen. Herr Ali, möchten Sie anfangen? Begrüßen Sie bitte ${S.partner.name}.`);
+    yourTurn("say hello, your name, and ask one question"); }
+  if (n === 2) { addPart(`Teil 2 · Über ein Thema sprechen · ${S.t2.t}`);
+    addCard(`<b>Dein Aufgabenblatt: ${esc(S.t2.t)}</b><q>${esc(S.t2.you[1])}</q><span class="by">— ${esc(S.t2.you[0])}</span><span class="small muted">Erzähle, was die Person sagt (<i>Er/Sie sagt, dass …</i>), dann deine Meinung, deine Erfahrung und eine Frage an ${esc(S.partner.name)}.</span>`);
+    await examiner(`Vielen Dank. Nun kommen wir zu Teil 2. Sie haben beide unterschiedliche Aufgabenblätter mit Meinungen zum Thema ${S.t2.t} bekommen. Herr Ali, möchten Sie anfangen? Worum geht es auf dem Blatt, das Sie bekommen haben?`);
+    yourTurn("present your card (about 1 minute)"); }
+  if (n === 3) { addPart(`Teil 3 · Gemeinsam etwas planen · ${S.t3.t}`);
+    addCard(`<b>Aufgabe: ${esc(S.t3.t)}</b><span>${esc(S.t3.s)}</span><ul>${S.t3.p.map(x => `<li>${esc(x)}</li>`).join("")}</ul><span class="small muted">Make suggestions with reasons, react to ${esc(S.partner.name)}, decide who does what, and at the end summarise: <i>Also, dann machen wir es so: …</i></span>`);
+    await examiner(`Vielen Dank. Nun machen wir weiter mit Teil 3. Sie sollen gemeinsam etwas planen: ${S.t3.t}. Zum Schluss einigen Sie sich bitte darüber, was zu tun ist und wer welche Aufgabe übernimmt. Herr Ali, fangen Sie doch bitte an und sagen Sie, welche Vorschläge Sie haben.`);
+    yourTurn("make your first suggestion"); }
+}
+async function send() {
+  if (S.busy) return;
+  const text = $("#ans").value.trim();
+  if (S.retry && !text) { S.retry = false; return partnerTurn(); }
+  if (!text) { setStatus("Say or type your answer first."); return; }
+  if (DICT && DICT.active()) { try { await DICT.stop(); } catch (e) {} }
+  $("#ans").value = ""; S.retry = false; add("you", text); S.turns++;
+  if (S.part === 3 && S.askedSummary) { await examiner("Vielen Dank. Die Prüfung ist beendet."); return assess(); }
+  if (S.turns >= LIMIT[S.part]) {
+    if (S.part === 1) return startPart(2);
+    if (S.part === 2) return startPart(3);
+    if (S.part === 3 && !S.askedSummary) { S.askedSummary = true; const t = `Gut. Fass doch bitte noch einmal alles zusammen, Ali: Was haben wir geplant, und wer macht was?`; add("partner", t); await say(t, "partner"); return yourTurn("give the summary: Also, dann machen wir es so …"); }
+  }
+  if (S.part === 1 && S.turns === LIMIT[1] - 1) { await examiner("Herr Ali, eine Frage noch: Wie verbringen Sie normalerweise Ihr Wochenende?"); return yourTurn(); }
+  partnerTurn();
+}
+
+/* ---------- assessment ---------- */
+async function assess() {
+  $("#bar").hidden = true; if (DICT && DICT.active()) { try { await DICT.stop(); } catch (e) {} }
+  const out = $("#result"); out.innerHTML = `<div class="card"><h2>Bewertung</h2><p class="muted">⏳ Claude is assessing your exam (about 30–60 seconds) …</p></div>`; out.scrollIntoView({ block: "start" });
+  const trans = S.log.map(m => `[Teil ${m.part}] ${m.who === "you" ? "ALI" : m.who === "examiner" ? "PRÜFER" : S.partner.name.toUpperCase()}: ${m.text}`).join("\n");
+  const prompt = `You are an experienced telc Deutsch B1 oral examiner. Assess the candidate ALI in this transcript of the oral exam (his partner ${S.partner.name} is simulated; do not assess the partner). Ali's answers come from speech dictation, so ignore punctuation and obvious dictation errors (e.g. single English words that are clearly misrecognised German), and you cannot judge pronunciation.
+Official telc B1 criteria per part: Ausdrucksfähigkeit, Aufgabenbewältigung, Formale Richtigkeit (Aussprache cannot be judged here: assume B level). Teil 1 max 15 points, Teil 2 max 30, Teil 3 max 30, total 75, pass = 45. Check especially: Teil 1 – did he give information AND ask his partner questions, one topic at a time? Teil 2 – did he report the card opinion (er/sie sagt, dass …), give his own opinion with a reason, mention an advantage/disadvantage, share an experience, and ask his partner? Teil 3 – suggestions with reasons, reacting to the partner, consistency with what was agreed, who does what, a final summary.
+Write explanations in simple English; keep German examples German.
+
+TRANSCRIPT:
+${trans}
+
+Reply with only one JSON object in this shape:
+{"teil1":{"points":11,"comment":"…"},"teil2":{"points":22,"comment":"…"},"teil3":{"points":20,"comment":"…"},"strengths":["…","…"],"improve":["…","…","…"],"corrections":[{"said":"what Ali said","better":"correct German","rule":"short rule"}]}
+Give up to 12 corrections, the most useful ones, in the order they occurred.`;
+  try {
+    const r = await SAMPLE.json(prompt);
+    const cl = (v, m) => Math.max(0, Math.min(m, Math.round(+v || 0)));
+    const t1 = cl(r.teil1 && r.teil1.points, 15), t2 = cl(r.teil2 && r.teil2.points, 30), t3 = cl(r.teil3 && r.teil3.points, 30), tot = t1 + t2 + t3;
+    const L = a => Array.isArray(a) ? a : [];
+    out.innerHTML = `<div class="card"><h2>Bewertung</h2>
+      <div class="row"><span class="score">${tot} / 75</span><b class="${tot >= 45 ? "good" : "bad"}">${tot >= 45 ? "✓ bestanden (ab 45)" : "✗ noch nicht bestanden (ab 45)"}</b></div>
+      <div class="tablewrap"><table><tr><th>Teil</th><th>Punkte</th><th>Kommentar</th></tr>
+      <tr><td>1 Kennenlernen</td><td><b>${t1}</b> / 15</td><td class="small">${esc(r.teil1 && r.teil1.comment)}</td></tr>
+      <tr><td>2 Thema</td><td><b>${t2}</b> / 30</td><td class="small">${esc(r.teil2 && r.teil2.comment)}</td></tr>
+      <tr><td>3 Planen</td><td><b>${t3}</b> / 30</td><td class="small">${esc(r.teil3 && r.teil3.comment)}</td></tr></table></div>
+      ${L(r.strengths).length ? `<h2>✅ Gut</h2><ul>${L(r.strengths).map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${L(r.improve).length ? `<h2>🎯 Verbessern</h2><ul>${L(r.improve).map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${L(r.corrections).length ? `<h2>🔴 Korrekturen</h2><div class="tablewrap"><table><tr><th>Du</th><th>Besser</th><th>Regel</th></tr>${L(r.corrections).map(c => `<tr><td class="bad">${esc(c.said)}</td><td class="good">${esc(c.better)}</td><td class="small">${esc(c.rule)}</td></tr>`).join("")}</table></div>` : ""}
+      <p class="small muted">Claude's estimate from the transcript. Pronunciation is not judged. A real exam can differ by a few points.</p>
+      <div class="row"><button class="primary" id="again">↺ Neue Prüfung</button><button id="copy">📋 Transkript kopieren</button></div>
+      <textarea id="copytxt" hidden readonly rows="6"></textarea></div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="card"><h2>Bewertung</h2><p class="bad">${e && e.code === "rate_limited" ? "Too many requests – wait a minute and try again." : "The assessment could not be created."}</p><div class="row"><button class="primary" id="retryA">Nochmal bewerten</button><button id="again">↺ Neue Prüfung</button><button id="copy">📋 Transkript kopieren</button></div><textarea id="copytxt" hidden readonly rows="6"></textarea></div>`;
+    $("#retryA").onclick = assess;
+  }
+  $("#again").onclick = () => location.reload();
+  $("#copy").onclick = () => { const ta = $("#copytxt"); ta.value = trans; ta.hidden = false; try { navigator.clipboard.writeText(trans).then(() => { $("#copy").textContent = "✓ Kopiert – im Chat einfügen"; }, () => ta.select()); } catch (err) { ta.select(); } };
+}
+
+/* ---------- dictation ---------- */
+let base = "";
+function wireDictation() {
+  if (!DICT) { $("#mic").disabled = true; $("#mic").title = "Speech input is not available here – please type."; return; }
+  DICT.onPartial(({ text }) => { $("#ans").value = (base + " " + text).trim(); });
+  DICT.onFinal(({ text }) => { base = (base + " " + text).trim(); $("#ans").value = base; });
+  DICT.onState(({ state }) => { const on = state === "listening" || state === "starting"; $("#mic").classList.toggle("on", on); $("#mic").textContent = on ? "⏹ Stopp" : "🎤 Sprechen"; if (on) setStatus("🎙 Ich höre zu … sprich jetzt Deutsch."); });
+  $("#mic").onclick = () => {
+    if (DICT.active()) { DICT.stop().catch(() => {}); setStatus("Check your text, then tap Senden."); return; }
+    base = $("#ans").value.trim();
+    if (TTS) try { TTS.stop(); } catch (e) {}
+    try { speechSynthesis.cancel(); } catch (e) {}
+    DICT.start({ language: "de" }).catch(e => { const c = e && e.code; setStatus(c === "not_granted" ? "Microphone not allowed – please type your answer." : c === "unavailable" ? "German speech input is not available here – please type." : "Speech input stopped."); if (c === "not_granted" || c === "unavailable") $("#mic").disabled = true; });
+  };
+}
+
+/* ---------- start ---------- */
+$("#go").onclick = async () => {
+  if (!SAMPLE) { $("#caps").textContent = "⚠️ This simulator needs Claude. Open the page on claude.ai (in a browser) and allow Claude when asked."; return; }
+  S = { partner: pick(PARTNERS), t2: pick(TOPICS2), t3: pick(TASKS3), log: [], part: 0, turns: 0, busy: true, askedSummary: false };
+  $("#start").hidden = true; $("#bar").hidden = false; $("#log").innerHTML = ""; $("#result").innerHTML = "";
+  await startPart(1);
+};
+$("#send").onclick = send;
+$("#ans").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); });
+$("#repeat").onclick = () => { if (lastSpoken) { const last = [...S.log].reverse().find(m => m.who !== "you"); say(lastSpoken, last ? last.who : "partner"); } };
+$("#finish").onclick = () => { if (S && S.log.some(m => m.who === "you")) assess(); };
+(async () => {
+  const c = window.claude;
+  if (!c) { $("#caps").textContent = "⚠️ Open this page on claude.ai to use the voices, the microphone and the partner."; return; }
+  [SAMPLE, TTS, DICT] = await Promise.all(["sample", "tts", "dictation"].map(n => c.use(n).catch(() => null)));
+  wireDictation();
+  $("#caps").textContent = (SAMPLE ? "✓ Partner (Claude)" : "✗ Partner not available") + " · " + (TTS ? "✓ Claude voices" : "device voice") + " · " + (DICT ? "✓ Mikrofon" : "✗ Mikrofon – please type");
+})();
+</script>
