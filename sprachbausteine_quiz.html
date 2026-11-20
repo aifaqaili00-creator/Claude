@@ -632,6 +632,31 @@ const LESSONS = [
     mc("Viele Produkte ___ Ihnen der Katalog.", ["zeigt", "zeigen", "gezeigt"], "Who shows? <b>der Katalog</b> (subject, singular) → <b>zeigt</b>. The first words are the object."),
     mc("Die Schüler ___ vom Lehrer beobachtet.", ["wurden", "würden", "werden haben"], "<b>wurden</b> + Partizip II = passive past: they <i>were</i> observed."),
     mc("Kinder sind verpflichtet, ___ Schule zu besuchen.", ["die", "der", "den"], "<i>besuchen</i> + Akkusativ, <b>die</b> Schule → <b>die</b>.")
+  ] },
+
+{ lv: 6, title: "Formelle E-Mail (Sie)", sub: "Anrede, Sätze und Gruß for an e-mail to a landlord, a school or a company.",
+  rule: `<ol><li><b>Betreff:</b> short topic, e.g. <i>Betreff: Heizung kaputt</i></li>
+  <li><b>Anrede:</b> <i>Sehr geehrte Frau Weber,</i> · <i>Sehr geehrter Herr Klein,</i> · unknown: <i>Sehr geehrte Damen und Herren,</i></li>
+  <li><b>Einleitung:</b> first word <b>small</b>: <i>ich schreibe Ihnen, weil …</i></li>
+  <li><b>4 points:</b> <i>Könnten Sie mir bitte sagen, …? · Ich würde gern wissen, ob … · Leider muss ich Ihnen mitteilen, dass …</i></li>
+  <li><b>Schluss:</b> <i>Über eine schnelle Antwort würde ich mich sehr freuen.</i></li>
+  <li><b>Gruß:</b> <i>Mit freundlichen Grüßen</i> + first name and surname</li></ol>
+  <p class="ex">Always <b>Sie / Ihnen / Ihr</b> with a capital letter. Never mix with du.</p>`,
+  items: [
+    mc("Your landlord is Mr Klein. How do you start?", ["Sehr geehrter Herr Klein,", "Sehr geehrte Herr Klein,", "Lieber Herr Klein,"], "Man → <b>Sehr geehrter</b> (with -r). <i>Lieber</i> is informal."),
+    mc("You write to Ms Weber at the language school:", ["Sehr geehrte Frau Weber,", "Sehr geehrter Frau Weber,", "Hallo Frau Weber,"], "Woman → <b>Sehr geehrte</b> (no -r). <i>Hallo</i> is too informal."),
+    mc("You don't know the person's name:", ["Sehr geehrte Damen und Herren,", "Liebe Damen und Herren,", "Sehr geehrte Leute,"], "Fixed phrase: <b>Sehr geehrte Damen und Herren,</b>"),
+    mc("Sehr geehrte Damen und Herren, ___ schreibe Ihnen, weil meine Heizung kaputt ist.", ["ich", "Ich"], "After the comma of the Anrede the next word starts <b>small</b>."),
+    mc("Ich danke ___ für Ihre schnelle Antwort.", ["Ihnen", "ihnen", "dir"], "Formal <i>you</i> (Dativ) → <b>Ihnen</b>, always with a capital I. <i>ihnen</i> = them."),
+    mc("___ Sie mir bitte sagen, wann der Kurs beginnt?", ["Könnten", "Kannst", "Konnten"], "Polite question → <b>Könnten Sie</b> …? (Konjunktiv II)."),
+    mc("Ich würde gern wissen, ___ es noch freie Plätze gibt.", ["ob", "wenn", "dass"], "Yes/no question inside a sentence → <b>ob</b>, verb at the end (<i>gibt</i>)."),
+    mc("Leider muss ich Ihnen mitteilen, dass die Heizung seit einer Woche nicht ___.", ["funktioniert", "funktionieren", "funktioniert hat nicht"], "<i>dass</i> → verb at the end; <i>die Heizung</i> = singular → <b>funktioniert</b>."),
+    mc("Which closing sentence is formal?", ["Über eine schnelle Antwort würde ich mich sehr freuen.", "Schreib mir bald!", "Bis bald!"], "Formal closing: <b>Über eine schnelle Antwort würde ich mich sehr freuen.</b>"),
+    mc("Which greeting is correct for a formal e-mail?", ["Mit freundlichen Grüßen", "Liebe Grüße", "Mit freundliche Grüße"], "<b>Mit freundlichen Grüßen</b> (mit + Dativ plural → -en)."),
+    mc("How do you sign a formal e-mail?", ["Afaq Ali", "Ali", "Dein Ali"], "Formal → <b>first name + surname</b>."),
+    mc("Which sentence mixes du and Sie (a mistake)?", ["Können Sie mir helfen? Ich freue mich auf deine Antwort.", "Können Sie mir helfen? Ich freue mich auf Ihre Antwort.", "Kannst du mir helfen? Ich freue mich auf deine Antwort."], "Never mix! <b>Sie … Ihre Antwort</b> or <b>du … deine Antwort</b>."),
+    inp("Ich ___ Ihnen, weil ich eine Frage zu Ihrem Kurs habe. (to write)", "schreibe", "<b>Ich schreibe Ihnen, weil …</b> – the classic opening.", "schr…"),
+    inp("Ich bitte Sie, das Problem so ___ wie möglich zu lösen.", "schnell", "<b>so schnell wie möglich</b> = as soon as possible.", "schn…")
   ] }
 ];
 
